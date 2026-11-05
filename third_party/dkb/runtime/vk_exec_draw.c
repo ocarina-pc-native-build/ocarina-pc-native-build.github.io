@@ -2017,6 +2017,17 @@ static void bind_resources(VkExec *ex, const VkPipeInfo *info) {
             for (uint32_t k = 0; k < cnt; k++) o[k].buffer = ssbo_info(ex, st, r, r->flags & 1);
         } else if (b->kind == GFX_RES_TEX || b->kind == GFX_RES_IMG) {
             int img = b->kind == GFX_RES_IMG;
+            if ((r->handle >> 28) == 4) {
+                static uint64_t seen[64]; static unsigned nseen;
+                uint64_t key=(uint64_t)ex->tex_pool.count<<32 ^ (uint64_t)ex->samp_pool.count<<16 ^
+                             (uint64_t)r->type<<4 ^ (uint64_t)st;
+                unsigned n=0; while(n<nseen && seen[n]!=key) n++;
+                if(n==nseen && nseen<64) {
+                    seen[nseen++]=key;
+                    rt_log("vk_exec: unresolved direct-pool resource: stage %d binding %u type %#x handle %#x cbuf %#x array %u; texture pool %u sampler pool %u; replay still uses bound slots",
+                           st,b->binding,r->type,r->handle,(unsigned)r->cbuf_slot,cnt,ex->tex_pool.count,ex->samp_pool.count);
+                }
+            }
             if (b->type == VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER || b->type == VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER) {
                 kind = 2;
                 for (uint32_t k = 0; k < cnt; k++) {   // buffer textures are not replayed yet
@@ -2751,10 +2762,16 @@ static void op_dispatch(VkExec *ex, const p_dispatch *d) {
     dummies_init();
     int present;
     const GfxShader *cs = shader_for(ex, NVN_STAGE_CS, &present, NULL, 0);   // synchronous: a skipped dispatch changes results
-    if (!cs) return;
+    if (!cs) {
+        if (vk_dump_armed) vk_dump_blocked_dispatch(ex, d, 0, present ? "shader translation" : "no compute stage");
+        return;
+    }
     const VkPipeInfo *info = NULL;
     VkPipeline p = vk_pipeline_compute(cs, &info);
-    if (!p || !info) return warn_once(W_PIPELINE, "a compute pipeline could not be created: dispatches with it are skipped");
+    if (!p || !info) {
+        if (vk_dump_armed) vk_dump_blocked_dispatch(ex, d, 0, "pipeline creation");
+        return warn_once(W_PIPELINE, "a compute pipeline could not be created: dispatches with it are skipped");
+    }
     vk_exec_barrier(ex);   // ends the pass; earlier writes are visible to the shader
     bind_pipeline(ex, VK_PIPELINE_BIND_POINT_COMPUTE, p);
     c0_dim[0] = (uint32_t)d->x, c0_dim[1] = (uint32_t)d->y, c0_dim[2] = (uint32_t)d->z;
@@ -2780,10 +2797,17 @@ static void op_dispatch_ind(VkExec *ex, const p_dispatch_ind *d) {
     dummies_init();
     int present;
     const GfxShader *cs = shader_for(ex, NVN_STAGE_CS, &present, NULL, 0);
-    if (!cs) return;
+    const p_dispatch indirect = {0, 0, 0, d->caller};
+    if (!cs) {
+        if (vk_dump_armed) vk_dump_blocked_dispatch(ex, &indirect, d->ind, present ? "shader translation" : "no compute stage");
+        return;
+    }
     const VkPipeInfo *info = NULL;
     VkPipeline p = vk_pipeline_compute(cs, &info);
-    if (!p || !info) return warn_once(W_PIPELINE, "a compute pipeline could not be created: dispatches with it are skipped");
+    if (!p || !info) {
+        if (vk_dump_armed) vk_dump_blocked_dispatch(ex, &indirect, d->ind, "pipeline creation");
+        return warn_once(W_PIPELINE, "a compute pipeline could not be created: dispatches with it are skipped");
+    }
     vk_exec_barrier(ex);
     VK_MEM_USE(ip);
     bind_pipeline(ex, VK_PIPELINE_BIND_POINT_COMPUTE, p);
