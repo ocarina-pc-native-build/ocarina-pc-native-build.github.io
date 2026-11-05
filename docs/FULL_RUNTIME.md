@@ -50,5 +50,37 @@ it to the chat. A new run never mistakes a previous capture for a new result.
 Earlier boot/failure logs are retained under `work/logs/continuation/`, including
 the crashing/passing fiber regression, pre-fix shutdown timeout and final validated
 600-frame result. The public source summary is in
-`logs/runtime-integration-2026-11-05.json`. See `STATUS.md` for the open graphics
-blockers; no files need to be regenerated to resume that work.
+`logs/runtime-integration-2026-11-05.json`. The visible title/menu continuation is
+recorded separately in `logs/rendering-integration-2026-11-05.json` and
+[RENDERING_BRINGUP.md](RENDERING_BRINGUP.md), including the before/after shader
+census and actual Vulkan device. No files need to be regenerated to continue.
+
+The frame target counts guest present requests. The log now separately reports
+accepted `vkQueuePresentKHR` calls. A checkpoint drains replay/GPU work; screenshots
+use the guest window's crop, rather than the unused part of a larger texture.
+The runner still reports graphics errors even when reviewed images show a menu.
+
+Additional targeted checks from the repository root:
+
+```powershell
+$env:TOTK_GPU='vulkan'
+python tools/test_full_runtime.py <native>/oot2026.exe --logs <logs>/gpu-probes --modes probe-vkmem probe-vkpool
+clang++ -std=c++20 -O2 -Wall -Wextra -Werror -static-libstdc++ -static-libgcc -I third_party/dkb/runtime/third_party/eglantine third_party/dkb/tests/render_regressions.cpp -o <work>/render-regressions.exe
+& <work>/render-regressions.exe
+python third_party/dkb/tests/native_exit_capture_test.py --cxx <llvm>/bin/clang++.exe --out <logs>/native-exit --opt 2
+```
+
+Keep validation enabled for both GPU probes. The shader/range tests contain only
+authored instructions; the GPU storage-view test writes a tiny authored texture.
+These are regressions, not evidence of game output. For the real menu test, create
+a private text input script containing `900 PLUS 8`, `1400 DOWN 8`, `1600 A 8`,
+`2000 B 8` on separate lines, set `TOTK_INPUT_SCRIPT` to it, set
+`TOTK_SHOTS=800-2600:200` and `TOTK_SHOTS_DIR` to a private capture directory,
+then run the bounded runner with `--frames 3000 --timeout 100 --screenshot`.
+Remove those input/capture settings for an interactive run.
+
+After translator changes use a new `TOTK_SHADER_CACHE` directory, retaining the
+old one for comparison; validate its `.spv` files with
+`spirv-val --target-env vulkan1.3`. Do not commit those files or native shader
+captures. Cache keys already incorporate lowered code and translator/options
+identity; a new directory additionally removes ambiguity during diagnosis.
