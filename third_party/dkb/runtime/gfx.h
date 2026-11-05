@@ -30,6 +30,9 @@ enum { GFX_STAGE_VS, GFX_STAGE_TCS, GFX_STAGE_TES, GFX_STAGE_GS, GFX_STAGE_FS, G
 enum { GFX_TEX_1D = 1, GFX_TEX_1D_ARRAY, GFX_TEX_BUFFER, GFX_TEX_2D, GFX_TEX_2D_ARRAY, GFX_TEX_2D_MS,
        GFX_TEX_2D_MS_ARRAY, GFX_TEX_3D, GFX_TEX_CUBE, GFX_TEX_CUBE_ARRAY };   // gfx_shader.c tex_names order
 enum { GFX_TYPE_FLOAT, GFX_TYPE_SINT, GFX_TYPE_UINT };
+// Sampled texture answers retain their dimension in the low nibble and their
+// numeric component class in bits 4..5. Both participate in the existing cache codec.
+enum { GFX_TEX_DIM_MASK = 15, GFX_TEX_COMPONENT_SHIFT = 4 };
 enum { GFX_IMAGE_FORMAT_UNSUPPORTED = 255 }; // Reject only if the shader actually queries this bound image.
 enum { GFX_GEOMETRY_NONE, GFX_GEOMETRY_POINTS, GFX_GEOMETRY_LINES, GFX_GEOMETRY_LINES_ADJACENCY,
        GFX_GEOMETRY_TRIANGLES, GFX_GEOMETRY_TRIANGLES_ADJACENCY };

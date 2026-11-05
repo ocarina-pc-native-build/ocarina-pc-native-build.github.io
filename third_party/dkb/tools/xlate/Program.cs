@@ -184,7 +184,7 @@ static class SwshXlate
         {
             int slot = TexSlot(handle, cbufSlot);
             if (slot >= 0) TexQueried.Add(slot);
-            string t = slot >= 0 ? Get("tex", slot) ?? Get("img", slot) : null;
+            string t = slot >= 0 ? Get(ResourceTable(handle), slot) : null;
             if (t == null) { Notes.Add($"贴图句柄 {handle:X}（常量段 {cbufSlot}，槽 {slot}）无 PC 类型，按 2D"); return SamplerType.Texture2D; }
             if (t.EndsWith("_depth")) t = t.Substring(0, t.Length - 6);   // depth-format texture: same sampler type here; the host binds a depth view
             return t switch
@@ -200,11 +200,26 @@ static class SwshXlate
         {
             int slot = TexSlot(handle, cbufSlot);
             if (slot >= 0) ImgQueried.Add(slot);
-            string f = _job["img"] is JsonObject t && slot >= 0 && t[slot.ToString()] is JsonObject o ? (string)o["fmt"] : null;
+            string table = ResourceTable(handle);
+            string f = _job[table] is JsonObject t && slot >= 0 && t[slot.ToString()] is JsonObject o ? (string)o["fmt"] : null;
             if (f == "Unsupported")
-                throw new NotSupportedException($"Storage image slot {slot}, handle {handle:X}, constant buffer {cbufSlot} has an unsupported bound view format.");
+                throw new NotSupportedException($"Resource table {table} slot {slot}, handle {handle:X}, constant buffer {cbufSlot} has an unsupported bound view format.");
             if (f == null) { Notes.Add($"图像句柄 {handle:X} 槽 {slot} 无 PC 格式，按 R8G8B8A8Unorm"); return TextureFormat.R8G8B8A8Unorm; }
             return Enum.TryParse(f, true, out TextureFormat tf) ? tf : TextureFormat.R8G8B8A8Unorm;
+        }
+        // Compute texture and image handles occupy separate c0 tables. Their
+        // zero-based slot numbers overlap; querying img[slot] for a tex handle
+        // can change the SPIR-V sample type even when the bound texture is correct.
+        string ResourceTable(int handle)
+        {
+            (int off0, _, _) = TextureHandle.UnpackOffsets(handle);
+            if (_job["c0"] is JsonArray c && c.Count == 4)
+            {
+                int imageBase = 0x10 + _rootBytes + 16 * ((int)c[1] + (int)c[2]) + 8 * (int)c[3];
+                return off0 * 4 >= imageBase ? "img" : "tex";
+            }
+            int slot = TexSlot(handle, -1);
+            return slot >= 0 && _job["tex"] is JsonObject tex && tex.ContainsKey(slot.ToString()) ? "tex" : "img";
         }
         int Local(int i) => _job["local"] is JsonArray a && a.Count > i ? (int)a[i] : 1;
         public int QueryComputeLocalSizeX() => Local(0);
@@ -328,6 +343,14 @@ static class SwshXlate
         Check(a.QuerySamplerType(0x70 / 4, 0) == SamplerType.Texture3D);
         Check(a.QuerySamplerType(0x78 / 4, 0) == SamplerType.TextureCube);
         Check(a.QueryTextureFormat(0x88 / 4, 0) == TextureFormat.R32Uint);
+        Check(a.QueryTextureFormat(0x70 / 4, 0) == TextureFormat.R8G8B8A8Unorm);
+        job["tex"]["0"] = new JsonObject { ["type"]="3d", ["fmt"]="R32Sint" };
+        var typed = new Accessor(Array.Empty<byte>(),job);
+        Check(typed.QueryTextureFormat(0x70 / 4,0)==TextureFormat.R32Sint);
+        Check(typed.QueryTextureFormat(0x88 / 4,0)==TextureFormat.R32Uint);
+        Check(typed.QuerySamplerType(0x88 / 4,0)==SamplerType.Texture2D);
+        job["tex"]["1"] = new JsonObject { ["type"]="cube", ["fmt"]="R32Uint" };
+        Check(new Accessor(Array.Empty<byte>(),job).QueryTextureFormat(0x78 / 4,0)==TextureFormat.R32Uint);
         job["img"]["0"]["fmt"] = "Unsupported";
         var deferred = new Accessor(Array.Empty<byte>(), job);
         Check(deferred.QuerySamplerType(0x70 / 4, 0) == SamplerType.Texture3D);

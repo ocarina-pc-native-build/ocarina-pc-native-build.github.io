@@ -288,6 +288,37 @@ static int run_postprocess_fetches(uint8_t *memory,void *command_control,uint64_
     return 1;
 }
 
+static int run_sampled_component_types(uint8_t *memory,void *command_control,uint64_t handle,size_t stride,int ti) {
+    uint32_t native[][4]={
+        {0x00007802,1,0xf00,0},{0x00017802,0,0xf00,0},{0x00027802,15,0xf00,0},
+        {0x00087b66,0x30000802,0x008e1f0a,0}, // TLDS.AOFFI: texel (1,0) plus (-1,0)
+        {0x00287a02,0x400,0xf00,0},{0x00297a02,0x500,0xf00,0},
+        {0x28007386,8,0x0010ad00,0},{0x0000794d,0,0x03800000,0}
+    };
+    uint32_t ctl[0xd8/4]={0};
+    ctl[0]=0x98761234; ctl[1]=0xc9; ctl[0x30/4]=sizeof ctl; ctl[0x38/4]=sizeof native;
+    ctl[0x58/4]=ctl[0x5c/4]=ctl[0x60/4]=1; ((uint8_t *)ctl)[0xb2]=1; ((uint8_t *)ctl)[0xb3]=1;
+    NVNshaderData shader={U(native),(const uint8_t *)ctl};
+    if (!(uint8_t)CALL(nvnProgramSetShaders,U(&program),1,U(&shader))) return 0;
+    const int formats[]={NVN_FORMAT_RG16UI,NVN_FORMAT_RG16I,NVN_FORMAT_RG16F,NVN_FORMAT_RG16UI};
+    const uint32_t values[][4]={{0x3c00,0xc000,0,1},{0x3c00,0xffffc000,0,1},
+                              {0x3f800000,0xc0000000,0,0x3f800000},{0x3c00,0xc000,0,1}};
+    const uint16_t pixels[]={0x3c00,0xc000,0x1234,0x5678};
+    NVNcopyRegion region={0,0,0,2,1,1};
+    CALL(nvnTextureWriteTexels,U(&typed_texture),0,U(&region),U(pixels));
+    const NVNtexturePool *tp[3]={&texture_a,&texture_a,&texture_a};
+    const NVNsamplerPool *sp[3]={&sampler_repeat,&sampler_repeat,&sampler_repeat};
+    for(unsigned phase=0;phase<4;phase++) {
+        NVNtextureView view;
+        CALL(nvnTextureViewSetDefaults,U(&view));
+        CALL(nvnTextureViewSetFormat,U(&view),formats[phase]);
+        CALL(nvnTexturePoolRegisterTexture,U(&texture_a),ti,U(&typed_texture),U(&view));
+        uint32_t expected[3][4]={0}; memcpy(expected[0],values[phase],sizeof values[phase]);
+        if (!run_case("sampled uint/sint/float/uint views",memory,command_control,handle,tp,sp,expected,1,stride)) return 0;
+    }
+    return 1;
+}
+
 static int run_descriptor_format_alias(uint8_t *memory,void *command_control,uint64_t handle,size_t stride,int ti) {
     int live=0,ok=0;
     const VkFormat valid[][2]={{VK_FORMAT_B10G11R11_UFLOAT_PACK32,VK_FORMAT_E5B9G9R9_UFLOAT_PACK32},
@@ -589,6 +620,7 @@ int probe_vkpool(void) {
     REQUIRE(make_texture(&srgb_texture, 0xb0000, pattern), "sRGB texture"); textures_live = 4;
     REQUIRE(run_srgb_store(memory, command_control, ti), "sRGB storage view case completed");
     REQUIRE(make_texture(&typed_texture,0xc0000,pattern),"typed image"); textures_live=5;
+    REQUIRE(run_sampled_component_types(memory,command_control,handle,stride,ti),"sampled component types follow bound views");
     REQUIRE(run_typed_images(command_control,ti),"typed image load/store and view changes completed");
     REQUIRE(run_surface_atomic(command_control,ti),"surface atomic accumulation completed");
     REQUIRE(make_array_texture(),"array texture"); textures_live=6;

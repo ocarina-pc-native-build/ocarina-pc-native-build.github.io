@@ -1506,8 +1506,14 @@ static size_t build_request(char *o0, const char *hex, const char *stage, const 
     if (a) {
         const char *sep = "";
         o += sprintf(o, ",\"tex\":{");
-        for (int i = 0; i < 32; i++)
-            if (a->tex_type[i] && a->tex_type[i] < COUNT(tex_names)) o += sprintf(o, "%s\"%d\":\"%s\"", sep, i, tex_names[a->tex_type[i]]), sep = ",";
+        for (int i = 0; i < 32; i++) {
+            unsigned dim=a->tex_type[i]&GFX_TEX_DIM_MASK, component=a->tex_type[i]>>GFX_TEX_COMPONENT_SHIFT;
+            if (dim && dim < COUNT(tex_names)) {
+                const char *f=component==GFX_TYPE_UINT?"R32Uint":component==GFX_TYPE_SINT?"R32Sint":"R8G8B8A8Unorm";
+                o += sprintf(o, "%s\"%d\":{\"type\":\"%s\",\"fmt\":\"%s\"}",sep,i,tex_names[dim],f);
+                sep=",";
+            }
+        }
         sep = "";
         o += sprintf(o, "},\"img\":{");
         for (int i = 0; i < 32; i++)

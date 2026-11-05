@@ -25,6 +25,9 @@ def source():
 #include <stdlib.h>
 #include <string.h>
 #include "vk_exec.h"
+#include "tex.h"
+// This pool-identity fixture has no view overrides; the GPU pool probe covers formats.
+int tex_vk_format(int format,TexVkFormat *out) { (void)format;(void)out;abort(); }
 #define NVN_STAGE_VS 0
 #define NVN_STAGE_FS 1
 #define NVN_STAGE_GS 2
@@ -144,7 +147,7 @@ static const RsList *rs_list(const VkExec *ex,const VkPipeInfo *info) {
 '''
     pieces = [function(draw, prefix) for prefix in (
         'static int nvn_stage_of(', 'static int gfx_type_of(', 'static uint64_t token_of(', 'static int slot_still(',
-        'static uint8_t type_of_handle(', 'static int in_fbl(', 'static SubRange sub_of(',
+        'static uint8_t type_of_handle(', 'static uint8_t image_format_of_handle(', 'static int in_fbl(', 'static SubRange sub_of(',
         'static uint32_t attached_as(', 'static void descriptor_state(VkExec *ex) {', 'static void answers_for(',
         'static SubRange sampled_sub(', 'static uint32_t feedback_scan(', 'static void tex_info_lookup(',
         'static void memo_key(', 'static int memo_match(', 'static int bind_sig(')]
@@ -237,7 +240,9 @@ int main(void) {
     return failures!=0;
 }
 '''
-    return '\n'.join((prelude, ac, serial, sub, fm, td, memo, sm, range_types, adapters,
+    formats = draw[draw.index('static const VkFormat tex_format'):draw.index('};',draw.index('static const VkFormat tex_format'))+2]
+    numeric = function((ROOT / 'runtime/vk_pipeline.c').read_text(),'int vk_pipeline_format_type(')
+    return '\n'.join((prelude, formats, numeric, ac, serial, sub, fm, td, memo, sm, range_types, adapters,
                       'static void descriptor_state(VkExec *ex);', *pieces, selection, tests))
 
 
