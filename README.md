@@ -11,6 +11,7 @@ I’m working on a native Windows x64 recompilation of the Switch 2 version of *
 This project page documents my current development progress and the next steps. **There is no playable release yet.**
 
 **Project website:** [ocarina-pc-native-build.github.io](https://ocarina-pc-native-build.github.io/)  
+**Discord:** [Join our Discord](https://discord.gg/vDPAcc6JnY)  
 **Maintainer:**  https://github.com/HotDevilSauce
 **Status updated:** November 5, 2026  
 **Latest reported local development commits:** `3555ea1` and `5971bd8`
@@ -67,6 +68,10 @@ A controllable 3D scene, working scene transitions, in-game saving and loading, 
 - [ ] Then investigate stability, additional hardware, and performance.
 
 See the [roadmap](ROADMAP.md) for details and the [changelog](CHANGELOG.md) for reported milestones.
+
+## Join the community
+
+[Join our Discord](https://discord.gg/vDPAcc6JnY) to discuss development progress, share feedback, and connect with other project followers.
 
 ## Support the project
 
