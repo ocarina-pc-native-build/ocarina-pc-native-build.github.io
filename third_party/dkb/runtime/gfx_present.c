@@ -526,6 +526,33 @@ static void save_capture(const char *path) {
     rt_log("gfx: menu test shot %s (%dx%d)", path, g_cap_w, g_cap_h);
 }
 
+// Optional evidence after colour adjustment, FSR/bilinear and the overlay. The
+// boot.c series instead reads the guest texture before those presentation steps.
+// TOTK_PRESENT_SHOTS=lo-hi:step uses the guest present-request counter; if the
+// presenter drops requests, capture the first image at or after the next step.
+static const char *present_shot_path(uint64_t frame) {
+    static int parsed;
+    static unsigned long long next, hi, step;
+    static const char *dir;
+    static char path[PLAT_PATH_MAX];
+    if (!parsed) {
+        parsed = 1;
+        const char *range = cfg_get("TOTK_PRESENT_SHOTS");
+        if (!range || sscanf(range, "%llu-%llu:%llu", &next, &hi, &step) != 3 || !step || next > hi) hi = 0;
+        dir = cfg_get("TOTK_PRESENT_SHOTS_DIR");
+        if (!dir || !*dir) dir = "present-shots";
+        if (hi) plat_file_mkdir_p(dir);
+    }
+    if (!hi || frame < next || next > hi) return NULL;
+    if (frame > hi) { hi = 0; return NULL; }
+    do {
+        if (step > UINT64_MAX - next) { hi = 0; break; }
+        next += step;
+    } while (next <= frame);
+    snprintf(path, sizeof path, "%s/p%05llu.png", dir, (unsigned long long)frame);
+    return path;
+}
+
 // The rectangle {x, y, w, h} of a dw x dh swapchain image the cw x ch picture goes into: the whole image with
 // TOTK_ASPECT=stretch, else (fit, the default) the largest one of the picture's own aspect ratio, centred (a 16:9 picture
 // on the Steam Deck's 1280x800 screen gets bars of 40 rows above and below; a 16:9 picture in a 21:9 window, bars at the
@@ -590,7 +617,8 @@ static void present_image(VkImage src, VkImageLayout layout, VkFormat fmt, int w
                      g_sc_ext.height, cw, ch, g_scaler};
     int overlay = g_sc_view[idx] &&
                   menu_overlay_frame(__atomic_load_n(&gfx_counters.frames, __ATOMIC_RELAXED), &mt, &menu_shot);
-    int cap = (g_capture || menu_shot) && ensure_capture_buffer();
+    const char *diagnostic_shot = present_shot_path(__atomic_load_n(&gfx_counters.frames, __ATOMIC_RELAXED));
+    int cap = (g_capture || menu_shot || diagnostic_shot) && ensure_capture_buffer();
     int thumb = g_th_n && ensure_thumbs();
 
     VkCommandBuffer cb = g_cb[slot];
@@ -708,13 +736,23 @@ static void present_image(VkImage src, VkImageLayout layout, VkFormat fmt, int w
         rt_log("gfx: present submit failed (%d)", (int)r);
     }
     g_frame++;
-    if (cap) {
-        vkWaitForFences(c->device, 1, &g_fence[slot], VK_TRUE, 5000000000ull);
+    if (cap && r == VK_SUCCESS) {
+        VkResult waited = vkWaitForFences(c->device, 1, &g_fence[slot], VK_TRUE, 5000000000ull);
+        if (waited != VK_SUCCESS) {
+            g_cap_valid = 0;
+            rt_log("gfx: capture fence failed (%d); no image saved", (int)waited);
+            goto out;
+        }
         vmaInvalidateAllocation(c->vma, g_cap_alloc, 0, VK_WHOLE_SIZE);
         g_cap_w = (int)g_sc_ext.width;
         g_cap_h = (int)g_sc_ext.height;
         g_cap_valid = 1;
         if (menu_shot) save_capture(menu_shot);
+        if (diagnostic_shot) {
+            save_capture(diagnostic_shot);
+            rt_log("gfx: presentation evidence: guest counter %llu, FSR %d, source format %u, crop %dx%d, output %dx%d",
+                   (unsigned long long)crumb, fsr, fmt, cw, ch, g_cap_w, g_cap_h);
+        }
     }
 out:
     plat_rmutex_unlock(&g_pl);

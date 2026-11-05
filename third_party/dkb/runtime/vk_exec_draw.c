@@ -653,6 +653,10 @@ VkImageView vk_exec_target_view(const VkTexImage *img, VkFormat format, VkImageV
                                           .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT};
         use.usage = aspect & VK_IMAGE_ASPECT_COLOR_BIT ? VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT :
                                                        VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+        // The pass may later learn a feedback loop. Keep the image's feedback
+        // contract on its attachment view, while still excluding STORAGE from sRGB.
+        if (img->fb_usage && !blocks)
+            use.usage |= VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_ATTACHMENT_FEEDBACK_LOOP_BIT_EXT;
         ci.pNext = &use;   // an attachment view does not inherit storage usage
         if (vkCreateImageView(vk_ctx()->device, &ci, NULL, &view) != VK_SUCCESS)
             rt_fatal("vk: render target view (format %d) could not be created", (int)format);

@@ -131,6 +131,13 @@ The direct U32 `SURED.ADD` lowering (`0x59f`) is selectively copied from the sam
 Eglantine file at `23f383cab532bf3834ea55f3488b48841f3c727b`, retaining the GPL
 header. The contended image-atomic GPU probe is original.
 
+REDUX.MIN's inactive-lane identity is selectively adapted from Eglantine's
+`lower_to_maxwell.h` at `23f383cab532bf3834ea55f3488b48841f3c727b` (GPL-3.0-or-later).
+The signed MIN/MAX ordering transform and regression fixtures are original.
+The encoding was checked against Mesa NAK `sm70_encode.rs`, `OpRedux`, revision
+`b1fe47e94409d81924c8663f58fac97e66ab4527` (MIT, Copyright 2022 Collabora, Ltd.):
+https://chromium.googlesource.com/external/gitlab.freedesktop.org/mesa/mesa/+/b1fe47e94409d81924c8663f58fac97e66ab4527/src/nouveau/compiler/nak/sm70_encode.rs
+
 The Windows OoT integration adapts image-copy pitch recording and 64-bit address
 wait comparison from nxnative (`dm/gfx/nvn/hle_nvn.c`, `dm/gfx/nvn/nvn_obj.h`, `dm/host/hle_thread.c`),
 revision `84dea69835414b18a4351cd45054bb611e0e3185`, MIT, Copyright (c) 2026 seedds
