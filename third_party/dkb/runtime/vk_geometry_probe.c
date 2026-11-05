@@ -51,6 +51,30 @@ static uint32_t gp_program(unsigned stage, uint8_t control[GP_CONTROL], uint8_t 
     uint64_t ops[128];
     unsigned n = 0;
     memset(control, 0, GP_CONTROL), memset(code, 0, GP_CODE);
+    if (stage == 0 && getenv("DKB_PROBE_NATIVE_HIGH_VS")) {
+        // Authored native VS: position and color occupy the reserved lowering
+        // register range while UR8 independently holds the multiplier 1.0.
+        const uint32_t native[][4] = {
+            {0xffe07321,0x80ff,0xc00,0}, // ALD.128 R224, a[0x80]
+            {0xfff87321,0x90ff,0xc00,0}, // ALD.128 R248, a[0x90]
+            {0x00087882,0x3f800000,0,0},   // UMOV UR8, 1.0 (mirror R224 must not replace native R224)
+            {0x00087202,248,0xf00,0},      // low-register live color copy
+            {0x00097c02,8,0x08000f00,0},   // MOV R9, UR8
+            {0xe0e07220,9,0x00400000,0},  // FMUL R224, R224, R9
+            {0xff007322,0x70e0,0xcff,0}, // AST.128 a[0x70], R224
+            {0x00ef7802,0x3f800000,0xf00,0},
+            {0xff007322,0x6cef,0xff,0},  // AST PointSize, R239
+            {0xff007322,0x80f8,0xcff,0}, // AST.128 color, R248
+            {0xff007322,0x8008,0xff,0},  // low-register copy survived all spills
+            {0x0000794d,0,0x03800000,0},
+        };
+        gp_u32(code,1u|4u<<5|1u<<10);
+        memcpy(code+0x80,native,sizeof native);
+        const uint32_t length=0x80+sizeof native;
+        gp_u32(control,0x98761234); gp_u32(control+4,0xc9);
+        gp_u32(control+0x30,0xd8); gp_u32(control+0x38,length);
+        return length;
+    }
     unsigned sph = stage == 0 ? 1 : stage == 1 ? 5 : 4;
     gp_u32(code + GP_SKIP, 1u | 3u << 5 | sph << 10 | (stage == 2 ? 1u << 16 : 0));
     if (stage == 0) {
@@ -418,7 +442,7 @@ done:
     printf("probe-vkgeometry: %s, user-c3 store, %s; ",
            gp_passthrough ? "portable triangles->triangle" : "ordinary points->triangle",
            ordered ? "explicit NVN dependency in one NVN submission" : "separate completed-submission indirect consumption");
-    puts(
+    puts(getenv("DKB_PROBE_NATIVE_HIGH_VS") ? "native high-register VS with private spills; Maxwell GS/FS" :
          "no native lowering, NV passthrough extension or other input topologies");
     return gp_failures || errors;
 }

@@ -33,17 +33,119 @@ struct LoweredProgram {
     std::vector<u32> source_instruction_offsets;
     u32 source_size{};
     u32 required_texture_buffer = ~0U;
+    u32 local_spill_bytes{};
     u32 error_offset{};
     std::string_view error;
 
     explicit operator bool() const { return error.empty(); }
 };
 
+// Native GPRs and the emulated uniform bank are different register files. For
+// high-pressure vertex programs, keep native R216..R254 in private local memory
+// and borrow low GPRs only for one instruction, saving their previous values.
+// This opt-in path requires an empty guest local-memory region. Unsupported
+// operand shapes fail closed; immediates, predicates and URs are never renamed.
+struct NativeRegisterSpill {
+    static constexpr u32 first = 216, bytes = 1024;
+    struct Field { u32 bit, reg, count; };
+    std::vector<Field> fields;
+    std::array<u32, 255> mapped{};
+    std::array<bool, 255> used{};
+    bool active = false;
+
+    bool Prepare(Instruction& insn) {
+        const u32 op = insn.Bits(0, 12), form = insn.Bits(9, 3);
+        bool valid = true;
+        const auto add = [&](u32 bit, u32 count = 1) {
+            const u32 reg = insn.Bits(bit, 8);
+            if (reg == 255) return;
+            if (reg + count > 255 || (reg < first && reg + count > first)) { valid = false; return; }
+            fields.push_back({bit, reg, count});
+            for (u32 n = 0; n < count; n++) used[reg + n] = true;
+        };
+        const auto operand = [&](u32 which) {
+            if (which == 0) { add(24); return; }
+            const bool wide = which == 1 ? (form >= 4 && form <= 6) : (form == 2 || form == 3 || form == 7);
+            if (!wide) add(which == 1 && form == 1 ? 32 : 64);
+        };
+        switch (op) {
+        case 0x802: case 0xa02: case 0xc02: add(16); break;
+        case 0x202: case 0x245: case 0x305: case 0x307: case 0x308: add(16); add(32); break;
+        case 0x220: case 0x820: case 0xa20:
+        case 0x209: case 0x809: case 0xa09: case 0x208: case 0x808:
+        case 0x20a: case 0x80a: case 0x217:
+            add(16); operand(0); operand(1); break;
+        case 0x221: case 0x421: case 0x621:
+            add(16); operand(0); operand(form == 2 || form == 3 ? 2 : 1); break;
+        case 0x223: case 0x423: case 0x623: case 0x823: case 0xa23:
+            add(16); operand(0); operand(1); operand(2); break;
+        case 0x20b: case 0x20c: operand(0); operand(1); break;
+        case 0x210: case 0x810: case 0x224: case 0x824:
+            add(16); add(24); if (form == 1) add(32); add(64); break;
+        case 0x225: case 0x825:
+            add(16, 2); add(24); if (op == 0x225) add(32); add(64, 2); break;
+        case 0x816: case 0x819: add(16); add(24); add(64); break;
+        case 0x81a: add(16); add(24); break;
+        case 0xb82: add(16, insn.Bits(73, 3) == 5 ? 2 : 1); add(24); break;
+        case 0x381: case 0x981: {
+            const u32 size = insn.Bits(73, 3);
+            if (size > 6) return false;
+            add(16, size > 4 ? 1U << (size - 4) : 1);
+            add(24, op == 0x381 || insn.Bits(90, 1) ? 2 : 1); break;
+        }
+        case 0x321: add(16, insn.Bits(74, 2) + 1); add(24); add(32); break;
+        case 0x322: add(32, insn.Bits(74, 2) + 1); add(24); add(64); break;
+        case 0xb60:
+            // Keep this fallback narrow: ordinary low-register TEX can coexist
+            // with spills, but texture operand packing is not renamed here.
+            for (u32 bit : {16U, 24U, 32U, 64U}) {
+                const u32 reg = insn.Bits(bit, 8);
+                if (reg != 255 && reg + 8 > first) return false;
+            }
+            break;
+        case 0xab9: case 0x882: // direct uniform load / immediate uniform move
+        case 0x918: case 0x91a: case 0x947: case 0x94d: break;
+        default: return false; // includes guest local memory, calls and indirect control flow
+        }
+        if (!valid) return false;
+        for (u32 reg = first; reg < 255;) {
+            if (!used[reg]) { reg++; continue; }
+            u32 count = 1;
+            while (reg + count < 255 && used[reg + count]) count++;
+            u32 target = reg & 3; // preserve scalar/pair/vector alignment
+            for (; target + count <= first; target += 4) {
+                bool free = true;
+                for (u32 n = 0; n < count; n++) free &= !used[target + n];
+                if (free) break;
+            }
+            if (target + count > first) return false;
+            for (u32 n = 0; n < count; n++) mapped[reg+n] = target+n, used[target+n] = true;
+            active = true; reg += count;
+        }
+        for (const auto& f : fields) if (f.reg >= first) {
+            u32& word = insn.words[f.bit / 32];
+            word = (word & ~(255U << (f.bit % 32))) | (mapped[f.reg] << (f.bit % 32));
+        }
+        return true;
+    }
+    static u64 Local(bool store, u32 reg, u32 offset) {
+        return (store ? 0xef50000000000000ULL : 0xef40000000000000ULL) |
+               (u64{7} << 16) | reg | (u64{255} << 8) | (u64{offset} << 20) | (u64{4} << 48);
+    }
+    void Emit(std::vector<u64>& out, bool after) const {
+        for (u32 reg = first; reg < 255; reg++) if (used[reg]) {
+            const u32 temp = mapped[reg], high_slot = (reg-first)*4, saved_low = (39+temp)*4;
+            out.push_back(Local(true, temp, after ? high_slot : saved_low));
+            out.push_back(Local(false, temp, after ? saved_low : high_slot));
+        }
+    }
+};
+
 // Lower only operations whose semantics are representable by the existing
 // Maxwell frontend. These are new instructions, not reinterpretations of the
 // native bytes. Scheduling/control words are added by the environment adapter.
 inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code,
-                                     std::string_view tensor_mode = {}) {
+                                     std::string_view tensor_mode = {}, bool spill_native = false) {
     LoweredProgram result;
     struct Relocation { u32 output_index; s64 target; };
     std::vector<Relocation> relocations;
@@ -83,6 +185,12 @@ inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code,
         result.source_instruction_offsets.push_back(static_cast<u32>(result.instructions.size()));
         u32 opcode = insn.Bits(0, 12);
         if (insn.Bits(12, 4) == 15) continue; // @!PT: never executes (compiler padding)
+        NativeRegisterSpill spill;
+        if (spill_native) {
+            if (!spill.Prepare(insn)) return fail(index, "native register spill operand shape");
+            if (spill.active) result.local_spill_bytes = NativeRegisterSpill::bytes;
+            spill.Emit(result.instructions, false);
+        }
         std::optional<u32> active_link;
         u32 active_entry = 0;
         if (main_exited) {
@@ -99,6 +207,7 @@ inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code,
         // Scratch values and emulated uniform state occupy reserved high GPRs.
         // Reject native accesses that could alias that state.
         for (u32 bit : {16U, 24U, 32U, 64U}) {
+            if (spill_native) break; // exact operand decoding above keeps GPR and UR identities separate
             if (bit == 32 && insn.Bits(9, 3) != 1 && opcode != 0xb60 && opcode != 0xb66) continue;
             const u32 reg = insn.Bits(bit, 8);
             if (reg >= (uses_uniform_bank ? 216U : 246U) && reg < 255) return fail(index, "native program uses lowering scratch registers");
@@ -2583,6 +2692,7 @@ inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code,
             emit(0x38f0000000070000ULL | (u64{254} << 8) | (u64{output_mask} << 20));
         }
         if (guarded_uniform) restore_predicate(guard_mask);
+        if (spill_native) spill.Emit(result.instructions, true);
     }
     return fail(static_cast<u32>(code.size()), main_exited ? "native program lacks captured library return" : "native program has no unconditional EXIT");
 }

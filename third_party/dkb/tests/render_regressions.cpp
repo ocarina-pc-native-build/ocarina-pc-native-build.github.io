@@ -297,8 +297,60 @@ static void array_gather() {
         bad=i; bits(bad,76,2,1); CHECK(!lower(bad));
     }
 }
+static void high_native_registers() {
+    // Every low register is live, and all uniform/scratch mirrors have distinct
+    // values. Spilling a vector or an aliased scalar op must preserve both.
+    for(u32 dst=216;dst<255;dst++) for(u32 src:{0u,4u,215u,216u,239u,248u,254u})
+    for(bool enabled:{false,true}) {
+        auto original=op(0x221); bits(original,16,8,dst); bits(original,24,8,src); bits(original,32,8,dst);
+        auto rewritten=original; NativeRegisterSpill plan; CHECK(plan.Prepare(rewritten));
+        std::array<u32,256> physical{},local{},expected{};
+        for(u32 r=0;r<255;r++) { physical[r]=1000+r; expected[r]=2000+r; }
+        for(u32 r=0;r<216;r++) expected[r]=physical[r];
+        for(u32 r=216;r<255;r++) local[r-216]=expected[r];
+        const auto execute=[&](bool after) {
+            std::vector<u64> instructions; plan.Emit(instructions,after);
+            for(u64 m:instructions) {
+                const u32 r=m&255,offset=(m>>20)&0xffffff;
+                CHECK(offset%4==0 && offset<NativeRegisterSpill::bytes);
+                CHECK(((m>>16)&15)==7 && ((m>>8)&255)==255 && ((m>>48)&7)==4);
+                if ((m&0xfff0000000000000ull)==0xef50000000000000ull) local[offset/4]=physical[r];
+                else physical[r]=local[offset/4];
+            }
+        };
+        execute(false);
+        if(enabled) {
+            physical[rewritten.Bits(16,8)]=physical[rewritten.Bits(24,8)]+physical[rewritten.Bits(32,8)];
+            expected[dst]=expected[src]+expected[dst];
+        }
+        execute(true);
+        for(u32 r=0;r<255;r++) CHECK(physical[r]==1000+r); // includes emulated URs and scratch
+        for(u32 r=216;r<255;r++) CHECK(local[r-216]==expected[r]);
+    }
+    for(u32 width:{1u,2u,4u}) for(u32 dst=216;dst+width<=255;dst+=width) {
+        auto load=op(0x981); bits(load,16,8,dst); bits(load,24,8,255); bits(load,32,6,0);
+        bits(load,73,3,width==4?6:width==2?5:4);
+        NativeRegisterSpill plan; CHECK(plan.Prepare(load));
+        CHECK(load.Bits(16,8)%width==dst%width);
+        for(u32 n=0;n<width;n++) CHECK(plan.mapped[dst+n]==load.Bits(16,8)+n);
+    }
+    auto uniform=op(0x882); bits(uniform,16,8,0); uniform.words[1]=19;
+    auto high=op(0x802); bits(high,16,8,239); high.words[1]=29; high.words[2]=0xf00;
+    auto copy=op(0x202); bits(copy,16,8,8); copy.words[1]=239; copy.words[2]=0xf00;
+    auto end=op(0x94d); bits(end,87,4,7);
+    const std::vector<Instruction> code{uniform,high,copy,end};
+    CHECK(!LowerToMaxwell(code,"full"));
+    auto out=LowerToMaxwell(code,"full",true); CHECK(bool(out)); CHECK(out.local_spill_bytes==1024);
+    // Calls/local operations cannot alias the private spill area through an
+    // unmodelled access. The ordinary lowering still handles them separately.
+    for(u32 opcode:{0x944u,0x950u,0x387u,0x983u,0x949u}) {
+        auto unknown=op(opcode); NativeRegisterSpill plan; CHECK(!plan.Prepare(unknown));
+    }
+    auto cross=op(0x321); bits(cross,16,8,214); bits(cross,74,2,3);
+    NativeRegisterSpill plan; CHECK(!plan.Prepare(cross));
+}
 int main() {
-    txq(); i2f(); texture_half_order(); extended_compare(); extended_accumulator(); bindless_textures(); wide_immediate_multiply(); array_gather(); windows();
+    txq(); i2f(); texture_half_order(); extended_compare(); extended_accumulator(); bindless_textures(); wide_immediate_multiply(); array_gather(); high_native_registers(); windows();
     std::printf("render regressions: %u checks, %u failures\n", checks, failures);
     return failures?1:0;
 }

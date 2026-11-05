@@ -57,7 +57,13 @@ Lowered *lower(const uint8_t *control, const uint8_t *code) {
         const auto r = capture.Observe(insn, static_cast<uint32_t>(native.size() - 1));
         if (r != Shader::Ampere::ProgramCaptureState::Result::Continue) break;
     }
-    const auto lowered = Shader::Ampere::LowerToMaxwell(native, "full");
+    auto lowered = Shader::Ampere::LowerToMaxwell(native, "full");
+    if (!lowered && lowered.error == "native program uses lowering scratch registers" && gfx && ((w0 >> 10) & 15) == 1) {
+        uint32_t local[3];
+        std::memcpy(local, code + 4, sizeof local);
+        if (!((local[0] | local[1] | local[2]) & 0xffffff))
+            lowered = Shader::Ampere::LowerToMaxwell(native, "full", true);
+    }
     if (!lowered) {
         rt_log("nvn2: shader %016llx stage %u Ampere lowering failed at +%#x: %.*s",
                (unsigned long long)gfx_shader_nvn2_hash(control, code), gfx ? (w0 >> 10) & 15 : 0,
@@ -76,6 +82,10 @@ Lowered *lower(const uint8_t *control, const uint8_t *code) {
         m.assign(6, 0);
         m.resize(16);
         std::memcpy(m.data() + 6, code, 0x50);
+        if (lowered.local_spill_bytes) {
+            auto *header = reinterpret_cast<uint32_t *>(m.data() + 6);
+            header[1] = (header[1] & 0xff000000) | lowered.local_spill_bytes;
+        }
     }
     m.push_back(0), m.push_back(kMaxwellNop);
     size_t pos = 0x10;   // from the code start
