@@ -184,3 +184,59 @@ FATAL: vk: vkWaitSemaphores failed (VkResult -3; target 34130, last completed 34
 This is a real failure under near-exhausted system commit, not a successful
 6400-frame run. A separate camera capture without the validation layer is used
 to investigate lighting; validation-off counters cannot establish Vulkan validity.
+
+## Masked gradient samples and missing geometry
+
+The frame-4200 `foliage-system` trace records 71 draws rejected before GPU
+recording, all missing the fragment stage. The older `draws_skipped` summary
+does not count this early return. The new opt-in dump records targets, native
+shader identities and registered handles without resolving or uploading textures.
+Bound handles include stale/unused entries and alone do not identify a material.
+
+| Fragment native hash | Blocked draws | First unsupported operation |
+| --- | ---: | --- |
+| `859e6ad18a68f3a9` | 32 | TXD channel mask |
+| `d51a0cab472e0768` | 24 | TXD channel mask; third destination R53 |
+| `c0773d89e2e9b960` | 7 | TXD channel mask |
+| `78e6bf688b49647c` | 5 | TXD channel mask, then SR_VARIABLE_RATE |
+| `ce62c81dd5a4d9b0` | 1 | Texture gather mode |
+| `abf7e88b35aa1ce4` | 1 | SR_VARIABLE_RATE |
+| `c07fa58bcd4e2298` | 1 | SR_VARIABLE_RATE |
+
+TXD now forwards every nonempty channel mask and writes only selected packed
+results, including a single odd third destination and discarded high results.
+The first three shaders now run: blocked draws drop from 71 to 8. Their targets
+are 128x128 color/depth auxiliary images, not established foliage/shadow passes.
+On an unchanged 8,375-stage census, 8,091 become 8,101 accepted with no newly
+rejected stages. The fourth shader now reaches a later unsupported instruction.
+This distinction prevents counting a moved first error as a fully fixed shader.
+
+`gradient_texture.cpp` passes 1,262 checks; the old lowering fails 66 support
+checks with the same fixture. The GPU probe adds 300 cases covering all masks,
+2D and both array layers, distinct source channels, contiguous/split/discarded
+destinations and untouched output bytes. Its first draft incorrectly supplied
+the TLD4 coordinate layout to TXD; layer-1 checks exposed that fixture mistake.
+TXD uses X/Y followed by its packed layer. Corrected fixtures pass 4,473 total
+checks with zero core validation errors. All 476 cached probe modules pass
+`spirv-val --target-env vulkan1.3`. The 16,161,412 render checks, 15 host probes
+and 17 project tests pass again.
+
+Real run `gradient-foliage`, EXE SHA256
+`d95f8b76f4682cca3d8423c8314ed8ca65bc2d7339a85fc8a6f647e30522d4d4`,
+exits 0 at 6,400 guest requests after 184.312 seconds. It reports 268 distinct
+native failures and four downstream translation failures. Validation is off.
+The unchanged test save/input sequence still produces overexposure before PC
+scaling, especially after the camera turns. Restoring those 63 auxiliary draws
+has not fixed the image, nor proven the suggested missing-foliage explanation.
+The dump option accepts one frame: the supplied `4200,6200` was parsed as 4200;
+only that frame's intermediate targets were captured, while screenshots exist
+through 6400. No second raw dump is claimed.
+
+## Regular manual save
+
+`manual-save-confirm` uses an isolated clone of the gameplay checkpoint, opens
+System / Save, explicitly moves from Cancel to Save, and confirms. Screenshot
+5800 shows the game's "Gespeichert" confirmation; filesystem commits grow the
+save from four to six files, adding the manual slot's caption and progress.
+The process exits 0 at 6800 requests. The original profile is never selected.
+Regular reload of this new manual slot remains a separate pending check.

@@ -435,6 +435,66 @@ static int run_array_gather(uint8_t *memory,void *command_control,uint64_t handl
     return 1;
 }
 
+// Each source channel is independently one/zero across four patterns. This
+// distinguishes all masks and packing orders with exact, portable float results.
+// Array layers contain complementary patterns; all images have one mip level.
+static int run_gradient_masks(uint8_t *memory,void *command_control,uint64_t handle,size_t stride,int ti) {
+    const uint32_t sentinel=0x1234abcd;
+    const NVNtexturePool *tp[3]={&texture_a,&texture_a,&texture_a};
+    const NVNsamplerPool *sp[3]={&sampler_repeat,&sampler_repeat,&sampler_repeat};
+    for(unsigned component=0;component<4;component++) {
+        uint8_t pixels[16];
+        for(unsigned layer=0;layer<2;layer++) for(unsigned x=0;x<2;x++) for(unsigned c=0;c<4;c++)
+            pixels[layer*8+x*4+c]=((c==component)^layer)?255:0;
+        NVNcopyRegion region={0,0,0,2,1,1};
+        CALL(nvnTextureWriteTexels,U(&pattern_texture),0,U(&region),U(pixels));
+        region.depth=2;
+        CALL(nvnTextureWriteTexels,U(&array_texture),0,U(&region),U(pixels));
+        for(unsigned shape=0;shape<3;shape++) for(unsigned mask=1;mask<16;mask++) {
+            unsigned channels=0;
+            for(unsigned c=0;c<4;c++)channels+=(mask>>c)&1;
+            for(unsigned layout=0;layout<(channels>2?3u:1u);layout++) {
+                unsigned low=channels==1?9:8;
+                unsigned high=channels<=2||layout==2?255:layout==1?10:channels==3?21:20;
+                uint32_t native[32][4],count=0;
+#define TXD_OP(a,b,c) do { uint32_t *p=native[count++];p[0]=(a);p[1]=(b);p[2]=(c);p[3]=0; } while(0)
+                // TXD keeps X/Y first and the packed integer layer after them (unlike TLD4).
+                TXD_OP(0x00007802,0x3e800000,0xf00);
+                TXD_OP(0x00017802,0x3f000000,0xf00);
+                TXD_OP(0x00027802,shape?shape-1:0,0xf00);
+                for(unsigned r=4;r<8;r++)TXD_OP((r<<16)|0x7802,0,0xf00);
+                for(unsigned r=8;r<12;r++)TXD_OP((r<<16)|0x7802,sentinel,0xf00);
+                TXD_OP(0x00147802,sentinel,0xf00); TXD_OP(0x00157802,sentinel,0xf00);
+                TXD_OP((low<<16)|0x7b6c,((shape?5u:1u)<<29)|0x804,0x001e0000|(mask<<8)|high);
+                if(channels>2 && layout==0) {
+                    TXD_OP(0x000a7202,high,0xf00);
+                    if(channels==4)TXD_OP(0x000b7202,high+1,0xf00);
+                }
+                TXD_OP(0x00287a02,0x400,0xf00); TXD_OP(0x00297a02,0x500,0xf00);
+                TXD_OP(0x28007386,8,0x0010ad00); TXD_OP(0x794d,0,0x03800000);
+#undef TXD_OP
+                uint32_t ctl[0xd8/4]={0};
+                ctl[0]=0x98761234;ctl[1]=0xc9;ctl[0x30/4]=sizeof ctl;ctl[0x38/4]=count*16;
+                ctl[0x58/4]=ctl[0x5c/4]=ctl[0x60/4]=1;((uint8_t *)ctl)[0xb2]=1;((uint8_t *)ctl)[0xb3]=1;
+                NVNshaderData shader={U(native),(const uint8_t *)ctl};
+                if(!(uint8_t)CALL(nvnProgramSetShaders,U(&program),1,U(&shader)))return 0;
+                CALL(nvnTexturePoolRegisterTexture,U(&texture_a),ti,U(shape?&array_texture:&pattern_texture),0);
+                uint32_t expected[3][4]={{sentinel,sentinel,sentinel,sentinel}};
+                unsigned packed=0;
+                for(unsigned c=0;c<4;c++) if(mask&(1u<<c)) {
+                    if(packed<2 || high!=255)
+                        expected[0][channels==1?1:packed]=((c==component)^(shape==2))?0x3f800000:0;
+                    packed++;
+                }
+                char name[96];
+                snprintf(name,sizeof name,"TXD shape %u mask %x layout %u channel %u",shape,mask,layout,component);
+                if(!run_case(name,memory,command_control,handle,tp,sp,expected,1,stride))return 0;
+            }
+        }
+    }
+    return 1;
+}
+
 static int make_array_texture(void) {
     CALL(nvnTextureBuilderSetDevice,U(&texture_builder),U(&device));
     CALL(nvnTextureBuilderSetDefaults,U(&texture_builder));
@@ -870,6 +930,7 @@ int probe_vkpool(void) {
     REQUIRE(run_uniform_reductions(memory,command_control),"native uniform atomics completed");
     REQUIRE(run_uniform_fsetp(memory,command_control),"uniform floating comparisons completed");
     REQUIRE(run_feedback_views(),"feedback attachment views preserve pixels");
+    REQUIRE(run_gradient_masks(memory,command_control,handle,stride,ti),"gradient channel masks and destination layouts completed");
     REQUIRE(gfx_shader_failures() == shader_failures,"no warp translation failures");
 done:
     if (pool_live) backend->finish();

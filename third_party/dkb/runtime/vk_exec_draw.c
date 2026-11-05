@@ -2521,7 +2521,12 @@ static int prepare_draw(VkExec *ex, int prim, int32_t count, int restart) {
         if (gs_wait) gs = shader_for(ex, NVN_STAGE_GS, &has_gs, NULL, 1);
     }
     if (light_quad_fault_skip(ex, vs, fs)) return 0;
-    if (!vs || (has_fs && !fs) || (want_gs && (!has_gs || !gs))) return 0;
+    if (!vs || (has_fs && !fs) || (want_gs && (!has_gs || !gs))) {
+        if (vk_dump_armed) vk_dump_blocked_draw(ex, prim, count,
+            (!vs ? 1u << NVN_STAGE_VS : 0) | (has_fs && !fs ? 1u << NVN_STAGE_FS : 0) |
+            (want_gs && (!has_gs || !gs) ? 1u << NVN_STAGE_GS : 0));
+        return 0;
+    }
     if (!geometry_feedback_safe(ex, vs, gs)) return 0;
     uint32_t fbl = feedback_prepare(ex, fs);
     VkPipeState s = ex->pipe;
