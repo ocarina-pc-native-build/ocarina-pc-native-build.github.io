@@ -266,14 +266,13 @@ static void ov_vp9_fini(Cpu *c) {
     ret_x(c, 0);
 }
 
-// Result FlushVp9Decoder(Vp9DecoderType *): outputs not handed over yet are dropped
+// Result FlushVp9Decoder(Vp9DecoderType *): discard queued input, retaining
+// completed client-owned output images and their signalled fences until Release.
+// Eglantine nx2_gsv.h INx2VideoSession::Flush follows the same ownership rule.
 static void ov_vp9_flush(Cpu *c) {
     plat_mutex_lock(&lock);
     Dec *d = dec_of(arg_x(c, 0));
-    if (d)
-        for (int i = 0; i < SLOTS; i++)
-            if (d->slot[i].state == S_FILLED) d->slot[i].state = S_WAIT;   // still reserved; its picture is dropped
-    if (d) queue_drop(d);   // and so are the packets not decoded yet
+    if (d) queue_drop(d);
     if (d && d->av1) dav1d_flush(d->av1);
     plat_mutex_unlock(&lock);
     TRACE("flush");
@@ -516,9 +515,23 @@ int probe_codec(void) {
     ov_av1_props(&c);
     if (c.x[0] || dimensions[0] != 16 || dimensions[1] != 12 || dimensions[2] != 16 ||
         dimensions[3] != 12 || pts != 123456789 || end != 1) return 1;
+    // Flush may discard queued input, but an already completed output belongs
+    // to the client until Release. Its fence and properties must remain valid.
+    d->slot[1].state = S_WAIT;
+    d->queue[0] = (Packet){malloc(4), 4, 987, 0};
+    if (!d->queue[0].data) return 1;
+    d->qn = 1;
     c.x[0] = key;
     ov_vp9_flush(&c);
-    if (d->slot[0].state != S_WAIT) return 1;
+    c.x[0] = (uintptr_t)&fence;
+    ov_sp_point_trywait(&c);
+    if (c.x[0] != 1) { rt_log("codec probe: FAIL flush revoked a completed output fence"); return 1; }
+    if (d->slot[1].state != S_WAIT || d->qn || d->qhead) return 1;
+    memset(dimensions, 0, sizeof dimensions); pts = -1; end = 0;
+    for (int k = 0; k < 4; k++) c.x[k] = (uintptr_t)&dimensions[k];
+    c.x[4] = (uintptr_t)&pts; c.x[5] = (uintptr_t)&end; c.x[6] = key; c.x[7] = 0;
+    ov_av1_props(&c);
+    if (c.x[0] || dimensions[0] != 16 || dimensions[1] != 12 || pts != 123456789 || end != 1) return 1;
     c.x[0] = key;
     ov_vp9_fini(&c);
     if (dec_of(key)) return 1;
