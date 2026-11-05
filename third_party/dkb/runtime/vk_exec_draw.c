@@ -27,6 +27,7 @@
 #include "nvn_hmap.h"
 #include "nvn_geometry_control.h"
 #include "nvn_indirect_reset.h"
+#include "nvn2_control.h"
 #include "vk.h"
 #include "vk_exec.h"
 #include "tex.h"
@@ -691,7 +692,7 @@ static void stage_metadata(const uint8_t *ctl,const uint8_t *code,uint32_t *stag
         // A rejected native stage still has the compact NVN2 control block;
         // reading legacy offsets 0x704/0x714 would read unrelated guest memory.
         uint32_t w; memcpy(&w,code,4); memcpy(len,ctl+0x38,4);
-        int graphics=((w & 31)==1 || (w & 31)==2) && ((w>>5)&31)==4;
+        int graphics=nvn2_sph_type(w)!=0;
         uint32_t type=(w>>10)&15;
         *stage=!graphics ? 5 : type==5 ? 1 : type==4 ? 2 : type==2 ? 3 : type==3 ? 4 : 0;
     } else {
@@ -745,13 +746,14 @@ int probe_nvn2_stage_controls(void) {
     memcpy(control,&magic,4); memcpy(control+4,&version,4); memcpy(control+0x38,&length,4);
     // Deliberately misleading bytes where legacy metadata would reside.
     memcpy(control+0x704,&wrong,4); memcpy(control+0x714,&wrong,4);
-    const unsigned sph_types[]={1,5,4,2,3,0};
+    const unsigned sph_types[]={1,5,4,2,3,0,0};
     unsigned checks=0,failures=0;
-    for (unsigned stage=0;stage<6;stage++) {
-        uint32_t word=sph_types[stage] ? 1u | (4u<<5) | (sph_types[stage]<<10) : 0x00007802;
+    for (unsigned variant=0;variant<7;variant++) {
+        unsigned stage=variant<6 ? variant : 5;
+        uint32_t word=sph_types[variant] ? 1u | (4u<<5) | (sph_types[variant]<<10) : variant==6 ? 0x00047882 : 0x00007802;
         prog_t p={0}; p.nstage=1; p.sd[0]=(NVNshaderData){(uint64_t)(uintptr_t)&word,control};
         for (unsigned cached=0;cached<2;cached++) {
-            p.serial=cached ? UINT64_MAX-stage : 0;
+            p.serial=cached ? UINT64_MAX-variant : 0;
             const uint8_t *ctl=NULL,*code=NULL; uint32_t len=0;
             int found=find_stage(&p,(int)stage,&ctl,&code,&len);
             checks++; failures+=!found || ctl!=control || code!=(const uint8_t *)&word || len!=length;

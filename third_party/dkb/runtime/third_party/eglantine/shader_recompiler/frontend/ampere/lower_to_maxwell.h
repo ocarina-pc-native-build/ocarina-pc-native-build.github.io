@@ -55,7 +55,7 @@ inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code,
     bool uses_uniform_bank = false;
     for (const auto& instruction : code) {
         const u32 op = instruction.Bits(0, 12);
-        uses_uniform_bank |= op == 0xf60 || op == 0x3c4 || op == 0x2bd || op == 0xc0c || op == 0x986 || op == 0x9a8 || op == 0xc12 || op == 0xc17 || op == 0xe24 || op == 0xc24 || op == 0xd00 || op == 0xd09 || op == 0x9c3 || op == 0xc45 || op == 0x2a4 || op == 0x891 || op == 0x890 || op == 0x290 || op == 0x28c || op == 0x88c || op == 0x287 || op == 0x887 || op == 0x958 || op == 0xab9 || op == 0xabb || op == 0x899 || op == 0xc20 || op == 0xe21 || op == 0xe23 || op == 0xc02 ||
+        uses_uniform_bank |= op == 0x8a5 || op == 0xf60 || op == 0x3c4 || op == 0x2bd || op == 0xc0c || op == 0x986 || op == 0x9a8 || op == 0xc12 || op == 0xc17 || op == 0xe24 || op == 0xc24 || op == 0xd00 || op == 0xd09 || op == 0x9c3 || op == 0xc45 || op == 0x2a4 || op == 0x891 || op == 0x890 || op == 0x290 || op == 0x28c || op == 0x88c || op == 0x287 || op == 0x887 || op == 0x958 || op == 0xab9 || op == 0xabb || op == 0x899 || op == 0xc20 || op == 0xe21 || op == 0xe23 || op == 0xc02 ||
                              op == 0x886 || op == 0x3c2 || op == 0xc82 || op == 0x882 || op == 0x292 || op == 0x092 || op == 0x892 || op == 0x291 || op == 0x981 || op == 0xc13 || op == 0xc10 || op == 0xc23 || op == 0x526 || op == 0x2be || op == 0x8a4 || op == 0xd05 || (op == 0x984 && instruction.Bits(91, 1)) || op == 0x89c || op == 0x883 || op == 0x2a5 || op == 0xd06 || op == 0xd08 || op == 0x299 || op == 0xc09 || (op == 0x81c && instruction.Bits(67, 1));
     }
     const auto address_of = [](u32 index) { return 0x50U + index * 8 + ((index + 1) / 3) * 8; };
@@ -498,46 +498,48 @@ inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code,
             multiply_low(insn.Bits(24, 8), insn.Bits(32, 8), insn.Bits(64, 8), false);
             break;
         }
-        case 0x225: { // IMAD.WIDE.U32, register multiplier and 64-bit addend pair
-            const u32 a = insn.Bits(24, 8), b = insn.Bits(32, 8), c = insn.Bits(64, 8);
+        case 0x225: case 0x825: { // IMAD.WIDE.U32, register/immediate multiplier and 64-bit addend pair
+            const bool immediate = opcode == 0x825;
+            const u32 a = insn.Bits(24, 8), b = immediate ? insn.words[1] : insn.Bits(32, 8), c = insn.Bits(64, 8);
             const u32 c_high = c == 255 ? 255 : c + 1;
-            if ((insn.words[2] & ~0xffU) != 0x078e0000 || (insn.words[1] & ~0xffU) ||
+            if ((insn.words[2] & ~0xffU) != 0x078e0000 || (!immediate && (insn.words[1] & ~0xffU)) ||
                 (dest & 1) || dest >= 248 || (c != 255 && ((c & 1) || c >= 248)) || dest == c_high)
                 return fail(index, "native wide integer multiply mode");
             // High word with the IMAD.HI base-2^16 sequence, then the low word, into R253/R252.
-            xmad(250, a, b, 255, false, false, 0, false);
-            xmad(251, a, b, 250, true, false, 2, false);
-            xmad(250, a, b, 251, false, true, 1, false);
-            xmad(252, a, b, 251, true, true, 2, false);
+            xmad(250, a, b, 255, false, false, 0, immediate);
+            xmad(251, a, b, 250, true, false, 2, immediate);
+            xmad(250, a, b, 251, false, true, 1, immediate);
+            xmad(252, a, b, 251, true, true, 2, immediate);
             emit(0x3828000000000000ULL | predicate | 250 | (u64{250} << 8) | (u64{16} << 20));
             emit(0x5c10000000000000ULL | predicate | 253 | (u64{250} << 8) | (u64{252} << 20));
-            xmad(250, a, b, 255, false, false, 0, false);
-            xmad(251, a, b, 255, true, false, 0, false);
-            xmad(251, a, b, 251, false, true, 0, false);
+            xmad(250, a, b, 255, false, false, 0, immediate);
+            xmad(251, a, b, 255, true, false, 0, immediate);
+            xmad(251, a, b, 251, false, true, 0, immediate);
             emit(0x5c18000000000000ULL | predicate | 252 | (u64{251} << 8) | (u64{250} << 20) | (u64{16} << 39));
             emit(0x5c10000000000000ULL | predicate | dest | (u64{252} << 8) | (u64{c} << 20) | (u64{1} << 47));
             emit(0x5c10000000000000ULL | predicate | (dest + 1) | (u64{253} << 8) | (u64{c_high} << 20) | (u64{1} << 43));
             break;
         }
-        case 0x2a5: { // UIMAD.WIDE.U32 UR(d):UR(d+1) = URa * URb + URc:UR(c+1)
-            const u32 a = uniform_register(insn.Bits(24, 8)), b = uniform_register(insn.Bits(32, 8));
+        case 0x2a5: case 0x8a5: { // UIMAD.WIDE.U32 with a uniform-register or immediate multiplier
+            const bool immediate = opcode == 0x8a5;
+            const u32 a = uniform_register(insn.Bits(24, 8)), b = immediate ? insn.words[1] : uniform_register(insn.Bits(32, 8));
             const u32 c = insn.Bits(64, 8);
             const u32 c_low = uniform_register(c), c_high = c == 63 ? 255U : uniform_register(c + 1);
             const u32 d_low = uniform_register(insn.Bits(16, 8)), d_high = uniform_register(insn.Bits(16, 8) + 1);
-            if (native_predicate != 7 || (insn.words[1] & ~0xffU) || (insn.words[2] & ~0xffU) != 0x0f8e0000 ||
-                (insn.Bits(16, 8) & 1) || (c != 63 && (c & 1)) || a == ~0U || b == ~0U || c_low == ~0U ||
+            if (native_predicate != 7 || (!immediate && (insn.words[1] & ~0xffU)) || (insn.words[2] & ~0xffU) != 0x0f8e0000 ||
+                (insn.Bits(16, 8) & 1) || (c != 63 && (c & 1)) || a == ~0U || (!immediate && b == ~0U) || c_low == ~0U ||
                 c_high == ~0U || d_low == ~0U || d_high == ~0U || d_low == 255)
                 return fail(index, "native uniform wide multiply mode");
             // High word in R253 (base-2^16 long multiplication, as IMAD.HI), low word in R250.
-            xmad(250, a, b, 255, false, false, 0, false);
-            xmad(251, a, b, 250, true, false, 2, false);
-            xmad(250, a, b, 251, false, true, 1, false);
-            xmad(252, a, b, 251, true, true, 2, false);
+            xmad(250, a, b, 255, false, false, 0, immediate);
+            xmad(251, a, b, 250, true, false, 2, immediate);
+            xmad(250, a, b, 251, false, true, 1, immediate);
+            xmad(252, a, b, 251, true, true, 2, immediate);
             emit(0x3828000000070000ULL | 250 | (u64{250} << 8) | (u64{16} << 20));
             emit(0x5c10000000070000ULL | 253 | (u64{250} << 8) | (u64{252} << 20));
-            xmad(250, a, b, 255, false, false, 0, false);
-            xmad(251, a, b, 255, true, false, 0, false);
-            xmad(251, a, b, 251, false, true, 0, false);
+            xmad(250, a, b, 255, false, false, 0, immediate);
+            xmad(251, a, b, 255, true, false, 0, immediate);
+            xmad(251, a, b, 251, false, true, 0, immediate);
             emit(0x5c18000000070000ULL | 250 | (u64{251} << 8) | (u64{250} << 20) | (u64{16} << 39));
             emit(0x5c10000000070000ULL | 250 | (u64{250} << 8) | (u64{c_low} << 20) | (u64{1} << 47));
             emit(0x5c10000000070000ULL | d_high | (u64{253} << 8) | (u64{c_high} << 20) | (u64{1} << 43));

@@ -10,6 +10,7 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
+#include "nvn2_control.h"
 
 #include "shader_recompiler/frontend/ampere/program_capture.h"
 
@@ -40,7 +41,7 @@ void put32(std::vector<uint8_t> &c, size_t at, uint32_t v) { std::memcpy(c.data(
 Lowered *lower(const uint8_t *control, const uint8_t *code) {
     uint32_t code_len, w0;
     std::memcpy(&code_len, control + 0x38, 4), std::memcpy(&w0, code, 4);
-    const bool gfx = ((w0 & 31) == 1 || (w0 & 31) == 2) && ((w0 >> 5) & 31) == 4;   // SPH v4
+    const bool gfx = nvn2_sph_type(w0) != 0;
     const uint32_t hdr = gfx ? 0x80 : 0;
     if (code_len <= hdr) {
         rt_log("nvn2: stage with %#x bytes of code (header %#x, word 0 %#x): nothing to lower", code_len, hdr, w0);
