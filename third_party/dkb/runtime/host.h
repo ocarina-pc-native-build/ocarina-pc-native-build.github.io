@@ -76,9 +76,10 @@ void rt_sha256(const void *p, size_t n, uint8_t out[32]);   // BCrypt; fatal if 
 #define RT_KERNEL_BASE 0x7010000000ull
 #define RT_KERNEL_SIZE 0x10000000ull
 #define RT_HOSTFN_BASE 0x7020000000ull
-// The game's application/program id (main.npdm ACI0): Donkey Kong Bananza. GetInfo 18 returns it and save data is
+// The game's application/program id (main.npdm ACI0). GetInfo 18 returns it and save data is
 // kept for it alone.
-#define RT_APPLICATION_ID 0x040074a01bf12000ull
+extern const uint64_t rt_application_id;  // verified main.npdm ACI0, emitted by build_game.py
+#define RT_APPLICATION_ID rt_application_id
 #define RT_HOSTFN_SIZE 0x100000ull
 
 // ---- AAPCS64 argument access for host functions (section 2.2)
@@ -191,6 +192,7 @@ extern const RtFileHash rt_exefs_sha256[];                 // tools/data/expecte
 extern const int rt_exefs_sha256_count;
 extern const char rt_default_exefs[], rt_default_romfs[], rt_default_profile[];
 extern const int rt_game_version;                          // the game build: 111 (1.1.1), 121 (1.2.1) or 143 (1.4.3)
+extern const char rt_display_version[];                    // application metadata, not the runtime's version
 extern const char rt_port_version[];                       // VERSION at the build's root: 0.1.0, 0.1.0+973c626 in a release
 #define RT_V111 (rt_game_version == 111)                    // 1.1.1: its own boot constants and data slots
 #define RT_V143 (rt_game_version >= 143)
@@ -292,7 +294,7 @@ int rt_knob(const char *name, const char *def);
 void frame_step_present(uint64_t display_ns, int interval); // nvnQueuePresentTexture: the frame's display time and
                                                            // present interval (60 Hz ticks)
 // ---- boot (boot.c, main.c)
-typedef struct { const char *exefs, *romfs, *profile; int boot; double seconds; const char *shot, *gpu; } RtConfig;
+typedef struct { const char *exefs, *romfs, *profile; int boot; double seconds; const char *shot, *gpu; uint64_t frames; } RtConfig;
                                                            // romfs: directory with romfs.bin and index.json;
                                                            // frames: --frames N (0 = no limit); shot: --shot
                                                            // PATH; gpu: TOTK_GPU
@@ -305,6 +307,11 @@ void rt_boot(void);                                        // boot.c
 int probe_cfg(void);                                       // cfg_probe.c
 int probe_dpi(void);                                       // dpi_probe_win.c (Windows only)
 int probe_loader(void), probe_kernel(void), probe_ipc(void), probe_ipc_lifetime(void), probe_services(void), probe_fs(void);
+int probe_audio_device(void);
+int probe_system_core(void);
+int probe_nifm(void);
+int probe_bsd(void);
+int probe_ipc_domains(void);
 int probe_gfx_abi(void);                                   // gfx_abi_probe.c
 int probe_vkdevice(void);                                 // vk_device.c
 int probe_nvn(void), probe_nvn_tex(void);                  // nvn_probe.c, nvn_tex_probe.c
@@ -321,5 +328,6 @@ int probe_vkpool(void);                                   // vk_pool_probe.c: or
 int probe_vkreset(void);                                  // vk_reset_probe.c: original indirect reset ordering
 int probe_vkclear(void);                                                  // vk_clear_probe.c
 int probe_movie(void);                                     // movie_probe.c: host VP9 movie::Decoder on one RomFS movie
+int probe_codec(void);                                     // ov_codec.c: AV1/VP9 lifecycle and AV1 output ABI
 int vk_pipeline_prepare_shaders(void);                     // vk_pipeline.c: --prepare-shaders (tools/prepare_shaders.py)
 int vk_pipeline_warm_shaders(void);                        // vk_pipeline.c: --warm-shaders (tools/build_game.py)

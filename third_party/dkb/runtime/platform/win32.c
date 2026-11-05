@@ -660,6 +660,13 @@ void plat_aligned_free(void *p) { _aligned_free(p); }
 void plat_exit(int code) {
     fflush(stdout);
     fflush(stderr);
+    // The immediate-exit contract deliberately leaves guest/GPU threads alive
+    // until termination. ExitProcess kills them before calling DLL detach hooks,
+    // which can then deadlock on locks they held (seen with Vulkan validation).
+    // Callers explicitly flush saves/caches before this boundary; do not run
+    // foreign DLL cleanup against abruptly stopped workers.
+    // Microsoft: processthreadsapi/ExitProcess, Remarks (DLL lock deadlock).
+    TerminateProcess(GetCurrentProcess(), (UINT)code);
     ExitProcess((UINT)code);
 }
 

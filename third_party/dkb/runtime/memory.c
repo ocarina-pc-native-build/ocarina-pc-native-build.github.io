@@ -477,7 +477,7 @@ uint32_t mem_unmap_physical(uint64_t a, uint64_t n) { return alias_map(1, a, n);
 
 // ---- 0x06 QueryMemory
 // The region around a that no known region covers: everything else below 2^39 belongs to the host and is reported
-// as taken (Code, RX), so the SDK never picks it.
+// as inaccessible, so the SDK never allocates it or tries to read a module header there.
 static void taken_gap(uint64_t a, uint64_t *base, uint64_t *size) {
     uint64_t lo = 0, hi = RT_ADDRESS_LIMIT;
     RtRange known[3 + MOD_COUNT + 2];
@@ -556,8 +556,8 @@ uint32_t mem_query(uint64_t a, RtMemoryInfo *out) {
         r = (RtMemoryInfo){.base = L.hostfn.base, .size = L.hostfn.size, .state = ST_INACCESSIBLE};
     } else {
         taken_gap(a, &r.base, &r.size);
-        r.state = ST_CODE;
-        r.perm = PERM_RX;
+        r.state = ST_INACCESSIBLE;
+        r.perm = PERM_NONE;
     }
     // Moved stacks: the destination is Stack, the source Normal without access; free and normal regions around them
     // are clipped (MNG services.c).

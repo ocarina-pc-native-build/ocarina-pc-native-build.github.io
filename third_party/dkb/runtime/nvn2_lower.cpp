@@ -2,6 +2,7 @@
 // lowering (runtime/third_party/eglantine, GPL-3.0-or-later) rewrites the Ampere code as Maxwell, laid out as TotK's
 // translator reads it, and a synthetic control block carries the fields the host reads.
 #include <cstdint>
+#include <atomic>
 #include <cstring>
 #include <map>
 #include <mutex>
@@ -26,6 +27,7 @@ std::mutex lock;
 // change), and an address key handed those the old lowering. The key is gfx_shader_nvn2_hash (the dump name).
 // ponytail: kept for the process (a few thousand small stages); free with the program if memory ever matters
 std::map<uint64_t, Lowered *> cache;
+std::atomic<uint64_t> failures{0}; // distinct rejected shader stages, not just downstream SPIR-V errors
 // Lowered code buffer -> its key, for nvn2_origin: the draw path asks it on every draw (vk_exec_draw.c
 // light_quad_fault_skip), and a scan of the cache there cost most of the render thread in heavy scenes.
 std::unordered_map<const uint8_t *, uint64_t> origins;
@@ -139,6 +141,7 @@ extern "C" int nvn2_lower(const uint8_t *control, const uint8_t *code, const uin
                           const uint8_t **out_code) {
     const uint64_t key = gfx_shader_nvn2_hash(control, code);
     if (!key) {
+        failures.fetch_add(1, std::memory_order_relaxed);
         uint32_t w[6];
         std::memcpy(w, control + 0x30, sizeof w);
         rt_log("nvn2: stage with a control block of unexpected sizes (+0x30 %#x +0x38 %#x +0x44 %#x, code %p): not "
@@ -151,11 +154,14 @@ extern "C" int nvn2_lower(const uint8_t *control, const uint8_t *code, const uin
         it->second->origin = key;
         origins.emplace(reinterpret_cast<const uint8_t *>(it->second->code.data()), key);
     }
+    if (fresh && !it->second) failures.fetch_add(1, std::memory_order_relaxed);
     if (!it->second) return 0;
     *out_control = it->second->control.data();
     *out_code = reinterpret_cast<const uint8_t *>(it->second->code.data());
     return 1;
 }
+
+extern "C" uint64_t nvn2_lower_failures(void) { return failures.load(std::memory_order_relaxed); }
 
 // The dump name (gfx_shader_nvn2_hash) of the NVN 2 stage a lowered code buffer came from, or 0. Lowered buffers live
 // for the process, so their addresses never name another stage.

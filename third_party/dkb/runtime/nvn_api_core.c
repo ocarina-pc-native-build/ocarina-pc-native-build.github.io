@@ -167,9 +167,12 @@ static int pool_gpu_visible(const pool_t *o) { return !(o->flags & NVN_MEMORY_PO
 
 // ---------- Device
 static const int devinfo[] = {   // Tegra X1 values (nnheaders nvn_DeviceConstantsNX.h, measured on SMO)
-    // ABI: Donkey Kong Bananza (NVN 2) requires major 231 and minor >= 16 (main+0x5b29a4, the check before the sead
-    // graphics set-up); TotK required 55 and >= 15. The rest are still the Tegra X1 values.
-    [0x00] = 231, [0x01] = 16,
+    // This title's graphics initializer requires NVN 2 ABI 231.40. Returning the
+    // donor's 231.16 exits initialization before creating the graphics singleton.
+    // This is the entry-point ABI revision, not a claim that optional NVN 2
+    // features work: unknown procs remain NULL and unsupported device properties
+    // fail explicitly. Device limits below are inherited and need title testing.
+    [0x00] = 231, [0x01] = 40,
     [0x02] = 14, [0x03] = 65536, [0x04] = 256, [0x05] = 8, [0x06] = 16, [0x07] = 4, [0x08] = 16, [0x09] = 32,
     [0x0A] = 16, [0x0B] = 4, [0x0C] = 4, [0x0D] = 4, [0x0E] = 16, [0x0F] = 32, [0x10] = 32, [0x11] = 256, [0x12] = 256,
     [0x13] = 4, [0x14] = 8, [0x15] = 512, [0x16] = 256, [0x17] = 2, [0x18] = 256, [0x19] = 4096, [0x1A] = 131072,
@@ -204,7 +207,13 @@ NVN_API(nvnDeviceFinalize) { ((dev_t_ *)arg_p(c, 0))->magic = 0; }
 NVN_API(nvnDeviceGetInteger) {
     unsigned w = (unsigned)arg_x(c, 1);
     int *out = arg_p(c, 2);
-    if (w >= sizeof devinfo / sizeof *devinfo) rt_fatal("nvn: unsupported NVN device property %#x", w);
+    // nxnative dm/gfx/nvn/hle_nvn.c g_devinfo at 84dea698 reports 256 for
+    // property 0x67. Keep this explicit so intervening unknown IDs still fail.
+    if (w == 0x67) { *out = 256; return; }
+    if (w >= sizeof devinfo / sizeof *devinfo) {
+        char caller[160];
+        rt_fatal("nvn: unsupported NVN device property %#x from %s", w, ldr_describe(c->x[30], caller, sizeof caller));
+    }
     *out = devinfo[w];
     NVN_LOG("DeviceGetInteger %#x -> %d", w, *out);
 }
@@ -488,6 +497,21 @@ NVN_API(nvnSyncWait) {
     }
     if (ok) b->cpu_synced(s->fence);
     ret_x(c, ok ? NVN_SYNC_WAIT_RESULT_CONDITION_SATISFIED : NVN_SYNC_WAIT_RESULT_TIMEOUT_EXPIRED);
+}
+
+// NVNboolean nvnQueueWaitSync(queue, sync). A CPU wait is a conservative
+// implementation of the queue dependency: no subsequent submission can pass
+// the source fence. Give up the guest core while waiting for asynchronous replay.
+NVN_API(nvnQueueWaitSync) {
+    const sync_t *s=arg_p(c,1);
+    if (!s || s->magic!=SYNC_MAGIC || !s->fenced) { ret_x(c,0); return; }
+    const GfxBackend *b=gfx_backend();
+    int ok=1;
+    if (b->fence_done()<s->fence) {
+        NVN_BLOCKING();
+        ok=b->fence_wait(s->fence,UINT64_MAX);
+    }
+    ret_x(c,(uint64_t)ok);
 }
 // void nvnEventBuilderSetDefaults(NVNeventBuilder *b)
 NVN_API(nvnEventBuilderSetDefaults) { memset(arg_p(c, 0), 0, sizeof(ev_builder_t)); }

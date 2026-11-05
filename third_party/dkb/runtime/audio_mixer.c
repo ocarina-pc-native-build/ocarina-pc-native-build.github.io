@@ -850,6 +850,35 @@ void audio_mixer_render(AudioRenderer *r, double seconds) {
 
 // ---- IAudioDevice: one stereo output device
 static const char device_name[] = "AudioTvOutput";
+typedef struct DeviceNotification {
+    uint64_t id;
+    uint32_t event;
+    struct DeviceNotification *next;
+} DeviceNotification;
+typedef struct {
+    PlatMutex lock;
+    uint32_t change_event;
+    DeviceNotification *notifications;
+} AudioDeviceState;
+
+static void audio_device_close(void *state) {
+    AudioDeviceState *d = state;
+    while (d->notifications) {
+        DeviceNotification *n = d->notifications;
+        d->notifications = n->next;
+        kern_handle_close(n->event);
+        free(n);
+    }
+    if (d->change_event) kern_handle_close(d->change_event);
+    free(d);
+}
+
+uint32_t audio_device_open(void) {
+    AudioDeviceState *d = calloc(1, sizeof *d);
+    if (!d) rt_fatal("audio: device session allocation failed");
+    plat_mutex_init(&d->lock);
+    return ipc_session_new("IAudioDevice", audio_device_handler, d, audio_device_close);
+}
 
 static void put_name(const IpcBuffer *b, IpcResponse *rs, int pointer) {
     if (!b->size) return;
@@ -866,7 +895,7 @@ static IpcBuffer out_buffer(const IpcRequest *rq, int *pointer) {
 }
 
 void audio_device_handler(IpcSession *s, const IpcRequest *rq, IpcResponse *rs) {
-    static uint32_t change_event;   // device change events: never signalled, the device does not change
+    AudioDeviceState *d = s->state;
     int pointer;
     switch (rq->cmd) {
     case 0: case 6: case 14: {   // ListAudioDeviceName(Auto), ListAudioOutputDeviceName [13.0.0+]
@@ -888,6 +917,33 @@ void audio_device_handler(IpcSession *s, const IpcRequest *rq, IpcResponse *rs) 
         return;
     }
     case 5: { int32_t n = 2; IPC_OUT(rs, n); return; }   // GetActiveChannelCount
+    case 17: case 18: {   // Acquire/ReleaseAudioOutputDeviceNotification(u64 id), firmware 17+
+        // Semantics checked against Eglantine audio_device.cpp at 23f383cab532bf3834ea55f3488b48841f3c727b.
+        // This host exposes one fixed output. Its change events stay unsignalled;
+        // registration, duplicate detection, release and copied-handle lifetimes
+        // still have to work. Read handles survive release of the service owner.
+        uint64_t id = IPC_ARG(rq, uint64_t, 0);
+        plat_mutex_lock(&d->lock);
+        DeviceNotification **link = &d->notifications;
+        while (*link && (*link)->id != id) link = &(*link)->next;
+        if (rq->cmd == 17) {
+            if (*link) rs->result = 153u | (900u << 9);   // Audio.InvalidArgument
+            else {
+                DeviceNotification *n = calloc(1, sizeof *n);
+                if (!n) rs->result = 153u | (2u << 9);   // Audio.OperationFailed
+                else {
+                    n->id = id; n->event = kern_event_new(); *link = n;
+                    rs->copy[rs->ncopy++] = kern_event_readable(n->event);
+                }
+            }
+        } else if (!*link) rs->result = 153u | (1u << 9);   // Audio.NotFound
+        else {
+            DeviceNotification *n = *link; *link = n->next;
+            kern_handle_close(n->event); free(n);
+        }
+        plat_mutex_unlock(&d->lock);
+        return;
+    }
     case 19: return;   // SetAudioDeviceOutputVolumeAutoTuneEnabled [18.0.0+]: the host output has no auto tune
     case 20: case 21: {   // IsAudioDeviceOutputVolumeAutoTuneEnabled [18.0.0+], IsActiveOutputDeviceEstimatedLowLatency
         uint8_t v = 0;   //   [21.0.0+]: both false (Switchbrew, "Audio services")
@@ -895,17 +951,86 @@ void audio_device_handler(IpcSession *s, const IpcRequest *rq, IpcResponse *rs) 
         return;
     }
     case 4: case 11: case 12: {   // QueryAudioDeviceSystemEvent, ...InputEvent, ...OutputEvent
-        uint32_t ev = __atomic_load_n(&change_event, __ATOMIC_ACQUIRE);
-        if (!ev) {
-            uint32_t mine = kern_event_new(), expected = 0;
-            if (__atomic_compare_exchange_n(&change_event, &expected, mine, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
-                ev = mine;
-            else
-                ev = expected;   // the loser's event stays unused (no host-side close yet)
-        }
-        rs->copy[rs->ncopy++] = kern_event_readable(ev);
+        plat_mutex_lock(&d->lock);
+        if (!d->change_event) d->change_event = kern_event_new();
+        rs->copy[rs->ncopy++] = kern_event_readable(d->change_event);
+        plat_mutex_unlock(&d->lock);
         return;
     }
     default: ipc_unimplemented(s, rq);
     }
+}
+
+static int notification_failures;
+// Switch 2 device manager protocol checked against Eglantine's
+// nx2_audio_device_manager.h and the SDK ListVirtualInputDevices client.
+// No microphone is exposed by this runtime, so functionality 2 has an empty
+// catalog. Unsupported device operations remain explicit failures.
+static void virtual_device_manager(IpcSession *s, const IpcRequest *rq, IpcResponse *rs) {
+    // The bool at +0 precedes the aligned functionality enum at +4.
+    if (rq->cmd == 0 && IPC_ARG(rq, uint32_t, 4) == 2) {
+        int32_t count = 0;
+        IPC_OUT(rs, count);
+        return;
+    }
+    ipc_unimplemented(s, rq);
+}
+
+void aud_device_manager_handler(IpcSession *s, const IpcRequest *rq, IpcResponse *rs) {
+    if (rq->cmd == 0) {
+        rs->move[rs->nmove++] = ipc_session_new("IAudioVirtualDeviceManager", virtual_device_manager, NULL, NULL);
+        return;
+    }
+    ipc_unimplemented(s, rq);
+}
+
+static void notification_probe_main(Cpu *c) {
+    uint32_t handle = audio_device_open(), client = 0;
+    IpcSession *s = kern_session_acquire(handle);
+    uint64_t id = 42;
+    IpcRequest rq = {.cmd=17, .data=(const uint8_t *)&id, .data_size=sizeof id};
+    IpcResponse rs = {0};
+    audio_device_handler(s, &rq, &rs);
+    if (rs.result || rs.ncopy != 1) rt_fatal("probe-audio-device: notification acquire failed");
+    client = rs.copy[0];
+    memset(&rs, 0, sizeof rs); audio_device_handler(s, &rq, &rs);
+    notification_failures += rs.result != (153u | (900u << 9)) || rs.ncopy != 0;
+    rq.cmd=18; memset(&rs, 0, sizeof rs); audio_device_handler(s, &rq, &rs);
+    notification_failures += rs.result != 0;
+    memset(&rs, 0, sizeof rs); audio_device_handler(s, &rq, &rs);
+    notification_failures += rs.result != (153u | (1u << 9));
+    // A copied readable event remains a valid, unsignalled object after release.
+    c->x[0]=0; c->x[1]=(uint64_t)(uintptr_t)&client; c->x[2]=1; c->x[3]=0;
+    rt_svc(c, 0x18, 0); notification_failures += c->x[0] != 0xea01;
+    kern_handle_close(client);
+    rq.cmd=17; memset(&rs, 0, sizeof rs); audio_device_handler(s, &rq, &rs);
+    notification_failures += rs.result != 0 || rs.ncopy != 1;
+    client=rs.copy[0];
+    ipc_session_release(s); kern_handle_close(handle);
+    c->x[0]=0; c->x[1]=(uint64_t)(uintptr_t)&client; c->x[2]=1; c->x[3]=0;
+    rt_svc(c, 0x18, 0); notification_failures += c->x[0] != 0xea01;
+    kern_handle_close(client);
+    uint8_t output[256]; memset(output, 0xa5, sizeof output);
+    uint32_t functionality[2] = {0, 2};
+    IpcRequest vrq = {.cmd=0}; IpcResponse vrs = {0};
+    IpcSession root = {.name="auddmg:u"};
+    aud_device_manager_handler(&root, &vrq, &vrs);
+    notification_failures += vrs.result != 0 || vrs.nmove != 1;
+    uint32_t manager = vrs.move[0];
+    IpcSession *vs = kern_session_acquire(manager);
+    vrq.data=(const uint8_t *)functionality; vrq.data_size=sizeof functionality;
+    vrq.nb=1; vrq.b[0]=(IpcBuffer){(uint64_t)(uintptr_t)output, sizeof output, 0};
+    memset(&vrs, 0, sizeof vrs); vs->handler(vs, &vrq, &vrs);
+    int32_t count=-1; memcpy(&count, vrs.data, 4);
+    notification_failures += vrs.result != 0 || vrs.data_size != 4 || count != 0 || output[0] != 0xa5;
+    ipc_session_release(vs); kern_handle_close(manager);
+}
+
+int probe_audio_device(void) {
+    long before=ipc_sessions_live();
+    kern_run_on_guest_main(notification_probe_main);
+    notification_failures += ipc_sessions_live() != before;
+    printf("probe-audio-device: %s (acquire, duplicate, release, reacquire, copied event lifetime, session cleanup)\n",
+           notification_failures ? "FAILED" : "passed");
+    return !!notification_failures;
 }

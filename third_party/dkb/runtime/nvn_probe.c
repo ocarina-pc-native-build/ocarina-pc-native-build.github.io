@@ -94,7 +94,7 @@ static void probe_device_and_pools(void) {
     int abi[2] = {0, 0};
     CALL(nvnDeviceGetInteger, U(&dev), 0, U(&abi[0]));
     CALL(nvnDeviceGetInteger, U(&dev), 1, U(&abi[1]));
-    CHECK(abi[0] == 231 && abi[1] >= 16, "device ABI %d.%d", abi[0], abi[1]);   // Bananza needs NVN 2's 231.16
+    CHECK(abi[0] == 231 && abi[1] >= 40, "device ABI %d.%d", abi[0], abi[1]);   // OoT graphics initializer's ABI gate
 
     pmem = mem_kernel_alloc(PROBE_POOL_SIZE, 0x1000);
     gmem = mem_kernel_alloc(PROBE_GPOOL_SIZE, 0x1000);
@@ -328,6 +328,7 @@ OBJ(NVNeventBuilder, evb);
 static void probe_sync_events(void) {
     CHECK((uint8_t)CALL(nvnSyncInitialize, U(&syncs), U(&dev)) == 1, "SyncInitialize");
     CHECK(CALL(nvnSyncWait, U(&syncs), 1000) == NVN_SYNC_WAIT_RESULT_TIMEOUT_EXPIRED, "a sync never fenced times out at once");
+    CHECK(CALL(nvnQueueWaitSync,0,U(&syncs))==0,"QueueWaitSync rejects an unfenced sync");
     CALL(nvnSyncInitialize, U(&sync_future), U(&dev));
     sync_t *sf = (sync_t *)(void *)&sync_future;
     sf->fenced = 1;
@@ -445,6 +446,9 @@ static uint64_t record_all(void) {
     REC(OP_SET_SAMP_POOL, CALL(nvnCommandBufferSetSamplerPool, U(c), U(&sp2)));
     REC(OP_COPY_B2T, CALL(nvnCommandBufferCopyBufferToTexture, U(c), 0x9000, U(&tex1), U(&view), U(&rg), 0));
     REC(OP_COPY_STRIDE, CALL(nvnCommandBufferSetCopyRowStride, U(c), 256));
+    REC(OP_COPY_STRIDE, CALL(nvnCommandBufferSetCopyImageStride, U(c), 4096));
+    REC(OP_WORKLOAD_PRIORITY, CALL(nvnCommandBufferSetComputeWorkloadPriority,U(c),32));
+    REC(OP_WORKLOAD_PRIORITY, CALL(nvnCommandBufferSetGraphicsWorkloadPriority,U(c),33));
     REC(OP_BLEND_COLOR, CALL(nvnCommandBufferSetBlendColor, U(c), U(rgba)));
     REC(OP_COPY_T2B, CALL(nvnCommandBufferCopyTextureToBuffer, U(c), U(&tex1), 0, U(&rg), 0xa000, 0));
     REC(OP_COPY_T2T, CALL(nvnCommandBufferCopyTextureToTexture, U(c), U(&tex1), 0, U(&rg), U(&tex2), 0, U(&rg2), 0));
@@ -643,7 +647,14 @@ static void parse_all(uint64_t h) {
                       p->r.xoffset == 1 && p->r.width == 4 && p->r.height == 5, "COPY_B2T payload");
             break;
         }
-        case OP_COPY_STRIDE: CHECK(((const p_copy_stride *)a)->stride == 256, "COPY_STRIDE payload"); break;
+        case OP_COPY_STRIDE: {
+            const p_copy_stride *p = (const p_copy_stride *)a;
+            CHECK(p->stride == (p->image ? 4096 : 256), "COPY_STRIDE payload"); break;
+        }
+        case OP_WORKLOAD_PRIORITY: {
+            const p_workload_priority *p=a;
+            CHECK(p->priority==(p->compute ? 32u : 33u),"WORKLOAD_PRIORITY payload"); break;
+        }
         case OP_BLEND_COLOR: CHECK(((const p_blend_color *)a)->rgba[2] == 0.3f, "BLEND_COLOR payload"); break;
         case OP_COPY_T2B: {
             const p_copy_b2t *p = a;
@@ -790,6 +801,7 @@ static void probe_null_effects(void) {
     CALL(nvnQueueSubmitCommands, U(&queue), 2, U(hs));
     uint64_t t1 = rt_ticks();
     CALL(nvnQueueFenceSync, U(&queue), U(&syncs), NVN_SYNC_CONDITION_ALL_GPU_COMMANDS_COMPLETE, 0);
+    CHECK(CALL(nvnQueueWaitSync,U(&queue),U(&syncs))==1,"QueueWaitSync observes completed submission");
     uint64_t wait = CALL(nvnSyncWait, U(&syncs), 1000000000ull);
     CHECK(wait == NVN_SYNC_WAIT_RESULT_ALREADY_SIGNALED || wait == NVN_SYNC_WAIT_RESULT_CONDITION_SATISFIED, "SyncWait after the submit: %llu",
           (unsigned long long)wait);

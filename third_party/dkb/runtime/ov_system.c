@@ -298,6 +298,9 @@ static void ov_show_error(Cpu *c) {
 // ==== SDK-internal initialisation (services.c)
 static void ov_diag_startup(Cpu *c) { (void)c; rt_log("diag: host diagnostics"); }
 static void ov_aoc_initialize(Cpu *c) { (void)c; rt_log("aoc: no add-on content"); }
+// The host's add-on catalog is empty. Match ListAddOnContent instead of entering
+// the guest IPC singleton that the host Initialize override intentionally owns.
+static void ov_aoc_count(Cpu *c) { ret_x(c, 0); }
 // 1.4.3's main lists add-on content (MNG services.c host_aoc_list): there is none.
 // int ListAddOnContent(AddOnContentIndex *out, int offset, int count)
 static void ov_aoc_list(Cpu *c) {
@@ -605,6 +608,28 @@ static void ov_current_time(Cpu *c) {
 // returning the 0x18-byte struct through x8 would write through a stale pointer (time_host.c).
 static void ov_steady_now(Cpu *c) { ret_x(c, (uint64_t)steady_now().value); }
 
+// The SDK libc clock_gettime callback also belongs to the host time service.
+// Its guest singleton is intentionally not constructed by ov_time_initialize.
+// Preserve the SDK's uninitialized Result and AArch64 timespec layout (two s64s).
+static void ov_steady_timespec(Cpu *c) {
+    int64_t *out = arg_p(c, 0);
+    if (!time_ready || !out) { ret_x(c, TIME_R_INVALID); return; }
+    uint64_t ns = plat_now_ns();
+    out[0] = (int64_t)(ns / 1000000000ull);
+    out[1] = (int64_t)(ns % 1000000000ull);
+    ret_x(c, 0);
+}
+
+// As in nxnative hle_time.c (MIT): libc's real-time callbacks must use the
+// same host source as the user clock, including the adjustable-clock spelling.
+static void ov_user_timespec(Cpu *c) {
+    int64_t *out=arg_p(c,0);
+    if (!time_ready || !out) { ret_x(c,TIME_R_INVALID); return; }
+    uint64_t ns=plat_unix_time_ns();
+    out[0]=(int64_t)(ns/1000000000ull); out[1]=(int64_t)(ns%1000000000ull);
+    ret_x(c,0);
+}
+
 // Result ToCalendarTime(CalendarTime *out, CalendarAdditionalInfo *info, const PosixTime &t): local time
 static void ov_to_calendar(Cpu *c) {
     CalendarTime *out = arg_p(c, 0);
@@ -784,6 +809,14 @@ static void ov_album_orientation(Cpu *c) { (void)c; }
 // void nn::oe::{Enter,Leave}ExitRequestHandlingSection(): no exit request ever arrives from a host system applet
 static void ov_exit_section(Cpu *c) { (void)c; }
 
+static void ov_display_version(Cpu *c) {
+    char *out=arg_p(c,0);
+    if (!out || !rt_display_version[0]) rt_fatal("GetDisplayVersion: missing output or application metadata");
+    memset(out,0,16);
+    memcpy(out,rt_display_version,strlen(rt_display_version));
+}
+HOST_OVERRIDE("_ZN2nn2oe17GetDisplayVersionEPNS0_14DisplayVersionE", ov_display_version);
+
 HOST_OVERRIDE("_ZN2nn2oe23GetCurrentGraphicsScaleEv", ov_graphics_scale);
 HOST_OVERRIDE("_ZN2nn2oe42SetGraphicsScaleChangedNotificationEnabledEb", ov_graphics_scale_notify);
 HOST_OVERRIDE("_ZN2nn2oe24SetAlbumImageOrientationENS_5album16ImageOrientationE", ov_album_orientation);
@@ -836,6 +869,7 @@ HOST_OVERRIDE("_ZN2nn3err9ShowErrorENS_6ResultE", ov_show_error);
 
 HOST_OVERRIDE("nndiagStartup", ov_diag_startup);
 HOST_OVERRIDE("_ZN2nn3aoc10InitializeEv", ov_aoc_initialize);
+HOST_OVERRIDE("_ZN2nn3aoc17CountAddOnContentEv", ov_aoc_count);
 HOST_OVERRIDE("_ZN2nn3aoc16ListAddOnContentEPiii", ov_aoc_list);
 HOST_OVERRIDE("_ZN2nn3err26InitializeContextWriterApiEv", ov_err_context);
 HOST_OVERRIDE("_ZN2nn4pctl10InitializeEv", ov_pctl_initialize);
@@ -862,6 +896,9 @@ HOST_OVERRIDE("_ZN2nn4time13IsInitializedEv", ov_time_ready);
 HOST_OVERRIDE("_ZN2nn4time23StandardUserSystemClock14GetCurrentTimeEPNS0_9PosixTimeE", ov_current_time);
 HOST_OVERRIDE("_ZN2nn4time26StandardNetworkSystemClock14GetCurrentTimeEPNS0_9PosixTimeE", ov_current_time);
 HOST_OVERRIDE("_ZN2nn4time19StandardSteadyClock3nowEv", ov_steady_now);
+HOST_OVERRIDE("_ZN2nn4time37GetStandardSteadyClockCurrentTimespecEP8timespec", ov_steady_timespec);
+HOST_OVERRIDE("_ZN2nn4time41GetStandardUserSystemClockCurrentTimespecEP8timespec", ov_user_timespec);
+HOST_OVERRIDE("_ZN2nn4time43GetAdjustableUserSystemClockCurrentTimespecEP8timespec", ov_user_timespec);
 HOST_OVERRIDE("_ZN2nn4time14ToCalendarTimeEPNS0_12CalendarTimeEPNS0_22CalendarAdditionalInfoERKNS0_9PosixTimeE",
               ov_to_calendar);
 HOST_OVERRIDE("_ZN2nn4time19ToCalendarTimeInUtcERKNS0_9PosixTimeE", ov_to_calendar_utc);
@@ -875,3 +912,52 @@ HOST_OVERRIDE("_ZN2nn4time48CalculateStandardUserSystemClockDifferenceByUserERKN
 HOST_OVERRIDE("_ZN2nn2pl22GetSharedFontLoadStateENS0_14SharedFontTypeE", ov_font_state);
 HOST_OVERRIDE("_ZN2nn2pl20GetSharedFontAddressENS0_14SharedFontTypeE", ov_font_address);
 HOST_OVERRIDE("_ZN2nn2pl17GetSharedFontSizeENS0_14SharedFontTypeE", ov_font_size);
+
+// Focused regression probe independent of the original TotK symbol/constructor
+// fixtures. Calls pass through the same dispatch bridge as imported SDK functions.
+static uint64_t system_probe_fn[7];
+static int system_probe_failures;
+static void system_probe_main(Cpu *c) {
+    int64_t out[3]={-1,-1,0x12345678};
+    uint64_t ptr=(uint64_t)(uintptr_t)out;
+    rt_call(c,system_probe_fn[1],0);
+    system_probe_failures += rt_call(c,system_probe_fn[2],1,ptr)!=TIME_R_INVALID || out[0]!=-1;
+    rt_call(c,system_probe_fn[0],0);
+    system_probe_failures += rt_call(c,system_probe_fn[2],1,(uint64_t)0)!=TIME_R_INVALID;
+    uint64_t previous=0;
+    for (int i=0;i<1000;i++) {
+        uint64_t before=plat_now_ns();
+        uint64_t r=rt_call(c,system_probe_fn[2],1,ptr), after=plat_now_ns();
+        uint64_t got=(uint64_t)out[0]*1000000000ull+(uint64_t)out[1];
+        system_probe_failures += r || out[0]<0 || out[1]<0 || out[1]>=1000000000 ||
+            out[2]!=0x12345678 || got<before || got>after || got<previous;
+        previous=got;
+    }
+    rt_call(c,system_probe_fn[3],0);
+    system_probe_failures += rt_call(c,system_probe_fn[4],0)!=0;
+    for (unsigned j=5;j<7;j++) {
+        system_probe_failures+=rt_call(c,system_probe_fn[j],1,(uint64_t)0)!=TIME_R_INVALID;
+        uint64_t before=plat_unix_time_ns(),r=rt_call(c,system_probe_fn[j],1,ptr),after=plat_unix_time_ns();
+        uint64_t got=(uint64_t)out[0]*1000000000ull+(uint64_t)out[1];
+        system_probe_failures+=r || got<before || got>after || out[1]<0 || out[1]>=1000000000 || out[2]!=0x12345678;
+    }
+    rt_call(c,system_probe_fn[1],0);
+    system_probe_failures += rt_call(c,system_probe_fn[2],1,ptr)!=TIME_R_INVALID;
+    for (unsigned j=5;j<7;j++) system_probe_failures+=rt_call(c,system_probe_fn[j],1,ptr)!=TIME_R_INVALID;
+}
+int probe_system_core(void) {
+    const char *names[]={"_ZN2nn4time10InitializeEv","_ZN2nn4time8FinalizeEv",
+        "_ZN2nn4time37GetStandardSteadyClockCurrentTimespecEP8timespec",
+        "_ZN2nn3aoc10InitializeEv","_ZN2nn3aoc17CountAddOnContentEv",
+        "_ZN2nn4time41GetStandardUserSystemClockCurrentTimespecEP8timespec",
+        "_ZN2nn4time43GetAdjustableUserSystemClockCurrentTimespecEP8timespec"};
+    for (unsigned i=0;i<7;i++) {
+        GuestFn fn=hostfn_override(names[i]);
+        need(fn!=NULL,"probe-system-core: missing override");
+        system_probe_fn[i]=hostfn_register(names[i],fn);
+    }
+    kern_run_on_guest_main(system_probe_main);
+    printf("probe-system-core: %s (1000 monotonic and both real-time timespecs, bounds, initialization, empty add-on catalog)\n",
+           system_probe_failures ? "FAILED" : "passed");
+    return !!system_probe_failures;
+}

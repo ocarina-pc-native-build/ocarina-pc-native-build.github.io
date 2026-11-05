@@ -4,6 +4,8 @@ Code copied or adapted from another project is listed here with its source, the 
 
 | Component | Source and commit | License | Used in |
 |---|---|---|---|
+| dav1d AV1 decoder | MSYS2 UCRT64 1.5.4-1, package hash pinned by the parent project's `tools/runtime_deps.py` | BSD-2-Clause; parent `licenses/dav1d-COPYING.txt` and patent grant | `runtime/ov_codec.c` calls the public decoder API; library code remains in an unmodified DLL |
+| nxnative additional device property | https://github.com/seedds/nxnative @ `84dea69835414b18a4351cd45054bb611e0e3185`, `dm/gfx/nvn/hle_nvn.c`, Copyright (c) 2026 seedds and nxnative contributors | MIT | `runtime/nvn_api_core.c`: property 0x67 value; original host implementation retained |
 | QEMU ARM QARMA5 authentication helpers | https://github.com/qemu/qemu @ `ba93f3ae5cbe9bace0a8163843f0d678f08a3e6e`, `target/arm/tcg/pauth_helper.c`, Copyright (c) 2019 Linaro, Ltd. | LGPL-2.1-or-later; full text in the parent project's `licenses/QEMU-LGPL-2.1.txt` | `runtime/pacga.c`; arithmetic retained, standalone Windows process key and API added |
 | Eglantine Ampere (SM86) to Maxwell shader lowering and program capture | https://git.eden-emu.dev/Franseven/PokeDinner-a-Eglantine-Fork @ `1dd40d8` (full hash in `runtime/third_party/eglantine/UPSTREAM_COMMIT`; `src/shader_recompiler/frontend/ampere/lower_to_maxwell.h`, `program_capture.h`), Copyright 2026 Eden Emulator Project; encoding reference Mesa NAK `sm70_encode.rs` (MIT, Copyright 2022 Collabora, Ltd.) | GPL-3.0-or-later | `runtime/third_party/eglantine/` (unmodified), `tools/dkb_lower_test.cpp`; the reason DKB Recomp is GPL-3.0-or-later |
 | TotK Recomp, the base of this repository (fork at 0.2.8) | https://github.com/valentderah/totk-pc-recomp @ `f469c5a`, Copyright (c) 2026 Valiantsin Dzerakh | MIT (`LICENSE-MIT`) | every file that came from it, with the rows below for what TotK Recomp itself took from others |
@@ -103,3 +105,15 @@ folder's `licenses/` and in each component's own folder.
 | `totk_xlate` (NativeAOT linux-x64 build of `tools/xlate/`, linked with the folder's clang, lld and sysroot) | built by `tools/build_xlate.py --llvm --sysroot` | MIT | `bin/totk_xlate` |
 | AppImage type-2 runtime (static; includes libfuse and squashfuse), the AppImage's first part; appimagetool packs the folder and is not distributed | https://github.com/AppImage/type2-runtime | MIT; libfuse LGPL-2.1; squashfuse BSD-2-Clause | the AppImage header |
 | MacNativeGames shader variant list | as in the installer release row above | MIT | `data/shader_list.tsv` |
+# OoT integration additions
+
+The Windows OoT integration adapts image-copy pitch recording and 64-bit address
+wait comparison from nxnative (`dm/gfx/nvn/hle_nvn.c`, `dm/gfx/nvn/nvn_obj.h`, `dm/host/hle_thread.c`),
+revision `84dea69835414b18a4351cd45054bb611e0e3185`, MIT, Copyright (c) 2026 seedds
+and nxnative contributors. The complete MIT license is retained at
+`../../third_party/nxnative/LICENSE`. Network and gyro host behavior was also
+compared with that revision's `hle_net.c` and `hle_hid.c`.
+
+The new domain IPC implementation follows libnx's published CMIF wire layout;
+its source is original C. Audio, network and SDK thread protocol checks used
+read-only Eglantine revision `23f383cab532bf3834ea55f3488b48841f3c727b`.

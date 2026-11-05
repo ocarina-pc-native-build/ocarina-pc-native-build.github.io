@@ -1567,7 +1567,8 @@ int gfx_shader_raw_request(const char *line, char *reply, size_t reply_size) {
     return ok;
 }
 
-uint64_t gfx_shader_failures(void) { return (uint64_t)n_failures; }
+extern uint64_t nvn2_lower_failures(void);
+uint64_t gfx_shader_failures(void) { return (uint64_t)n_failures + nvn2_lower_failures(); }
 uint64_t gfx_shader_requests(void) { return (uint64_t)n_requests; }   // lines sent to the service
 uint64_t gfx_shader_cache_hits(void) { return (uint64_t)n_hits; }     // gets answered from memory or disk
 

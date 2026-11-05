@@ -1,0 +1,166 @@
+{
+  "date": "2026-11-05",
+  "status": "native-boot-checkpoint-with-graphics-errors",
+  "playable": false,
+  "source_repo": "C:\\Users\\Pascal\\Documents\\Codex\\2026-11-05\\du-h\\outputs\\OoT2026-PC-Recomp",
+  "executable": "C:\\Users\\Pascal\\Documents\\Codex\\2026-11-05\\du-h\\work\\game\\oot111\\native\\oot2026.exe",
+  "executable_bytes": 323330048,
+  "modules": {
+    "main": {
+      "functions": 249960,
+      "instructions": 15800436,
+      "unsupported": 0,
+      "traps": 394261
+    },
+    "sdk": {
+      "functions": 45907,
+      "instructions": 2226708,
+      "unsupported": 0,
+      "traps": 63478
+    },
+    "subsdk0": {
+      "functions": 1547,
+      "instructions": 135644,
+      "unsupported": 0,
+      "traps": 2224
+    }
+  },
+  "pacga_sites_implemented": 58,
+  "pacga_tests": {
+    "qarmav5_reference": 2050,
+    "lifted_register_flags": 512,
+    "thread_calls": 1000,
+    "tampered_contexts": 12
+  },
+  "generated_translation_units": 551,
+  "runtime_objects": 113,
+  "total_linked_objects": 664,
+  "host_probes": [
+    {
+      "mode": "selftest",
+      "status": "pass",
+      "exit_code": 0,
+      "seconds": 0.046
+    },
+    {
+      "mode": "probe-loader",
+      "status": "pass",
+      "exit_code": 0,
+      "seconds": 0.235
+    },
+    {
+      "mode": "probe-kernel",
+      "status": "pass",
+      "exit_code": 0,
+      "seconds": 0.453
+    },
+    {
+      "mode": "probe-ipc-lifetime",
+      "status": "pass",
+      "exit_code": 0,
+      "seconds": 0.031
+    },
+    {
+      "mode": "probe-ipc-domains",
+      "status": "pass",
+      "exit_code": 0,
+      "seconds": 0.016
+    },
+    {
+      "mode": "probe-system-core",
+      "status": "pass",
+      "exit_code": 0,
+      "seconds": 0.047
+    },
+    {
+      "mode": "probe-audio-device",
+      "status": "pass",
+      "exit_code": 0,
+      "seconds": 0.015
+    },
+    {
+      "mode": "probe-nifm",
+      "status": "pass",
+      "exit_code": 0,
+      "seconds": 0.016
+    },
+    {
+      "mode": "probe-bsd",
+      "status": "pass",
+      "exit_code": 0,
+      "seconds": 0.047
+    },
+    {
+      "mode": "probe-fs",
+      "status": "pass",
+      "exit_code": 0,
+      "seconds": 0.89
+    },
+    {
+      "mode": "probe-gfx-abi",
+      "status": "pass",
+      "exit_code": 0,
+      "seconds": 0.032
+    },
+    {
+      "mode": "probe-nvn",
+      "status": "pass",
+      "exit_code": 0,
+      "seconds": 0.047
+    },
+    {
+      "mode": "probe-codec",
+      "status": "pass",
+      "exit_code": 0,
+      "seconds": 0.031
+    }
+  ],
+  "unit_tests_passed": 17,
+  "fiber_migration": {
+    "before_exit_code": 3221225477,
+    "after_exit_code": 0,
+    "turns": 64,
+    "mismatches": 0
+  },
+  "final_boot": {
+    "mode": "run",
+    "exit_code": 0,
+    "status": "exited",
+    "preemption": "2",
+    "elapsed_seconds": 17.437,
+    "log": "C:\\Users\\Pascal\\Documents\\Codex\\2026-11-05\\du-h\\work\\logs\\continuation\\boot-exit-fixed-validation-600.log",
+    "screenshot_original": "C:\\Users\\Pascal\\Documents\\Codex\\2026-11-05\\du-h\\work\\game\\oot111\\capture-1793856485795313200.png",
+    "screenshot_preview": "C:\\Users\\Pascal\\Documents\\Codex\\2026-11-05\\du-h\\work\\game\\oot111\\capture-1793856485795313200-preview.png",
+    "screenshot_preview_bytes": 3570,
+    "screenshot_nonblack_pixels": 0,
+    "graphics": {
+      "frames": 600,
+      "nvn_calls": 965632,
+      "nvn_distinct": 220,
+      "unimplemented": 0,
+      "validation_errors": 2,
+      "shader_failures": 464,
+      "draws_skipped": 0
+    },
+    "validation_enabled": true,
+    "rendering_pass": false,
+    "exe_sha256": "d0f4cd849cf03839b1d784de3113301eeb7f2d13bdf83ad66ff80fdb4a0dad52",
+    "shader_failure_categories": {
+      "unsupported native opcode": 79,
+      "native texel fetch mode or descriptor binding": 1,
+      "native texture gather mode": 41,
+      "native texture dimension query mode": 255,
+      "native byte-to-float conversion mode": 26,
+      "native program uses lowering scratch registers": 6,
+      "native stage buffer read mode": 56
+    }
+  },
+  "graphics_limits": {
+    "guest_pool_bytes": 2550136832,
+    "maximum_buffer_bytes": 2147483648,
+    "maximum_allocation_bytes": 2147483648
+  },
+  "evidence_directory": "C:\\Users\\Pascal\\Documents\\Codex\\2026-11-05\\du-h\\work\\logs\\continuation",
+  "preserved_existing_build": true,
+  "published": false
+}

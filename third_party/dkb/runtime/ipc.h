@@ -12,6 +12,9 @@
 #define IPC_R_BAD_HANDLE 0xE401u           // kernel: invalid handle
 #define IPC_R_UNKNOWN_COMMAND 0xF601u      // sf: unknown command (module 10, description 123)
 
+typedef struct IpcSession IpcSession;
+typedef struct IpcDomain IpcDomain;
+
 typedef struct { uint64_t addr, size; unsigned index; } IpcBuffer;
 
 typedef struct {
@@ -24,6 +27,8 @@ typedef struct {
     unsigned nx, na, nb, nw, nc;
     const uint8_t *data;                   // command arguments after the CMIF header (TIPC: after the HIPC header)
     uint32_t data_size;
+    IpcSession *objects[8];                // retained domain input objects, valid during the handler
+    unsigned nobjects;
 } IpcRequest;
 
 typedef struct {
@@ -34,9 +39,10 @@ typedef struct {
     unsigned ncopy, nmove;
     IpcBuffer xout[IPC_MAX_BUF];           // pointer data the service placed into the client's C buffers
     unsigned nxout;
+    uint32_t objects[8];
+    unsigned nobjects;
 } IpcResponse;
 
-typedef struct IpcSession IpcSession;
 typedef void (*IpcHandler)(IpcSession *s, const IpcRequest *rq, IpcResponse *rs);
 
 // One server object. Every kernel handle (including CloneCurrentObject copies) and in-flight request holds a
@@ -47,6 +53,7 @@ struct IpcSession {
     void *state;
     void (*close)(void *state);
     int32_t refs;
+    IpcDomain *domain;
 };
 
 uint32_t ipc_session_new(const char *name, IpcHandler handler, void *state, void (*close)(void *state));   // handle
@@ -67,3 +74,7 @@ uint64_t ipc_sessions_released(void);
 
 // The guest frame chain of the request being served, for fatal reports from services.
 void ipc_backtrace(void);
+void nifm_handler(IpcSession *s,const IpcRequest *rq,IpcResponse *rs);
+void bsd_handler(IpcSession *s,const IpcRequest *rq,IpcResponse *rs);
+void ssl_handler(IpcSession *s,const IpcRequest *rq,IpcResponse *rs);
+void nsd_handler(IpcSession *s,const IpcRequest *rq,IpcResponse *rs);

@@ -23,6 +23,7 @@ typedef struct {
     const char *name;
     uint32_t width, height, levels, layers, source_offset;
     int32_t row_stride;
+    int32_t image_stride;
     int has_view, copied;
     view_t view;
     NVNcopyRegion region;
@@ -68,7 +69,8 @@ static void fill_source(uint8_t *memory, const CopyCase *one) {
     uint32_t row = one->row_stride ? (uint32_t)one->row_stride : 32;
     for (int z = 0; z < one->region.depth; z++)
         for (unsigned y = 0; y < 2; y++) {
-            uint8_t *at = memory + one->source_offset + (uint32_t)z * row * 2 + y * row;
+            uint32_t image = one->image_stride ? (uint32_t)one->image_stride : row * 2;
+            uint8_t *at = memory + one->source_offset + (uint32_t)z * image + y * row;
             solid_block(at, colors[z * 4 + y * 2]);
             solid_block(at + 16, colors[z * 4 + y * 2 + 1]);
             for (unsigned off = 32; off < row; off += 16) solid_block(at + off, padding);
@@ -177,6 +179,8 @@ static int copy_case(const GfxBackend *backend, uint8_t *guest, const CopyCase *
     uint8_t *end = put_op(stream, OP_BEGIN, NULL, 0);
     const p_copy_stride stride = {one->row_stride};
     end = put_op(end, OP_COPY_STRIDE, &stride, sizeof stride);
+    const p_copy_stride image_stride = {one->image_stride, 1};
+    end = put_op(end, OP_COPY_STRIDE, &image_stride, sizeof image_stride);
     p_copy_b2t copy;
     memset(&copy, 0, sizeof copy);
     copy.src = (uint64_t)(uintptr_t)(pool.mem + one->source_offset), copy.tex = &texture;
@@ -376,6 +380,10 @@ int probe_vkcopy_astc(void) {
             .source_offset = 0x100, .row_stride = 64, .region = {0, 0, 0, 8, 8, 1}},
         {.name = "two layers/derived tight layer pitch", .width = 8, .height = 8, .levels = 1, .layers = 2,
             .source_offset = 0x100, .copied = 1, .region = {0, 0, 0, 8, 8, 2}},
+        {.name = "two layers/explicit padded image pitch", .width = 8, .height = 8, .levels = 1, .layers = 2,
+            .source_offset = 0x100, .image_stride = 96, .copied = 1, .region = {0, 0, 0, 8, 8, 2}},
+        {.name = "two layers/non-row-multiple image pitch", .width = 8, .height = 8, .levels = 1, .layers = 2,
+            .source_offset = 0x100, .image_stride = 80, .copied = 1, .region = {0, 0, 0, 8, 8, 2}},
         {.name = "view/mip/layer/subrectangle", .width = 32, .height = 32, .levels = 2, .layers = 4,
             .source_offset = 0x100, .has_view = 1, .copied = 1,
             .view = {.set_levels = 1, .base_level = 1, .nlevels = 1, .set_layers = 1, .min_layer = 1, .nlayers = 3},
@@ -441,6 +449,6 @@ int probe_vkcopy_astc(void) {
     unsigned total = sizeof cases / sizeof cases[0] + sizeof t2t_cases / sizeof t2t_cases[0];
     printf("probe-vkcopy-astc: %s (%u/%u cases, %u intentional skips, %u checks, %ld validation errors)\n",
         bad || errors ? "FAILED" : "passed", completed, total, skipped, checks, errors);
-    printf("probe-vkcopy-astc: independent image pitch, compute-program restoration, native/CPU/BC modes not covered\n");
+    printf("probe-vkcopy-astc: compute-program restoration, native/CPU/BC modes not covered\n");
     return bad || errors;
 }

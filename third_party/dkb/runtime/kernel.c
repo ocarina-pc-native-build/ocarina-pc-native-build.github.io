@@ -1397,6 +1397,10 @@ static RtThread *thr_new(int prio, int core, uint64_t mask) {
 
 static void thr_link(RtThread *t) {   // holding G
     t->handle = h_new(O_THREAD, t);
+    // Newer Horizon SDK mutex fast paths read the current handle directly at
+    // TPIDRRO_EL0+0x110. A zero tag makes an unlocked mutex appear self-owned.
+    // The kernel supplies it for the main thread and every CreateThread child.
+    ST32((uint64_t)(uintptr_t)t->tlr + 0x110, t->handle);
     t->id = g_next_id++;
     t->all = g_all;
     g_all = t;
@@ -1844,18 +1848,21 @@ int kern_svc(Cpu *c, uint32_t imm) {
         return 1;
     }
 
-    case 0x34: {   // WaitForAddress(x0 address, w1 type, w2 value, x3 timeout): 0 if less, 1 decrement if less, 2 if equal
+    case 0x34: {   // WaitForAddress: 0 less, 1 decrement-less, 2 equal32, 3 equal64
         RtThread *t = cur(imm);
         uint64_t addr = x[0];
         int type = (int)x[1];
         int32_t val = (int32_t)x[2];
-        if (type < 0 || type > 2) {
+        if (type < 0 || type > 3) {
             x[0] = R_INVALID_ENUM;
             return 1;
         }
+        if (addr & (type==3 ? 7u : 3u)) { x[0]=0xcc01; return 1; }
         lock();
         uint32_t r, v = ld32(addr);
-        int ok = type == 2 ? (int32_t)v == val : (int32_t)v < val;
+        // Equal64 semantics from nxnative hle_thread.c at 84dea698 (MIT).
+        int ok = type == 3 ? __atomic_load_n((uint64_t *)(uintptr_t)addr,__ATOMIC_SEQ_CST)==x[2] :
+                 type == 2 ? (int32_t)v == val : (int32_t)v < val;
         if (ok && type == 1)
             while (!cas32(addr, &v, v - 1))
                 if (!((int32_t)v < val)) {
@@ -2134,8 +2141,8 @@ static Fiber *fiber_find(uint64_t addr) {
 static void fiber_switch_to(RtThread *t, const Cpu *from, Fiber *to);
 
 // After a host fiber switch: release the context left behind, and finish an ExitThread issued on a fiber.
-static void fiber_resumed(void) {
-    RtThread *t = tcur;
+static void fiber_resumed(Cpu *c) {
+    RtThread *t = c->thread;
     rt_fpcr_sync(t->cur);   // the host fiber resumes with its own MXCSR (platform.h fibers switch it)
     if (t->leaving) {
         __atomic_store_n(&t->leaving->running, 0, __ATOMIC_RELEASE);
@@ -2146,16 +2153,16 @@ static void fiber_resumed(void) {
 
 static void fiber_main(void *p) {
     Fiber *f = p;
-    fiber_resumed();
     Cpu *c = f->cpu;
-    tcur->host_depth = 0;   // a new fiber starts at the top level; each context restores its own depth on resume
+    fiber_resumed(c);
+    ((RtThread *)c->thread)->host_depth = 0;   // a new fiber starts at the top level; each context restores its own depth on resume
     uint64_t next = rt_call(c, f->func, 1, f->arg);
     f->state = F_DONE;
     Fiber *n = NULL;
     if (next && !(n = fiber_find(next)))
         rt_fatal("fiber %#llx returned %#llx, which is not an initialized fiber", (unsigned long long)f->addr,
                  (unsigned long long)next);
-    fiber_switch_to(tcur, c, n);   // NULL: back to the thread's own context
+    fiber_switch_to(c->thread, c, n);   // NULL: back to the thread's own context
     rt_fatal("fiber %#llx resumed after it finished", (unsigned long long)f->addr);
 }
 
@@ -2186,8 +2193,10 @@ static void fiber_switch_to(RtThread *t, const Cpu *from, Fiber *to) {
     t->cur = dst;
     int depth = t->host_depth;
     plat_fiber_switch(to ? to->host : t->base_fiber);
-    t->host_depth = depth;
-    fiber_resumed();
+    // Another OS thread can resume this stack. It updates Cpu.thread before
+    // switching; neither the old t nor a compiler-cached TLS address is valid.
+    ((RtThread *)from->thread)->host_depth = depth;
+    fiber_resumed((Cpu *)from);
 }
 
 // InitializeFiber(x0 FiberType*, x1 function, x2 argument, x3 stack, x4 stack size, w5 flags)
@@ -2245,7 +2254,9 @@ void kern_fiber_switch(Cpu *c) {
     RtThread *t = tcur;
     if (!t) rt_fatal("SwitchToFiber on a host thread");
     Fiber *to = fiber_find(c->x[0]);
-    if (!to) rt_fatal("SwitchToFiber(%#llx): not an initialized fiber", (unsigned long long)c->x[0]);
+    // The SDK accepts NULL as the thread context saved by its first switch.
+    // Async tasks explicitly yield to it and later resume the same fiber.
+    if (c->x[0] && !to) rt_fatal("SwitchToFiber(%#llx): not an initialized fiber", (unsigned long long)c->x[0]);
     if (to == t->fiber) return;
     fiber_switch_to(t, c, to);
 }

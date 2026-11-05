@@ -411,7 +411,13 @@ static int buffer_side(const VkExec *ex, const Sub *s, uint64_t addr, uint64_t *
                   (unsigned long long)row, wb, s->bpb);
         return 0;
     }
-    uint64_t img = row * hb;
+    uint64_t img = ex->copy_image_stride > 0 ? (uint64_t)ex->copy_image_stride : row * hb;
+    if (ex->copy_stride < 0 || ex->copy_image_stride < 0 || img < row * hb || img % (uint64_t)s->bpb ||
+        row / (uint64_t)s->bpb > UINT32_MAX / (uint32_t)s->bw ||
+        (s->nz > 1 && img > (UINT64_MAX - row * hb) / (s->nz - 1))) {
+        warn_once(W_REGION, "invalid buffer copy row/image pitch: skipped");
+        return 0;
+    }
     *size = img * (s->nz - 1) + row * (hb - 1) + (uint64_t)wb * (uint64_t)s->bpb;
     VkMemSpan m;
     if (!addr || !vk_mem_resolve(addr, *size, &m) || m.avail < *size) {
@@ -450,7 +456,7 @@ static void copy_buffer_image(VkExec *ex, const p_copy_b2t *p, int to_image) {
         }
         VkAstcRegion *ar = calloc(s.nz, sizeof *ar);
         if (!ar) return;
-        uint64_t img_bytes = tight_row * (uint64_t)hb;
+        uint64_t img_bytes = ex->copy_image_stride > 0 ? (uint64_t)ex->copy_image_stride : tight_row * (uint64_t)hb;
         int is3d = s.img->type == VK_IMAGE_TYPE_3D;
         for (uint32_t z = 0; z < s.nz; z++) {
             ar[z] = (VkAstcRegion){
@@ -476,6 +482,20 @@ static void copy_buffer_image(VkExec *ex, const p_copy_b2t *p, int to_image) {
     } else if (to_image && (s.f.vk != s.f.ideal || s.f.expand_rgb || s.f.astc_bw)) {
         warn_once(W_FORMAT, "copy of format %#x texture (decoded or expanded on upload): skipped", p->tex->d.format);
         return;
+    } else if (ex->copy_image_stride > 0 && s.nz > 1 && s.f.vk == s.f.ideal && !s.f.expand_rgb && !s.f.astc_bw) {
+        // One region per slice handles image pitches that are not a multiple of
+        // the row pitch. Vulkan's bufferImageHeight cannot express those.
+        for (uint32_t z = 0; z < s.nz; z++) {
+            VkBufferImageCopy slice = c;
+            slice.bufferOffset += (uint64_t)z * (uint64_t)ex->copy_image_stride;
+            slice.imageExtent.depth = 1;
+            slice.imageSubresource.layerCount = 1;
+            if (s.img->type == VK_IMAGE_TYPE_3D) slice.imageOffset.z += (int32_t)z;
+            else slice.imageSubresource.baseArrayLayer += z;
+            if (to_image) vkCmdCopyBufferToImage(ex->cb, m.buffer, s.img->image, VK_IMAGE_LAYOUT_GENERAL, 1, &slice);
+            else vkCmdCopyImageToBuffer(ex->cb, s.img->image, VK_IMAGE_LAYOUT_GENERAL, m.buffer, 1, &slice);
+        }
+        written = 1;
     } else if (to_image) {
         vkCmdCopyBufferToImage(ex->cb, m.buffer, s.img->image, VK_IMAGE_LAYOUT_GENERAL, 1, &c);
         written = 1;
