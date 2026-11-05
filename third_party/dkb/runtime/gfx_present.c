@@ -268,6 +268,13 @@ static void flip_locked(void) {
     vk_queue_lock();
     VkResult r = vkQueuePresentKHR(vk_ctx()->gfx_queue, &pi);
     vk_queue_unlock();
+    static uint64_t accepted;
+    if (r == VK_SUCCESS || r == VK_SUBOPTIMAL_KHR) {
+        ++accepted;
+        if (accepted == 1 || accepted % 600 == 0)
+            rt_log("gfx progress: vkQueuePresentKHR accepted %llu images (last result %d)",
+                   (unsigned long long)accepted, (int)r);
+    }
     vk_device_fault_report(r);
     if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR) plat_xchg32(&g_dirty, 1);
 }

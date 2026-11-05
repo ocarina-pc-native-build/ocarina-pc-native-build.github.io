@@ -29,6 +29,7 @@
 #include "nvn_indirect_reset.h"
 #include "vk.h"
 #include "vk_exec.h"
+#include "tex.h"
 #include "platform/platform.h"
 
 #define MAX_BINDINGS 128
@@ -605,17 +606,25 @@ static VkImageView get_view(VkExec *ex, const VkTexImage *img, const view_t *v, 
             }
     }
     uint32_t swz = (uint32_t)sw[0] | (uint32_t)sw[1] << 8 | (uint32_t)sw[2] << 16 | (uint32_t)sw[3] << 24;
-    ViewKey k = {img->image, img->format, vt, aspect, l0, nl, y0, ny, swz};
+    VkFormat format = img->format;
+    if (hv && v->set_format) {
+        TexVkFormat requested;
+        if (!tex_vk_format(v->format, &requested)) return VK_NULL_HANDLE;
+        format = requested.vk;
+    }
+    // A sampled view and a storage view have different usage contracts even when
+    // their format and component mapping happen to match.
+    ViewKey k = {img->image, format, vt, aspect, l0, nl, y0, ny, swz | (storage ? 0x80000000u : 0)};
     if (!view_of.klen) nvn_hm_init(&view_of, sizeof(ViewKey)), nvn_hm_init(&views_by_image, sizeof(VkImage));
     VkImageView found = (VkImageView)nvn_hm_get(&view_of, &k);
     if (found) return found;
     VkImageViewCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO, .image = img->image, .viewType = vt,
-                                .format = img->format,
+                                .format = format,
                                 .components = {swz_of(sw[0]), swz_of(sw[1]), swz_of(sw[2]), swz_of(sw[3])},
                                 .subresourceRange = {aspect, l0, nl, y0, ny}};
     VkImageViewUsageCreateInfo use = {.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO,
-                                      .usage = VK_IMAGE_USAGE_SAMPLED_BIT};
-    if (img->block_views) ci.pNext = &use;   // the image's COLOR_ATTACHMENT usage is its block views' (vk_texture.c)
+                                      .usage = storage ? VK_IMAGE_USAGE_STORAGE_BIT : VK_IMAGE_USAGE_SAMPLED_BIT};
+    ci.pNext = &use;   // restrict the view to its use; sRGB views cannot inherit STORAGE
     VkImageView view;
     if (vkCreateImageView(vk_ctx()->device, &ci, NULL, &view) != VK_SUCCESS) return VK_NULL_HANDLE;
     ViewNode *n = malloc(sizeof *n);
@@ -641,11 +650,9 @@ VkImageView vk_exec_target_view(const VkTexImage *img, VkFormat format, VkImageV
                                     .viewType = type, .format = format, .subresourceRange = {aspect, level, 1, base, layers}};
         VkImageViewUsageCreateInfo use = {.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_USAGE_CREATE_INFO,
                                           .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT};
-        if (blocks) ci.pNext = &use;   // not the BC image's sampling and transfer usages
-        // A view in another format (an sRGB target over a UNORM texture) drops the image's storage usage, which that
-        // format may lack: every colour texture that allows it is made with storage usage (vk_texture.c create_tex).
-        else if (format != img->format && (img->usage & VK_IMAGE_USAGE_STORAGE_BIT))
-            use.usage = img->usage & ~VK_IMAGE_USAGE_STORAGE_BIT, ci.pNext = &use;
+        use.usage = aspect & VK_IMAGE_ASPECT_COLOR_BIT ? VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT :
+                                                       VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+        ci.pNext = &use;   // an attachment view does not inherit storage usage
         if (vkCreateImageView(vk_ctx()->device, &ci, NULL, &view) != VK_SUCCESS)
             rt_fatal("vk: render target view (format %d) could not be created", (int)format);
         ViewNode *n = malloc(sizeof *n);
@@ -888,10 +895,11 @@ static void count_use(int cls, int use, uint64_t n) {
 static int bind_range(VkExec *ex, uint64_t addr, uint64_t size, uint64_t align, uint64_t max, int use, int written,
                       int direct_only, VkDescriptorBufferInfo *out) {
     VkMemSpan sp;
-    if (!addr || !vk_mem_resolve(addr, 1, &sp)) return 0;
-    uint64_t n = size && size < sp.avail ? size : sp.avail;
+    if (!addr) return 0;
+    uint64_t n = vk_mem_pool_available(addr);
+    if (size && size < n) n = size;
     if (n > max) n = max;
-    if (!n) return 0;
+    if (!n || !vk_mem_resolve(addr, n, &sp)) return 0;
     if (sp.offset % align == 0) {
         VK_MEM_USE(sp);
         *out = (VkDescriptorBufferInfo){sp.buffer, sp.offset, n};

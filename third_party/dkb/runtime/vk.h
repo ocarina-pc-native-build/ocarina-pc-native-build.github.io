@@ -136,6 +136,8 @@ long vk_validation_errors_total(void);             // validation errors since th
 int  vk_pool_init(pool_t *p);              // CPU-visible: guest storage imported (VK_EXT_external_memory_host) as one
                                            // VkBuffer; physical: device-local memory; virtual: a 64 KiB page table
 void vk_pool_fini(pool_t *p);              // drops images cut from the pool; waits for the GPU if it used the pool
+uint64_t vk_mem_pool_available(uint64_t addr); // registered address range, before selecting a bounded buffer view
+extern uint64_t vk_test_import_limit;     // probe only: lower the import size limit
 int  vk_pool_map_virtual(pool_t *v, int n, const void *requests);   // nvn_mapping_t[n], checked by the front end
 void vk_texture_register(const dpool_ref *pool, int id, const tex_t *t, const view_t *v);
 void vk_sampler_register(const dpool_ref *pool, int id, const samp_par *s);

@@ -25,6 +25,13 @@ Eglantine shader lowering and other inherited components with revisions and term
 Those notices and files are preserved. Eglantine shader lowering and the native
 Ryujinx translator helper are built and integrated. No emulator is launched.
 
+The rendering continuation selectively backports TXQ component/split-destination
+and signed I2F lowering from Eglantine revision
+`23f383cab532bf3834ea55f3488b48841f3c727b`,
+`src/shader_recompiler/frontend/ampere/lower_to_maxwell.h` (GPL-3.0-or-later).
+The original copyright is retained; the donor notices distinguish the original
+base revision from these backports and the local TEX halfword packing correction.
+
 Source URLs: [DKB](https://github.com/Lucas-blip-png/dkb-pc-recomp),
 [TotK](https://github.com/valentderah/totk-pc-recomp),
 [nxnative](https://github.com/seedds/nxnative),

@@ -558,6 +558,42 @@ static int test_textures(pool_t *tpool, pool_t *phys) {
     return 0;
 }
 
+static int test_bounded_import(pool_t *pool) {
+    VkCtx *c = vk_ctx();
+    uint64_t a = (uintptr_t)pool->mem;
+    // Exercise the real device/import/copy path with a smaller test ceiling.
+    // The production ceiling is still queried from the physical device.
+    vk_test_import_limit = 0x10000;
+    GCHECK(vk_pool_init(pool), "bounded import pool initialization");
+    VkMemSpan first, crossing;
+    GCHECK(vk_mem_resolve(a + 0x8000, 0x8000, &first), "first bounded view");
+    GCHECK(vk_mem_resolve(a + 0x10000, 0x10000, &crossing), "range crossing the first view boundary");
+    GCHECK(first.buffer != crossing.buffer && crossing.avail >= 0x10000,
+           "cross-boundary range must get complete backing, never a truncated descriptor");
+    GCHECK(vk_mem_pool_available(a + 0x10000) == pool->size - 0x10000, "logical range independent of view boundary");
+    VkBuffer sb;
+    VmaAllocation sa;
+    uint8_t *s = vk_staging(0x10000, &sb, &sa);
+    for (int i = 0; i < 0x10000; i++) s[i] = (uint8_t)(i * 37 + 11);
+    vmaFlushAllocation(c->vma, sa, 0, VK_WHOLE_SIZE);
+    copy_wait(sb, 0, crossing.buffer, crossing.offset, 0x10000);
+    GCHECK(!memcmp(pool->mem + 0x10000, s, 0x10000), "bounded GPU write reaches original host storage");
+    memset(s, 0, 0x10000);
+    vmaFlushAllocation(c->vma, sa, 0, VK_WHOLE_SIZE);
+    copy_wait(first.buffer, first.offset + 0x8000, sb, 0, 0x8000);
+    vmaInvalidateAllocation(c->vma, sa, 0, VK_WHOLE_SIZE);
+    for (int i = 0; i < 0x8000; i++) GCHECK(s[i] == (uint8_t)(i * 37 + 11), "overlapping import lost byte %d", i);
+    vmaDestroyBuffer(c->vma, sb, sa);
+    vk_pool_fini(pool);
+    GCHECK(!vk_mem_resolve(a + 0x10000, 16, &first), "finalized bounded view remains resolvable");
+    vk_test_import_limit = 0;
+    GCHECK(vk_pool_init(pool) && vk_mem_resolve(a + 0x10000, 16, &first), "same address can be reinitialized");
+    vk_pool_fini(pool);
+    g_gpu_checks += 8;
+    printf("probe-vkmem: bounded imports: cross-boundary ranges, overlapping GPU writes/readback, retirement and reuse passed\n");
+    return 0;
+}
+
 static int test_gpu(void) {
     uint64_t heap = 0;
     GCHECK(mem_set_heap_size(16ull << 20, &heap) == 0 && heap, "SetHeapSize 16 MiB");
@@ -579,6 +615,7 @@ static int test_gpu(void) {
     vk_pool_fini(&virt), vk_pool_fini(&phys), vk_pool_fini(&tpool), vk_pool_fini(&pool);
     vk_mem_stats(&st);
     GCHECK(!st.imported_pools && !st.physical_pools && !st.virtual_pools, "pools left after fini");
+    if (test_bounded_import(&pool)) return 1;
     g_gpu_checks += 2;
     return 0;
 }

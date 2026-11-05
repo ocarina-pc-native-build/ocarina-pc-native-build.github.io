@@ -21,7 +21,14 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL debug_cb(VkDebugUtilsMessageSeverityFlagBi
     int err = (sev & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) != 0;
     if (err) plat_inc32(&g_vk.validation_errors);
     static volatile int32_t logged;
-    if (plat_inc32(&logged) <= 500) rt_log("vk validation %s: %s", err ? "error" : "warning", d->pMessage);
+    if (plat_inc32(&logged) <= 500) {
+        rt_log("vk validation %s [%s, %d]: %s", err ? "error" : "warning",
+               d->pMessageIdName ? d->pMessageIdName : "no VUID", d->messageIdNumber, d->pMessage);
+        for (uint32_t i = 0; i < d->objectCount; i++)
+            rt_log("vk validation object: type %u handle %#llx name %s", d->pObjects[i].objectType,
+                   (unsigned long long)d->pObjects[i].objectHandle,
+                   d->pObjects[i].pObjectName ? d->pObjects[i].pObjectName : "unnamed");
+    }
     return VK_FALSE;
 }
 
@@ -74,6 +81,7 @@ static int create_instance(void) {
     VkResult r = vkCreateInstance(&ci, NULL, &g_vk.instance);
     if (r != VK_SUCCESS) { rt_log("vk: vkCreateInstance failed (%d); is a Vulkan 1.3 driver installed?", (int)r); return 0; }
     g_vk.validation = validate;
+    rt_log("vk: requested API 1.3; VK_LAYER_KHRONOS_validation %s", validate ? "enabled" : "disabled");
     if (validate) {
         PFN_vkCreateDebugUtilsMessengerEXT f =
             (PFN_vkCreateDebugUtilsMessengerEXT)vkGetInstanceProcAddr(g_vk.instance, "vkCreateDebugUtilsMessengerEXT");
@@ -311,6 +319,9 @@ static int create_device(void) {
     VkDeviceCreateInfo di = {.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO, .pNext = &c->f2, .queueCreateInfoCount = nqi,
                              .pQueueCreateInfos = qi, .enabledExtensionCount = n_ext, .ppEnabledExtensionNames = ext};
     VkResult r = vkCreateDevice(g_vk.phys, &di, NULL, &g_vk.device);
+    if (r == VK_SUCCESS) rt_log("vk: enabled features: shaderInt64 %u shaderFloat64 %u geometryShader %u timelineSemaphore %u "
+           "dynamicRendering %u synchronization2 %u", c->f2.features.shaderInt64, c->f2.features.shaderFloat64,
+           c->f2.features.geometryShader, c->f12.timelineSemaphore, c->f13.dynamicRendering, c->f13.synchronization2);
     free(c);
     if (r != VK_SUCCESS) { rt_log("vk: vkCreateDevice failed (%d)", (int)r); return 0; }
     vkGetDeviceQueue(g_vk.device, g_vk.gfx_family, 0, &g_vk.gfx_queue);
