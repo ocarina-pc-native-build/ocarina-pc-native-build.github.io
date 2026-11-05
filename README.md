@@ -4,7 +4,7 @@
 
 ### Native Windows x64 recompilation · Switch 2 → PC
 
-**In development · Video and menus working · 3D gameplay not yet verified**
+**Experimental build · Real 3D output visible · Controllable gameplay unverified**
 
 I’m working on a native Windows x64 recompilation of the Switch 2 version of **Ocarina of Time**. The goal is to run the translated game code with a Windows runtime and a Vulkan graphics backend.
 
@@ -14,60 +14,61 @@ This project page documents my current development progress and the next steps. 
 **Discord:** [Join our Discord](https://discord.gg/vDPAcc6JnY)  
 **Maintainer:**  https://github.com/HotDevilSauce
 **Status updated:** November 5, 2026  
-**Latest reported local development commits:** `3555ea1` and `5971bd8`
+**Latest reported local development commit:** `e6125e6`  
+**Latest report:** [Development Update #01](UPDATE-01.md)
 
-## Development video
+## Development Update #01 — first real 3D output
+
+**November 5, 2026 · Reported local commit: `e6125e6`**
+
+**Real 3D output is now visible, including the Deku Tree and dialogue.** This is an experimental development milestone. **There is no playable release yet, and controllable gameplay and saving/loading have not been verified.**
+
+### Implemented and fixed
+
+- Native game code linked successfully with the Windows runtime; all **58** previously unresolved PACGA cases implemented and tested.
+- **AV1 video decoding** added; a reproduced thread-switch crash and shutdown hang fixed.
+- Incorrect **sRGB texture-view usage** corrected, resolving the black screen in the tested startup path.
+- Game video, title screen, main menu and options menu display correctly. Opening and leaving the options menu works.
+- The Deku Tree and dialogue are now visible in real 3D output, with rendering problems still present.
+
+### Latest testing
+
+Reported testing used an **AMD Radeon RX 7900 XTX**.
+
+| Metric | Earlier report | Previous report | Update #01 |
+| :--- | ---: | ---: | ---: |
+| Shader error reports | 464 | 203 | **111** |
+| Vulkan errors in the tested menu/options path | 2 | 0 | **0** |
+
+| Passed checks | Reported count |
+| :--- | ---: |
+| Runtime checks | **15** |
+| Project tests | **17** |
+| GPU checks | **245** |
+
+The zero Vulkan error count applies to the tested menu/options path. Shader report counts do not necessarily represent distinct shaders or root causes.
+
+### Known issues
+
+- **Heavy overexposure:** washed-out colours and missing visual detail in the 3D scene. The rendering issue is being investigated and **is not fixed yet**.
+- **Reproducible CPU return crash:** a longer test stops around **frame 23,250**, at a CPU return reported as `main+0x1661690`.
+- **Controllable gameplay and saving/loading remain unverified.** Visible 3D scenes and working menus do not establish full playability, stable gameplay performance, or compatibility with other hardware.
+
+### Next priorities
+
+1. Fix the CPU return crash.
+2. Identify and correct the overexposure.
+3. Resolve relevant remaining shader errors.
+4. Reach and verify the first genuinely controllable gameplay scene.
+5. Then test scene transitions, saving/loading, longer sessions and additional hardware.
+
+[Read the full Development Update #01](UPDATE-01.md) · [Detailed roadmap](ROADMAP.md) · [Earlier milestones](CHANGELOG.md)
+
+## Earlier development video
 
 [Watch the development video on the project website](https://ocarina-pc-native-build.github.io/#video) · [Open the MP4 recording](https://ocarina-pc-native-build.github.io/development-video.mp4) (14.7 MB)
 
-Recorded November 5, 2026. The artwork above is project artwork; the video is the development recording. See the status below for the scope of reported testing.
-
-## Current milestone
-
-The black screen in the tested startup path has been fixed. **Actual game video, the title screen, and the main menu are displayed.** An input test successfully opens the options menu and returns.
-
-The cause was an incorrectly used write view for an sRGB texture. According to the local development report, the fix was tested on an **AMD Radeon RX 7900 XTX**.
-
-| Metric in the tested startup and menu path | Before | Latest report |
-| :--- | ---: | ---: |
-| Vulkan errors | 2 | **0** |
-| Shader error messages | 464 | **203** |
-
-The latest reported run included **3,000 Vulkan presentations** and ended normally. This count does not demonstrate playable 3D gameplay or a particular frame rate.
-
-**Tests:** 13 runtime checks, 17 existing tests, and additional regression tests were reported as passing. The exact number of additional regression tests was not specified.
-
-## What is working so far
-
-| Area | Status according to the local development report |
-| :--- | :--- |
-| Windows test runtime | Debug and Release builds created |
-| Translated game code | 551 generated C files compiled natively |
-| PACGA | All 58 previously outstanding sites implemented and checked |
-| Linking | Zelda code linked with the Windows runtime |
-| Video playback | AV1 decoding added; actual game video visible |
-| Startup and menus | Title screen and main menu visible |
-| Input | Options menu opened and return path tested successfully |
-| Stability | Reproduced thread-switch crash and shutdown hang fixed |
-| Vulkan validation | No errors in the most recently tested startup and menu path |
-
-## What remains unresolved
-
-**3D gameplay and full playability have not yet been verified.** Full runtime integration is also still in progress. A working main menu is an important milestone, but it does not demonstrate that the entire game works.
-
-There are **203 documented shader error messages** remaining. This is a message count, not necessarily 203 distinct shaders or root causes. Additional scenes may reveal further issues.
-
-A controllable 3D scene, working scene transitions, in-game saving and loading, and a stable frame rate over longer gameplay sessions have not yet been demonstrated. Compatibility with other graphics cards or systems is not promised.
-
-## Next steps
-
-- [ ] Reach the first controllable 3D scene through “New Game.”
-- [ ] Fix shader and runtime issues that affect gameplay.
-- [ ] Test movement, camera behavior, collisions, and interactions.
-- [ ] Check scene transitions, saving, restarting, and loading.
-- [ ] Then investigate stability, additional hardware, and performance.
-
-See the [roadmap](ROADMAP.md) for details and the [changelog](CHANGELOG.md) for reported milestones.
+Earlier startup/menu footage recorded November 5, 2026. This video does not show the new 3D milestone in Update #01. The banner above is project artwork.
 
 ## Join the community
 
@@ -97,4 +98,4 @@ This is an unofficial project and is not affiliated with Nintendo.
 
 ---
 
-*All progress claims refer to local development reports. Tested startup and menu features are explicitly distinguished from gameplay that has not yet been verified.*
+*All progress claims refer to local development reports. Visible 3D scenes and tested menu features are explicitly distinguished from controllable gameplay that has not yet been verified.*

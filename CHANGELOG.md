@@ -1,8 +1,21 @@
 # Development changelog
 
-This log summarizes the supplied local development reports. Commit identifiers refer to local development history; the website repository does not automatically contain those commits or the game code. Individual commit dates were not supplied.
+This log summarizes the supplied local development reports. Commit identifiers refer to local development history; the website repository does not automatically contain those commits or the game code. Update #01 is dated November 5, 2026; dates for individual earlier commits were not supplied.
 
-## Latest reported milestone — `3555ea1` and `5971bd8`
+## November 5, 2026 — Development Update #01 · `e6125e6`
+
+- Reached real 3D output, including the Deku Tree and dialogue.
+- Reduced shader error reports from **203 to 111**, down from **464** in the earlier build.
+- Continued to report **0 Vulkan errors** in the tested menu/options path on an **AMD Radeon RX 7900 XTX**.
+- Reported **15 runtime checks, 17 project tests and 245 GPU checks** as passing.
+- Documented unresolved **heavy overexposure**, washed-out colours and missing visual detail.
+- Reproduced a CPU return crash around **frame 23,250**, reported at `main+0x1661690`.
+
+Controllable gameplay and saving/loading remain unverified. Immediate priorities are the CPU return crash, overexposure, relevant shader errors and the first controllable gameplay scene.
+
+[Read the complete Development Update #01](UPDATE-01.md).
+
+## Previous reported milestone — `3555ea1` and `5971bd8`
 
 - Corrected an incorrectly used write view for an sRGB texture.
 - Displayed actual game video, the title screen, and the main menu in the tested startup path.
