@@ -265,6 +265,75 @@ static int run_uniform_reductions(uint8_t *memory,void *command_control) {
     return 1;
 }
 
+// Compare a lane register with a uniform float, including NaNs, signed zero,
+// source modifiers and both predicate results. Read back actual GPU stores.
+static int run_uniform_fsetp(uint8_t *memory,void *command_control) {
+    uint32_t native[][4]={
+        {0x00047a02,0x400,0xf00,0}, {0x00057a02,0x500,0xf00,0},
+        {0x00007802,0,0xf00,0}, // R0 = A
+        {0x00027882,0,0,0}, // UR2 = B
+        {0x00007c0b,2,0x03901000,0}, // FSETP P0,P1,R0,UR2,PT
+        {0x00087802,0,0xf00,0}, {0x00080802,1,0xf00,0},
+        {0x00097802,0,0xf00,0}, {0x00091802,1,0xf00,0},
+        {0x000a7802,0xabcdef01,0xf00,0}, {0x000b7802,0x12345678,0xf00,0},
+        {0x04007386,0x1008,0x0010ad00,0}, {0x0000794d,0,0x03800000,0}
+    };
+    const uint32_t values[][2]={{0xbf800000,0x3f800000},{0x80000000,0},
+        {0x7fc12345,0x3f000000},{0x40000000,0x7fc98765},
+        {0xff800000,0x7f800000},{0xc0000000,0xbf800000}};
+    uint32_t ctl[0xd8/4]={0};
+    ctl[0]=0x98761234; ctl[1]=0xc9; ctl[0x30/4]=sizeof ctl; ctl[0x38/4]=sizeof native;
+    ctl[0x58/4]=ctl[0x5c/4]=ctl[0x60/4]=1; ((uint8_t *)ctl)[0xb2]=1;
+    const GfxBackend *backend=&gfx_vulkan_backend;
+    unsigned before=failures;
+    for(unsigned dynamic=0;dynamic<2;dynamic++)
+    for(unsigned v=0;v<6;v++) for(unsigned cmp=0;cmp<16;cmp++) {
+        // Cycle abs/neg on both operands across comparison modes.
+        unsigned mods=cmp;
+        uint32_t a=values[v][0],b=values[v][1];
+        native[2][0]=dynamic?0x04007381:0x00007802; // LDG.64 R0:R1,[R4]
+        native[2][1]=dynamic?0:a;
+        native[2][2]=dynamic?0x001eab00:0xf00;
+        native[3][0]=dynamic?0x010273c2:0x00027882; // R2UR UR2,R1
+        native[3][1]=dynamic?0:b;
+        native[3][2]=dynamic?0xe0000:0;
+        native[4][1]=2|((mods>>2&1)<<30)|((mods>>3&1)<<31);
+        native[4][2]=(1u<<20)|(7u<<23)|(cmp<<12)|((mods&1)<<9)|((mods>>1&1)<<8);
+        if(mods&1)a&=0x7fffffff; if(mods&2)a^=0x80000000;
+        if(mods&4)b&=0x7fffffff; if(mods&8)b^=0x80000000;
+        float af,bf; memcpy(&af,&a,4); memcpy(&bf,&b,4);
+        int unordered=(a&0x7fffffff)>0x7f800000||(b&0x7fffffff)>0x7f800000;
+        int result=unordered ? (cmp&8)!=0 :
+            ((cmp&1)&&af<bf)||((cmp&2)&&af==bf)||((cmp&4)&&af>bf);
+        NVNshaderData shader={U(native),(const uint8_t *)ctl};
+        if(!(uint8_t)CALL(nvnProgramSetShaders,U(&program),1,U(&shader)))return 0;
+        memset(memory+OUTPUT_OFF,0xa5,OUTPUT_BYTES);
+        memcpy(memory+OUTPUT_OFF,values[v],8);
+        CALL(nvnMemoryPoolFlushMappedRange,U(&memory_pool),OUTPUT_OFF,OUTPUT_BYTES);
+        CALL(nvnCommandBufferAddControlMemory,U(&command),U(command_control),CONTROL_BYTES);
+        CALL(nvnCommandBufferBeginRecording,U(&command));
+        CALL(nvnCommandBufferBindProgram,U(&command),U(&program),NVN_SHADER_STAGE_COMPUTE_BIT);
+        CALL(nvnCommandBufferBindStorageBuffer,U(&command),NVN_SHADER_STAGE_COMPUTE,0,U(memory+OUTPUT_OFF),32);
+        CALL(nvnCommandBufferDispatchCompute,U(&command),1,1,1);
+        uint64_t commands=CALL(nvnCommandBufferEndRecording,U(&command));
+        if(!commands)return 0;
+        uint64_t fence=backend->submit(&commands,1,rt_ticks());
+        if(!backend->fence_wait(fence,UINT64_C(10000000000)))return 0;
+        backend->cpu_synced(fence);
+        const uint32_t expected[]={(uint32_t)result,(uint32_t)!result,0xabcdef01,0x12345678};
+        const uint32_t *got=(const uint32_t *)(memory+OUTPUT_OFF+16);
+        for(unsigned k=0;k<4;k++) { checks++; if(got[k]!=expected[k]) {
+            failures++; printf("probe-vkpool: FAIL uniform FSETP dynamic %u pair %u cmp %u word %u: %#x expected %#x\n",
+                               dynamic,v,cmp,k,got[k],expected[k]);
+        } }
+        int canary=!memcmp(memory+OUTPUT_OFF,values[v],8);
+        for(unsigned i=8;i<OUTPUT_BYTES;i++)if((i<16||i>=32)&&memory[OUTPUT_OFF+i]!=0xa5)canary=0;
+        checks++; if(!canary) { failures++; puts("probe-vkpool: FAIL uniform FSETP output bounds"); }
+    }
+    printf("probe-vkpool: uniform FSETP GPU comparisons: %s\n",failures==before?"passed":"FAILED");
+    return 1;
+}
+
 static int run_feedback_views(void) {
     if(vk_ctx()->feedback!=VK_FEEDBACK_LAYOUT) {
         puts("probe-vkpool: feedback view cases unavailable on this device"); return 1;
@@ -799,6 +868,7 @@ int probe_vkpool(void) {
     REQUIRE(gfx_shader_failures() == shader_failures, "no shader translation failures");
     REQUIRE(run_warp_reductions(memory,command_control),"native warp reductions completed");
     REQUIRE(run_uniform_reductions(memory,command_control),"native uniform atomics completed");
+    REQUIRE(run_uniform_fsetp(memory,command_control),"uniform floating comparisons completed");
     REQUIRE(run_feedback_views(),"feedback attachment views preserve pixels");
     REQUIRE(gfx_shader_failures() == shader_failures,"no warp translation failures");
 done:

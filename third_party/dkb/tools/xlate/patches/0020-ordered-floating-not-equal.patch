@@ -1,0 +1,16 @@
+--- a/src/Ryujinx.Graphics.Shader/Instructions/InstEmitFloatComparison.cs
++++ b/src/Ryujinx.Graphics.Shader/Instructions/InstEmitFloatComparison.cs
+@@ -563,6 +563,13 @@
+                     res = context.BitwiseOr(res, context.IsNan(srcA, fpType));
+                     res = context.BitwiseOr(res, context.IsNan(srcB, fpType));
+                 }
++                else if (cond == FComp.Ne)
++                {
++                    // Generic != is unordered (also during constant folding).
++                    // Maxwell NE is ordered; only NEU accepts a NaN operand.
++                    Operand unordered = context.BitwiseOr(context.IsNan(srcA, fpType), context.IsNan(srcB, fpType));
++                    res = context.BitwiseAnd(res, context.BitwiseNot(unordered));
++                }
+             }
+ 
+             return res;

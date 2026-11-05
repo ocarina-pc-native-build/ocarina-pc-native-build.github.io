@@ -137,3 +137,50 @@ The run exits 0 at 7600 requests; actual presentation and postprocessing capture
 are present. It records 374 native and five translator failures, 56 active failed
 native stages, with validation disabled. This is visible 3D and responsive game
 UI, not a declaration of correct rendering or full playability.
+
+## Uniform floating predicates and ordered comparison folding
+
+The native FSETP source form `0xc0b` was missing from the opcode switch even
+though `operand()` already handles uniform registers and their modifiers.
+Routing that form through the existing floating predicate lowering accepts
+97 additional captured stages: on the same 8,363 inputs, 7,983 become 8,080
+accepted, with no newly rejected stage. `uniform_fsetp.cpp` has 688 passing
+checks including UR27/URZ, invalid registers and invalid predicate combinations;
+the old lowering fails 240 support checks.
+
+The authored GPU cases revealed a separate translator defect: constant-folded
+ordered NE returned true for NaN. The existing dynamic comparison was correct.
+Patch 0020 explicitly excludes NaNs from NE, preserving NEU's unordered result
+and generic IR inequality semantics. The exact same GPU fixture fails four
+output checks with translator `b089e95ac8ceb109`, then none with the rebuilt
+translator `49346371a5435278`. It tests all 16 comparisons, abs/neg, both predicate
+outputs, signed zero, infinities, NaNs and unchanged memory outside the outputs;
+96 cases use immediates and 96 load their values from a storage buffer on the GPU.
+
+The final pool suite passes 2,372 checks with zero core validation errors.
+All 326 modules in its cache pass Vulkan 1.3 validation (this includes both
+translators used for the controlled before/after test). The 16,161,412 existing
+render checks, 15 host probes, 17 project tests and six translator-build option
+tests also pass. No vendor source file was edited: patch 0020 is applied to the
+build copy. The translator was rebuilt from the complete current patch set;
+the game uses a separate `cache-fsetp-verified`. An earlier incomplete incremental
+translator build and its contaminated diagnostic cache are retained and marked
+invalid locally, excluded from these results.
+
+Real run `fsetp-camera` uses EXE SHA256
+`86d1b9492c0379f85390132e66c6a674db8a9c3a99609e9c168a3eef23fc75ec`
+and translator SHA256
+`8e3035cf53eb13a757fe47ffb2f7f3ab056ea25cebb6e043a171f5f539095d8c`.
+The static scene remains overlit. Native failures fall from 374 to 278; none is
+a repeated native error message. At the interruption, 34 failed native stages
+had actually been selected. The feedback VUID remains absent, with ten capped
+06479 messages. At request 4875, it exits 70:
+
+```
+FATAL: vk: vkWaitSemaphores failed (VkResult -3; target 34130, last completed 34129)
+[host] fatal: memory commit: this process 20564 MB, the system 47590 of 48236 MB
+```
+
+This is a real failure under near-exhausted system commit, not a successful
+6400-frame run. A separate camera capture without the validation layer is used
+to investigate lighting; validation-off counters cannot establish Vulkan validity.
