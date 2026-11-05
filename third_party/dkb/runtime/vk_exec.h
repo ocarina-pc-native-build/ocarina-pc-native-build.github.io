@@ -172,6 +172,7 @@ void vk_dump_draw(VkExec *ex, const VkPipeState *s, VkPipeline p, const VkPipeIn
 void vk_dump_dispatch(VkExec *ex, const GfxShader *cs, VkPipeline p, const VkPipeInfo *info, const p_dispatch *d);
 void vk_dump_blocked_dispatch(VkExec *ex, const p_dispatch *d, uint64_t indirect, const char *reason);
 void vk_dump_blocked_draw(VkExec *ex, int prim, int32_t count, unsigned missing_stages);
+void vk_dump_copy_image(VkExec *ex, VkImage image, VkBuffer buffer, const VkBufferImageCopy *region);
 void vk_dump_copy(VkExec *ex, uint32_t op, const void *payload);   // before a copy or texture clear is replayed
 void vk_dump_present(uint64_t frame);    // vk_be_present: waits for the dump frame's copies and closes the logs
 

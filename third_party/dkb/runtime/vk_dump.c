@@ -306,6 +306,39 @@ static void job_done(void *arg) {
 
 // ---- recording
 
+// Capturing a feedback attachment requires a temporary transferable layout.
+// Restore the layout before returning so the executor's tracked state stays true.
+void vk_dump_copy_image(VkExec *ex, VkImage image, VkBuffer buffer, const VkBufferImageCopy *region) {
+    VkImageAspectFlags feedback_aspect=0;
+    for(int i=0;i<ex->nfbl;i++) if(ex->fbl_img[i]==image)feedback_aspect=ex->fbl_aspect[i];
+    VkMemoryBarrier2 pre={.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+        .srcStageMask=VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,.srcAccessMask=VK_ACCESS_2_MEMORY_WRITE_BIT,
+        .dstStageMask=VK_PIPELINE_STAGE_2_COPY_BIT,.dstAccessMask=VK_ACCESS_2_TRANSFER_READ_BIT};
+    VkMemoryBarrier2 post={.sType=VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
+        .srcStageMask=VK_PIPELINE_STAGE_2_COPY_BIT,.srcAccessMask=VK_ACCESS_2_TRANSFER_WRITE_BIT,
+        .dstStageMask=VK_PIPELINE_STAGE_2_HOST_BIT,.dstAccessMask=VK_ACCESS_2_HOST_READ_BIT};
+    VkImageMemoryBarrier2 layout={.sType=VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+        .srcStageMask=VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+        .srcAccessMask=VK_ACCESS_2_MEMORY_READ_BIT|VK_ACCESS_2_MEMORY_WRITE_BIT,
+        .dstStageMask=VK_PIPELINE_STAGE_2_COPY_BIT,.dstAccessMask=VK_ACCESS_2_TRANSFER_READ_BIT,
+        .oldLayout=VK_IMAGE_LAYOUT_ATTACHMENT_FEEDBACK_LOOP_OPTIMAL_EXT,.newLayout=VK_IMAGE_LAYOUT_GENERAL,
+        .srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,
+        .image=image,.subresourceRange={feedback_aspect,region->imageSubresource.mipLevel,1,
+            region->imageSubresource.baseArrayLayer,region->imageSubresource.layerCount}};
+    VkDependencyInfo dependency={.sType=VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+        .memoryBarrierCount=1,.pMemoryBarriers=&pre,
+        .imageMemoryBarrierCount=feedback_aspect?1u:0u,.pImageMemoryBarriers=&layout};
+    vkCmdPipelineBarrier2(ex->cb,&dependency);
+    vkCmdCopyImageToBuffer(ex->cb,image,VK_IMAGE_LAYOUT_GENERAL,buffer,1,region);
+    layout.srcStageMask=VK_PIPELINE_STAGE_2_COPY_BIT;layout.srcAccessMask=VK_ACCESS_2_TRANSFER_READ_BIT;
+    layout.dstStageMask=VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+    layout.dstAccessMask=VK_ACCESS_2_MEMORY_READ_BIT|VK_ACCESS_2_MEMORY_WRITE_BIT;
+    layout.oldLayout=VK_IMAGE_LAYOUT_GENERAL;layout.newLayout=VK_IMAGE_LAYOUT_ATTACHMENT_FEEDBACK_LOOP_OPTIMAL_EXT;
+    dependency.pMemoryBarriers=&post;
+    vkCmdPipelineBarrier2(ex->cb,&dependency);
+    ex->recorded+=3;
+}
+
 // Records the copy of one subresource into a host buffer and queues its PNGs. Returns NULL, or why it was skipped.
 // The buffer is w x h x d texels of vf; the image region is `ext` image texels at depth plane z (differs for the
 // blocks of a BC image read as an uncompressed format of the block size, and for a 3D slice).
@@ -335,24 +368,9 @@ static const char *copy_region(VkExec *ex, VkImage image, VkFormat vf, VkImageAs
     }
     j->map = info.pMappedData, j->bytes = bytes, j->f = f, j->w = w, j->h = h, j->d = d;
     snprintf(j->name, sizeof j->name, "%s", name);
-    VkMemoryBarrier2 pre = {.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
-                            .srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-                            .srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT,
-                            .dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT,
-                            .dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT};
-    VkMemoryBarrier2 post = {.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2,
-                             .srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT,
-                             .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
-                             .dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT,
-                             .dstAccessMask = VK_ACCESS_2_HOST_READ_BIT};
-    VkDependencyInfo di = {.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .memoryBarrierCount = 1, .pMemoryBarriers = &pre};
-    vkCmdPipelineBarrier2(ex->cb, &di);
     VkBufferImageCopy r = {.imageSubresource = {aspect, level, layer, 1}, .imageOffset = {0, 0, (int32_t)z},
                            .imageExtent = ext};   // packed rows: a BC row of ext.width texels is w blocks
-    vkCmdCopyImageToBuffer(ex->cb, image, VK_IMAGE_LAYOUT_GENERAL, j->buf, 1, &r);
-    di.pMemoryBarriers = &post;
-    vkCmdPipelineBarrier2(ex->cb, &di);
-    ex->recorded += 3;
+    vk_dump_copy_image(ex,image,j->buf,&r);
     plat_add64(&png_bytes, (int64_t)est);
     plat_add64(&inflight, (int64_t)bytes);
     vk_completion_add(ex->fence, job_done, j);

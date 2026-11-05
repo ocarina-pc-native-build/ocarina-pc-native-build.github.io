@@ -1403,6 +1403,15 @@ inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code,
         }
         case 0x919: case 0x9c3: { // S2R / S2UR thread, workgroup and geometry invocation identities.
             const u32 special = insn.Bits(72, 8);
+            if (special == 132 && !insn.words[1] && insn.words[2] == (special << 8)) {
+                // SR_VARIABLE_RATE packs fragment width/height in bytes 1/2. Our Vulkan
+                // device/pipelines never enable variable-rate shading, so both are one.
+                // Revisit this lowering if the renderer starts enabling a coarser rate.
+                const u32 target = opcode == 0x9c3 ? uniform_register(static_cast<u32>(dest)) : static_cast<u32>(dest);
+                if (target == ~0U) return fail(index, "native uniform special destination");
+                mov_imm(target, 0x00010100);
+                break;
+            }
             if (insn.words[1] || insn.words[2] != (special << 8) ||
                 // DKB Recomp: 19, SR_THREAD_KILL (helper invocation), which Maxwell's S2R reads the same way.
                 (special != 0 && special != 17 && special != 19 && special != 29 && special != 33 && special != 34 && special != 35 &&
@@ -1698,6 +1707,27 @@ inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code,
             const u32 source_a = insn.Bits(24, 8), source_b = insn.Bits(32, 8);
             const u32 binding = insn.Bits(54, 5);
             const u32 components = static_cast<u32>(std::popcount(mask));
+            // Scalar 2D depth gather: X/Y are the first source pair, comparison reference
+            // is the second source. Maxwell consumes the same three values, with DC at bit 50.
+            if (insn.Bits(61, 3) == 1 && insn.Bits(60, 1) && !insn.Bits(59, 1) &&
+                (insn.words[2] & ~0x04100fffU) == 0x000e4000 && mask == 15 &&
+                binding < 18 && insn.Bits(40, 14) <= 0x1fff && source_a < 245 && source_b < 246 &&
+                dest < 245 && !(dest & 1) && second_dest < 245 && !(second_dest & 1)) {
+                if (result.required_texture_buffer != ~0U && result.required_texture_buffer != binding)
+                    return fail(index, "native texture descriptor buffer conflict");
+                result.required_texture_buffer = binding;
+                for (u32 i = 0; i < 2; ++i)
+                    emit(0x5c98000000000000ULL | predicate | (250 + i) | (u64{15} << 39) |
+                         (u64{source_a + i} << 20));
+                emit(0xc800000000000000ULL | predicate | 250 | (u64{250} << 8) |
+                     (u64{source_b} << 20) | (u64{2} << 28) | (u64{15} << 31) |
+                     (u64{insn.Bits(40, 14)} << 36) | (u64{insn.Bits(90, 1)} << 49) |
+                     (u64{1} << 50) | (u64{7} << 51));
+                for (u32 i = 0; i < 4; ++i)
+                    emit(0x5c98000000000000ULL | predicate | (i < 2 ? dest + i : second_dest + i - 2) |
+                         (u64{15} << 39) | (u64{250 + i} << 20));
+                break;
+            }
             // 2D gather with per-texel offsets (bits 76-77 = 2, .PTP): Rb:Rb+1 hold the four
             // offset pairs, which Maxwell TLD4 takes the same way (offset type 2, bits 54-55).
             const bool half = insn.Bits(79, 1) != 0;
