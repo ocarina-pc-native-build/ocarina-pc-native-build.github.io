@@ -1,15 +1,18 @@
 # OoT2026-PC-Recomp
 
-An experimental Windows x64 recompilation workspace. **This is not a playable
+An experimental Windows x64 recompilation workspace. **This is not yet a verified playable
 Ocarina of Time port.** It contains an actually compiled independent host, a native
 diagnostic launcher, validated NSO preprocessing, an adapted ARM64-to-C lifter,
 and a locally linked Windows game executable using the inherited Horizon/NVN2 host.
 
 The supplied NUP identifies itself as Ocarina of Time 1.1.1. That metadata is not
 an independent authenticity or compatibility certificate. The game executable now
-executes the supplied code, mounts RomFS and decodes AV1 movies. A 600-frame
-diagnostic still captures a black image, with 464 shader translation failures and
-two Vulkan validation errors. See [current results and blockers](docs/STATUS.md).
+executes the supplied code, mounts RomFS and displays AV1 video, the title/main
+menu and the options screen. Scripted menu navigation opens Options and returns.
+The black start image and two Vulkan buffer errors are fixed; 203 shader lowering
+failures remain, down from 464. Gameplay is unverified. See
+[current results and blockers](docs/STATUS.md) and
+[rendering evidence](docs/RENDERING_BRINGUP.md).
 The independent diagnostic launcher below is separate from that game executable.
 
 ## Run the independent runtime

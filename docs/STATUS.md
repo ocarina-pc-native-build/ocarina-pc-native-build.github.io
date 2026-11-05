@@ -1,10 +1,12 @@
-# Engineering status — 2026-11-05, native boot checkpoint
+# Engineering status — 2026-11-05, visible title and menu
 
-**The existing project now links and executes the supplied Zelda code on Windows.
-It is not yet a playable port.** The latest validated run reached 600 presented
-frames and exited normally, but its captured preview is black. It reported 464
-shader failures and two Vulkan validation errors. No title screen, gameplay,
-working game saves, audible game audio or performance target is verified.
+**The supplied Zelda code now displays opening video, its title/main menu and
+the options screen on Windows. It is not yet a verified playable port.** The
+black image was caused by incorrect storage-view usage on an sRGB texture.
+Scripted menu selection opens Options and returns to the main menu. Vulkan
+validation errors fell from two to zero; shader failures fell from 464 to 203.
+Gameplay, working game saves, audible audio and a performance target remain
+unverified. See [rendering evidence and remaining failures](RENDERING_BRINGUP.md).
 
 ## Preserved compilation and PACGA
 
@@ -43,8 +45,8 @@ are included and universal reachability/correctness has not been established.
 - AV1 decoding now uses pinned dav1d 1.5.4 with the supplied SDK's exact exported
   signatures, output properties, direct event-pointer ABI and sync-point wait.
   The real guest movie demuxer supplied AV1 packets; 1920x1080 pictures were decoded
-  and read as NV12 through approximately 6.4 seconds of video. GPU presentation of
-  those pictures remains unverified. Only 8-bit I420 output and one shown picture
+  and read as NV12; the rendering continuation now verifies GPU conversion and
+  visible video presentation. Only 8-bit I420 output and one shown picture
   per input sample are implemented; other cases fail explicitly.
 - NVN2 property `0x67` returns the reference value 256. Unknown properties retain
   explicit errors and now include the guest caller in the diagnostic.
@@ -83,25 +85,28 @@ even when the game process exits with code 0.
 - 17 parser/normalizer/runtime-input unit tests pass.
 - PACGA differential and concurrency checks pass as above. Earlier integer/SIMD
   results remain preserved; they were not represented as newly rerun here.
-- Final Vulkan validation run: 600 frames, 95 guest threads, 756,596 SVCs,
-  3,273,484 host calls; process exit 0. A 960x540 preview is 3,570 bytes and has
-  zero nonblack pixels. The original 2560x1440 capture remains local.
+- New regressions: 301 shader/range checks, 2,822 existing native EXIT-capture
+  checks, 49 GPU memory checks and 63 descriptor/storage-view checks pass.
+  All 46 runtime-cache SPIR-V modules pass validation for Vulkan 1.3.
+- Real rendering runs reach opening video at 600 guest presentation requests,
+  title/main menu in longer runs, and open/close Options during a 3,000-request
+  script. Successful Vulkan presentations are now counted separately from guest
+  requests. GPU validation reports zero errors; processes exit normally.
+- Captures honor the presented 1706x960 crop of the larger backing texture.
+  The original black captures and logs are retained for before/after comparison.
 - No controller is connected. Controller behavior, game audio, saves, scene
   transitions and sustained frame timing are not verified.
 
 ## Remaining blockers
 
-1. **Shader support:** 464 rejected stages: 255 texture-dimension query modes,
-   79 native opcodes, 56 stage-buffer read modes, 41 texture-gather modes,
-   26 byte-to-float conversions, six scratch-register conflicts and one texel
-   fetch/descriptor mode. These need semantically correct lowering and regression
-   fixtures, not skipped instructions. The captured output remains black.
-2. **GPU memory limits:** a 2,550,136,832-byte guest pool becomes one Vulkan
-   buffer/allocation, exceeding this GPU's 2,147,483,648-byte limits. Validation
-   reports `VUID-VkBufferCreateInfo-size-06409` and an oversized allocation.
-   Pool storage needs splitting with correct address/binding/transfer translation.
-   Ignoring validation or falsifying reported limits is not a fix.
-3. **Complete runtime compatibility:** the exercised boot path is integrated;
+1. **Shader support:** 203 rejected stages: 79 native opcodes, 56 stage-buffer
+   reads, 41 gathers, 20 funnel-shift immediate modes, six scratch-register
+   conflicts and one texel-fetch/descriptor mode. They remain explicit errors;
+   title/options rendering does not establish correctness of later scenes.
+2. **Unexercised rendering:** 3D gameplay and broader texture readback/shader
+   semantics remain unverified. The two reported oversized pool errors are fixed
+   through bounded host imports with GPU regression coverage.
+3. **Complete runtime compatibility:** the exercised title/menu path is integrated;
    unsupported later services, traps, codec formats and gameplay paths remain.
    No playability or general completion claim is made.
 
