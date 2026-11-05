@@ -2095,18 +2095,27 @@ inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code,
                 // result comes in as the predicate at bits 68-70 (negated by 71), e.g.
                 // ISETP.NE P0 = lo != 0, then ISETP.NE.EX P0 = (hi != 0) OR P0. EQ: high equal
                 // AND low; NE: high different OR low; the orderings: high strictly ordered OR
-                // (high equal AND low). One or two Maxwell ISETPs into the destination; only
-                // the plain form (no second destination, AND with PT) is handled.
+                // (high equal AND low). An additional AND predicate is applied after this
+                // comparison. Preserve it if it aliases the destination, using a saved
+                // temporary predicate that cannot alias either input or the execution guard.
                 const u32 compare = insn.Bits(76, 3);
                 const u32 destination = insn.Bits(81, 3);
                 const u32 low = insn.Bits(68, 4);
-                if (insn.Bits(84, 3) != 7 || insn.Bits(87, 4) != 7 || insn.Bits(74, 2) != 0 ||
+                const u32 accumulator = insn.Bits(87, 4);
+                if (insn.Bits(84, 3) != 7 || insn.Bits(74, 2) != 0 ||
                     compare == 0 || compare == 7 ||
                     (destination != 7 && insn.Bits(12, 3) == destination))
                     return fail(index, "native extended integer comparison mode");
                 const u32 a = operand(0, false), b = operand(1, false);
+                u32 target = destination;
+                if (accumulator != 7) {
+                    target = 6;
+                    while (target == destination || target == (low & 7) ||
+                           target == (accumulator & 7) || target == (native_predicate & 7)) --target;
+                    save_predicate(1U << target);
+                }
                 const auto isetp = [&](u32 op, u32 input, u32 combine) {
-                    return 0x5b60000000000000ULL | predicate | 7 | (u64{destination} << 3) |
+                    return 0x5b60000000000000ULL | predicate | 7 | (u64{target} << 3) |
                            (u64{a} << 8) | (u64{b} << 20) | (u64{input & 7} << 39) |
                            (u64{input >> 3} << 42) | (u64{combine} << 45) |
                            (u64{insn.Bits(73, 1)} << 48) | (u64{op} << 49);
@@ -2118,7 +2127,12 @@ inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code,
                     emit(isetp(Ne, low, Or));
                 } else {
                     emit(isetp(Eq, low, And));
-                    emit(isetp(compare <= 3 ? Lt : Gt, destination, Or));
+                    emit(isetp(compare <= 3 ? Lt : Gt, target, Or));
+                }
+                if (accumulator != 7) {
+                    emit(0x5090000000000000ULL | predicate | 7 | (u64{destination} << 3) |
+                         (u64{target} << 12) | (u64{accumulator} << 29) | (u64{7} << 39));
+                    restore_predicate(1U << target);
                 }
                 break;
             }

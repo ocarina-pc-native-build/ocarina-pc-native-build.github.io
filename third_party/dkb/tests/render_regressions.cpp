@@ -129,8 +129,58 @@ static void windows() {
     CHECK(!vk_import_window(base,end,base,0,0x1000,cap,&lo,&hi));
     CHECK(!vk_import_window(base,end,base,1,0x1000,0xfff,&lo,&hi));
 }
+static void extended_accumulator() {
+    // ISETP.EX computes a 64-bit relation, then ANDs an independent predicate.
+    // Exercise aliasing, every predicate state and false/inverted guards. The
+    // emitted Maxwell stream must preserve all seven live predicates except Pd.
+    const u32 highs[]={0,1,0x7fffffff,0x80000000,0xffffffff};
+    const u32 slots[][3]={{0,0,1},{1,2,1},{1,1,2},{3,0,2},{0,7,7}};
+    for (u32 relation=1;relation<=6;relation++) for (u32 sign=0;sign<2;sign++)
+    for (auto& slot:slots) for (u32 inv=0;inv<4;inv++) for (u32 guard:{7u,4u,12u}) {
+        const u32 dst=slot[0], low=slot[1]|((inv&1)<<3), acc=slot[2]|((inv&2)<<2);
+        if (acc==7) continue; // The existing plain-form suite covers this fast path.
+        auto i=op(0x20c); bits(i,12,4,guard); bits(i,24,8,4); bits(i,32,8,6);
+        bits(i,68,4,low); bits(i,72,1,1); bits(i,73,1,sign);
+        bits(i,76,3,relation); bits(i,81,3,dst); bits(i,84,3,7); bits(i,87,4,acc);
+        auto out=lower(i); CHECK(bool(out)); if (!out) continue;
+        for (u32 state=0;state<128;state++) for (u32 a:highs) for (u32 b:highs) {
+            bool predicates[8]; u32 registers[256]={}; registers[4]=a; registers[6]=b;
+            for (unsigned k=0;k<8;k++) predicates[k]=k==7 || bool(state&(1u<<k));
+            auto read=[&](u32 p) {return predicates[p&7]^bool(p&8);};
+            const bool enabled=read(guard), lo=read(low), extra=read(acc);
+            const bool eq=a==b;
+            const bool ordered=sign ? compare(std::bit_cast<int32_t>(a),std::bit_cast<int32_t>(b),relation<=3?1:4)
+                                    :compare(a,b,relation<=3?1:4);
+            const bool wide=relation==2 ? eq&&lo : relation==5 ? !eq||lo : ordered||(eq&&lo);
+            const bool expected=enabled ? wide&&extra : predicates[dst];
+            for (unsigned n=0;n<out.source_instruction_offsets[1];n++) {
+                const u64 m=out.instructions[n];
+                if (!read((m>>16)&15)) continue;
+                if ((m&0xfff0000000000000ull)==0x5b60000000000000ull) {
+                    const u32 lhs=registers[(m>>8)&255],rhs=registers[(m>>20)&255];
+                    bool v=(m>>48)&1 ? compare(std::bit_cast<int32_t>(lhs),std::bit_cast<int32_t>(rhs),(m>>49)&7)
+                                         :compare(lhs,rhs,(m>>49)&7);
+                    bool input=read((m>>39)&15);
+                    predicates[(m>>3)&7]=((m>>45)&3) ? v||input : v&&input;
+                } else if ((m&0xfff8000000000000ull)==0x38e8000000000000ull) {
+                    u32 mask=(m>>20)&0x7f, packed=0;
+                    for (u32 k=0;k<7;k++) if (predicates[k]) packed|=1u<<k;
+                    registers[m&255]=(registers[(m>>8)&255]&~mask)|(packed&mask);
+                } else if ((m&0xfff8000000000000ull)==0x38f0000000000000ull) {
+                    const u32 mask=(m>>20)&0x7f,value=registers[(m>>8)&255];
+                    for (u32 k=0;k<7;k++) if (mask&(1u<<k)) predicates[k]=bool(value&(1u<<k));
+                } else if ((m&0xfff0000000000000ull)==0x5090000000000000ull) {
+                    CHECK(((m>>24)&3)==0 && ((m>>45)&3)==0);
+                    predicates[(m>>3)&7]=read((m>>12)&15)&&read((m>>29)&15)&&read((m>>39)&15);
+                } else CHECK(false);
+                predicates[7]=true;
+            }
+            for (u32 k=0;k<7;k++) CHECK(predicates[k]==(k==dst ? expected : bool(state&(1u<<k))));
+        }
+    }
+}
 int main() {
-    txq(); i2f(); texture_half_order(); extended_compare(); windows();
+    txq(); i2f(); texture_half_order(); extended_compare(); extended_accumulator(); windows();
     std::printf("render regressions: %u checks, %u failures\n", checks, failures);
     return failures?1:0;
 }
