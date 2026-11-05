@@ -309,6 +309,7 @@ int probe_dpi(void);                                       // dpi_probe_win.c (W
 int probe_loader(void), probe_kernel(void), probe_ipc(void), probe_ipc_lifetime(void), probe_services(void), probe_fs(void);
 int probe_audio_device(void);
 int probe_system_core(void);
+int probe_prepo_async(void);
 int probe_nifm(void);
 int probe_bsd(void);
 int probe_ipc_domains(void);

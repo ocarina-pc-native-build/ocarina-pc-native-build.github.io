@@ -55,6 +55,7 @@ static Ov ovs[] = {
     {"oe.PopNotificationMessage", "_ZN2nn2oe22PopNotificationMessageEv"},
     {"prepo.Save", "_ZN2nn5prepo10PlayReport4SaveEv"},
     {"prepo.SaveUid", "_ZN2nn5prepo10PlayReport4SaveERKNS_7account3UidE"},
+    {"prepo.SendUid", "_ZN2nn5prepo10PlayReport4SendERKNS_7account3UidE"},
     {"prepo.RequestImmediateTransmission", "_ZN2nn5prepo28RequestImmediateTransmissionEv"},
     {"prepo.AddInternetConnectionStatus", "_ZN2nn5prepo27AddInternetConnectionStatusEPNS0_10PlayReportEPKcS4_S4_"},
     {"nfp.Initialize", "_ZN2nn3nfp10InitializeEv"},
@@ -352,6 +353,12 @@ static void probe_applet(void) {
     uint8_t *report = guest_alloc(0x100);
     uint64_t uid[2] = {1, 2};
     CHECK(CALL("prepo.Save", U(report)) == 0 && CALL("prepo.SaveUid", U(report), U(uid)) == 0, "PlayReport::Save");
+    uint64_t context[2]={UINT64_MAX,UINT64_MAX};
+    Ov *send=ov("prepo.SendUid");
+    gc->x[8]=U(context);
+    rt_call(gc,send->addr,2,U(report),U(uid));
+    send->calls++;
+    CHECK(context[0]==0 && (uint32_t)context[1]==0, "PlayReport::Send indirect result");
     CHECK(CALL("prepo.RequestImmediateTransmission", 0) == 0, "RequestImmediateTransmission");
     CHECK(CALL("prepo.AddInternetConnectionStatus", U(report), U("a"), U("b"), U("c")) == 0,
           "AddInternetConnectionStatus");
