@@ -240,3 +240,59 @@ System / Save, explicitly moves from Cancel to Save, and confirms. Screenshot
 save from four to six files, adding the manual slot's caption and progress.
 The process exits 0 at 6800 requests. The original profile is never selected.
 Regular reload of this new manual slot remains a separate pending check.
+
+## Full-rate reads, shadow gather and capture layout
+
+Three remaining fragment shaders read SR_VARIABLE_RATE (132). The renderer
+does not enable a fragment-shading-rate extension/feature or supply a rate
+state in `vk_device.c` / `vk_pipeline.c`. The lowering now reports its actual
+1x1 fragments, packed as `0x00010100`; this invariant must change if coarse
+shading is implemented. See the [Vulkan rasterization specification](https://docs.vulkan.org/spec/latest/chapters/primsrast.html).
+The same census accepts 26 more stages, 8,127/8,375, without new rejections.
+The authored register test passes 154 checks (old implementation: 30 failures).
+The hardware probe checks both ordinary/uniform results and a disabled read.
+
+`fragment-rate-scene` reaches 4400 requests, exits 0 after 243.297 seconds, and
+reduces the captured blocked draws from 8 to 1. It still reports 245 distinct
+native failures and four downstream failures. Its core validation reports ten
+capped 06479 messages and ten `VUID-vkCmdCopyImageToBuffer-srcImageLayout-00189`
+messages: capture claimed GENERAL while the image was actually in
+ATTACHMENT_FEEDBACK_LOOP_OPTIMAL_EXT. Capture now temporarily transitions the
+specific subresources to GENERAL and restores their prior layout after copying,
+preserving executor tracking. The existing GPU feedback regression now invokes
+the production capture-copy helper on UNORM, sRGB and depth images and checks
+unchanged pixels plus subsequent layout use. No diagnostic is suppressed.
+
+The last rejected fragment shader, `ce62c81dd5a4d9b0`, uses scalar 2D TLD4.DC
+at +0x1650. Native X/Y and depth reference now map to Maxwell's coordinate pair
+and comparison operand, with the DC flag and split four-result destinations.
+CPU checks cover source/result overlap; GPU checks use real depth .25/.75,
+LESS/GREATER samplers, three references and overlapping/non-overlapping layouts.
+The old CPU lowering fails all 27 support checks; the corrected one passes
+243 checks. Census: 8,128/8,375, one additional stage, no new rejects.
+
+The combined pool suite passes 4,569 checks with zero core validation errors;
+all 483 cache modules pass Vulkan 1.3 validation. The 16,161,412 render checks,
+15 host probes and 17 project tests pass again. No translator rebuild was
+needed: changed lowered code changes the cache key; translator identity remains
+`49346371a5435278` from the complete patch-0020 build.
+
+The first combined real validation run crashes near request 2798, process exit
+`0xc0000005`, before producing a screenshot. Windows Application event 1000 at
+2026-11-05 19:30:56 identifies `VkLayer_khronos_validation.dll`, offset
+`0x8cfec2`, as the faulting module. This identifies the fault location, not
+the cause or proof that all application calls were valid. The regular path
+already reports the unresolved 06479 depth-comparison descriptors.
+
+`depth-gather-no-vvl` uses the same EXE, SHA256
+`50f2904947ae0653caccc36fc8d1fd98df726ce4972ebddc8cb52d7f2de9200c`,
+with validation disabled. It exits 0 at 6400 requests after 174.453 seconds,
+244 distinct native failures plus four downstream translation failures.
+The frame-4200 dump has zero blocked draws, but 17 blocked compute dispatches
+remain in this path. The new pass 116, fragment SPIR-V `5fbfa3290a581bc0`, samples
+the real 1600x1600x3 and 12288x12288 D16 shadow images and writes a 1280x720
+RGBA8 result. Shadows visibly return around Link's house; this is a concrete
+lighting-path correction, without changing exposure or adding substitute output.
+The same camera-turn sequence still yields a largely white image at 6200.
+Missing foliage is not yet established as the remaining cause, and this is not
+a declaration of visually correct or fully playable gameplay.

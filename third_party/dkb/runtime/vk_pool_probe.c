@@ -46,6 +46,7 @@ OBJECT(NVNtexture, alias_r11_texture);
 OBJECT(NVNsamplerBuilder, sampler_builder);
 OBJECT(NVNsampler, repeat_sampler);
 OBJECT(NVNsampler, clamp_sampler);
+OBJECT(NVNsampler, shadow_sampler);
 OBJECT(NVNtexturePool, texture_a);
 OBJECT(NVNtexturePool, texture_b);
 OBJECT(NVNsamplerPool, sampler_repeat);
@@ -348,6 +349,12 @@ static int run_feedback_views(void) {
         if(!vk_texture_read_image(textures[n],NULL,&region,before,8,8))return 0;
         const VkTexImage *img=vk_texture_get(textures[n]);
         if(!img||!img->fb_usage)return 0;
+        VkBuffer buffer;VmaAllocation allocation;VmaAllocationInfo mapped;
+        VkBufferCreateInfo buffer_info={.sType=VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,.size=8,
+            .usage=VK_BUFFER_USAGE_TRANSFER_DST_BIT};
+        VmaAllocationCreateInfo allocation_info={.usage=VMA_MEMORY_USAGE_AUTO,
+            .flags=VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT|VMA_ALLOCATION_CREATE_MAPPED_BIT};
+        if(vmaCreateBuffer(vk_ctx()->vma,&buffer_info,&allocation_info,&buffer,&allocation,&mapped)!=VK_SUCCESS)return 0;
         VkImageView view=vk_exec_target_view(img,img->format,VK_IMAGE_VIEW_TYPE_2D,img->aspect,0,0,1,0);
         VkCommandBuffer cb=vk_upload_begin();
         VkImageMemoryBarrier2 barrier={.sType=VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
@@ -368,9 +375,17 @@ static int run_feedback_views(void) {
         if(n==2)rendering.pDepthAttachment=&attachment;
         else rendering.colorAttachmentCount=1,rendering.pColorAttachments=&attachment;
         vkCmdBeginRendering(cb,&rendering); vkCmdEndRendering(cb);
+        VkExec capture={.cb=cb,.nfbl=1,.fbl_img={img->image},.fbl_aspect={img->aspect}};
+        VkBufferImageCopy copy={.imageSubresource={img->aspect,0,0,1},.imageExtent={2,1,1}};
+        vk_dump_copy_image(&capture,img->image,buffer,&copy);
         barrier.oldLayout=barrier.newLayout; barrier.newLayout=VK_IMAGE_LAYOUT_GENERAL;
         vkCmdPipelineBarrier2(cb,&dependency);
         vk_upload_end(); vk_upload_flush(1);
+        vmaInvalidateAllocation(vk_ctx()->vma,allocation,0,VK_WHOLE_SIZE);
+        checks++;if(memcmp(before,mapped.pMappedData,8)) {
+            failures++;printf("probe-vkpool: FAIL feedback capture format %u changed pixels\n",img->format);
+        }
+        vmaDestroyBuffer(vk_ctx()->vma,buffer,allocation);
         if(!vk_texture_read_image(textures[n],NULL,&region,after,8,8))return 0;
         checks++; if(memcmp(before,after,8)) {
             failures++; printf("probe-vkpool: FAIL feedback attachment format %u changed pixels\n",img->format);
@@ -491,6 +506,77 @@ static int run_gradient_masks(uint8_t *memory,void *command_control,uint64_t han
                 if(!run_case(name,memory,command_control,handle,tp,sp,expected,1,stride))return 0;
             }
         }
+    }
+    return 1;
+}
+
+static int run_fragment_rate(uint8_t *memory,void *command_control,uint64_t handle,size_t stride) {
+    uint32_t native[][4]={
+        {0x00087919,0,0x8400,0}, // S2R R8, SR_VARIABLE_RATE
+        {0x000079c3,0,0x8400,0}, // S2UR UR0, SR_VARIABLE_RATE
+        {0x00097c02,0,0x08000f00,0}, // R9 = UR0
+        {0x000a7802,0x1234abcd,0xf00,0},
+        {0x000af919,0,0x8400,0}, // @!PT: preserve the sentinel
+        {0x000b7802,0xabcdef01,0xf00,0},
+        {0x00287a02,0x400,0xf00,0},{0x00297a02,0x500,0xf00,0},
+        {0x28007386,8,0x0010ad00,0},{0x794d,0,0x03800000,0}
+    };
+    uint32_t ctl[0xd8/4]={0};
+    ctl[0]=0x98761234;ctl[1]=0xc9;ctl[0x30/4]=sizeof ctl;ctl[0x38/4]=sizeof native;
+    ctl[0x58/4]=ctl[0x5c/4]=ctl[0x60/4]=1;((uint8_t *)ctl)[0xb2]=1;
+    NVNshaderData shader={U(native),(const uint8_t *)ctl};
+    if(!(uint8_t)CALL(nvnProgramSetShaders,U(&program),1,U(&shader)))return 0;
+    const NVNtexturePool *tp[3]={&texture_a,&texture_a,&texture_a};
+    const NVNsamplerPool *sp[3]={&sampler_repeat,&sampler_repeat,&sampler_repeat};
+    const uint32_t expected[3][4]={{0x10100,0x10100,0x1234abcd,0xabcdef01}};
+    return run_case("full fragment rate and disabled read",memory,command_control,handle,tp,sp,expected,1,stride);
+}
+
+static int run_depth_gather(uint8_t *memory,void *command_control,uint64_t handle,size_t stride,int ti,int si) {
+    const float depths[]={0.25f,0.75f};
+    NVNcopyRegion region={0,0,0,2,1,1};
+    CALL(nvnTextureWriteTexels,U(&unused_depth_texture),0,U(&region),U(depths));
+    CALL(nvnTexturePoolRegisterTexture,U(&texture_a),ti,U(&unused_depth_texture),0);
+    const NVNtexturePool *tp[3]={&texture_a,&texture_a,&texture_a};
+    const NVNsamplerPool *sp[3]={&sampler_clamp,&sampler_clamp,&sampler_clamp};
+    for(unsigned cmp=0;cmp<2;cmp++) {
+        CALL(nvnSamplerBuilderSetDevice,U(&sampler_builder),U(&device));
+        CALL(nvnSamplerBuilderSetDefaults,U(&sampler_builder));
+        CALL(nvnSamplerBuilderSetMinMagFilter,U(&sampler_builder),NVN_MIN_FILTER_NEAREST,NVN_MAG_FILTER_NEAREST);
+        CALL(nvnSamplerBuilderSetWrapMode,U(&sampler_builder),NVN_WRAP_MODE_CLAMP_TO_EDGE,NVN_WRAP_MODE_CLAMP_TO_EDGE,NVN_WRAP_MODE_CLAMP_TO_EDGE);
+        CALL(nvnSamplerBuilderSetCompare,U(&sampler_builder),NVN_COMPARE_MODE_COMPARE_R_TO_TEXTURE,
+             cmp?NVN_COMPARE_FUNC_GREATER:NVN_COMPARE_FUNC_LESS);
+        if(!(uint8_t)CALL(nvnSamplerInitialize,U(&shadow_sampler),U(&sampler_builder)))return 0;
+        CALL(nvnSamplerPoolRegisterSampler,U(&sampler_clamp),si,U(&shadow_sampler));
+        int ok=1;
+        for(unsigned ref=0;ref<3 && ok;ref++) for(unsigned overlap=0;overlap<2 && ok;overlap++) {
+            // Four gathered comparisons, then scatter the second pair to R20:R21.
+            // The overlap case reads X/Y from the eventual first result pair.
+            uint32_t native[][4]={
+                {0x00007802,0x3f000000,0xf00,0},{0x00017802,0x3f000000,0xf00,0},
+                {0x00027802,0,0xf00,0},
+                {0x00087b63,0x30000802,0x001e4f14,0},
+                {0x000a7202,20,0xf00,0},{0x000b7202,21,0xf00,0},
+                {0x00287a02,0x400,0xf00,0},{0x00297a02,0x500,0xf00,0},
+                {0x28007386,8,0x0010ad00,0},{0x794d,0,0x03800000,0}
+            };
+            native[2][1]=ref==0?0:ref==1?0x3f000000:0x3f800000;
+            if(overlap) { native[0][0]+=8u<<16;native[1][0]+=8u<<16;native[3][0]|=8u<<24; }
+            uint32_t ctl[0xd8/4]={0};
+            ctl[0]=0x98761234;ctl[1]=0xc9;ctl[0x30/4]=sizeof ctl;ctl[0x38/4]=sizeof native;
+            ctl[0x58/4]=ctl[0x5c/4]=ctl[0x60/4]=1;((uint8_t *)ctl)[0xb2]=1;((uint8_t *)ctl)[0xb3]=1;
+            NVNshaderData shader={U(native),(const uint8_t *)ctl};
+            if(!(uint8_t)CALL(nvnProgramSetShaders,U(&program),1,U(&shader))) {ok=0;break;}
+            uint32_t expected[3][4]={0};
+            for(unsigned c=0;c<4;c++) {
+                float depth=c==0||c==3?0.25f:0.75f,reference=0.5f*ref;
+                expected[0][c]=(cmp?reference>depth:reference<depth)?0x3f800000:0;
+            }
+            char name[96];snprintf(name,sizeof name,"depth gather compare %u reference %u overlap %u",cmp,ref,overlap);
+            ok=run_case(name,memory,command_control,handle,tp,sp,expected,1,stride);
+        }
+        CALL(nvnSamplerFinalize,U(&shadow_sampler));
+        if(!ok)return 0;
     }
     return 1;
 }
@@ -931,6 +1017,8 @@ int probe_vkpool(void) {
     REQUIRE(run_uniform_fsetp(memory,command_control),"uniform floating comparisons completed");
     REQUIRE(run_feedback_views(),"feedback attachment views preserve pixels");
     REQUIRE(run_gradient_masks(memory,command_control,handle,stride,ti),"gradient channel masks and destination layouts completed");
+    REQUIRE(run_fragment_rate(memory,command_control,handle,stride),"full fragment rate reads completed");
+    REQUIRE(run_depth_gather(memory,command_control,handle,stride,ti,si),"depth gather comparison and overlap completed");
     REQUIRE(gfx_shader_failures() == shader_failures,"no warp translation failures");
 done:
     if (pool_live) backend->finish();

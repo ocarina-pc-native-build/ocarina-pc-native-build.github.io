@@ -151,6 +151,14 @@ adapted from Eglantine `lower_to_maxwell.h` at
 `23f383cab532bf3834ea55f3488b48841f3c727b` (GPL-3.0-or-later, original header
 retained). Allowing an odd single high destination for three selected channels
 and the independently authored regression fixtures are local changes.
+The SR_VARIABLE_RATE read is also selectively adapted from that revision's
+S2R/S2UR block, with an explicit full-rate renderer invariant. Its CPU and GPU
+fixtures are original; no GPL code was copied into the MIT runtime probe.
+The scalar 2D depth-gather branch is original. Its Maxwell DC operand mapping
+was checked against Eglantine's `frontend/maxwell/translate/impl/texture_gather.cpp`
+at that revision and Ryujinx's MIT `InstEmitTexture.EmitTld4`; the existing
+native scalar texture argument layout is retained. No upstream code was copied
+into the depth-gather CPU/GPU fixtures.
 
 The Windows OoT integration adapts image-copy pitch recording and 64-bit address
 wait comparison from nxnative (`dm/gfx/nvn/hle_nvn.c`, `dm/gfx/nvn/nvn_obj.h`, `dm/host/hle_thread.c`),
