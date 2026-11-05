@@ -216,6 +216,8 @@ class Emitter:
         self.reg_locals = reg_locals   # recomp/regs.py: registers per function in C locals
         self.kept = regs.CALLEE_SAVED if callee_saved else frozenset()   # not reloaded after a call
         self.uses_patches = False
+        self.uses_nonlocal = False
+        self.setjmp_targets = mod.setjmp_targets() if hasattr(mod, 'setjmp_targets') else set()
         self.stats = Counter()
         self.unsupported = Counter()
 
@@ -323,12 +325,20 @@ class Emitter:
         labels, tables = self.scan(insns, entry, end)
         refs = set()
         all_labels = 'all' in tables.values()
+        continuations = {entry + 4 * (i + 1) for i, ins in enumerate(insns)
+                         if ins.kind == 'bl' and ins.target in self.setjmp_targets}
+        nonlocal_frame = bool(continuations)
+        if nonlocal_frame:
+            labels.update(continuations | {entry})
+            self.uses_nonlocal = True
+            self.stats['nonlocal_functions'] += 1
+            self.stats['setjmp_continuations'] += len(continuations)
         if all_labels:
-            labels = set(range(entry, end, 4))
+            labels.update(range(entry, end, 4))
         # An unresolved computed br re-enters the function through fb_<entry>, a C function of its own, which local
         # flags would not survive; such functions keep NZCV in c->nzcv.
         # The same holds for registers in locals (recomp/regs.py): fb_<entry> keeps them in the Cpu too.
-        local = not all_labels
+        local = not all_labels and not nonlocal_frame
         spill, reload, reload_call = (regs.SPILL, regs.RELOAD, regs.RELOAD_CALL) if local else ('', '', '')
         succ = self.flow(insns, entry, end, tables) if local else None
         fp = self.flag_plan(insns, entry, end, tables, succ) if local else None
@@ -356,7 +366,22 @@ class Emitter:
             self.stats['external_branches'] += 1
             return f'{publish(i)}{spill}c->pc = {hx(t)}; {MUSTTAIL} rt_dispatch(c);'
 
-        if all_labels:
+        if nonlocal_frame:
+            # Only the wrapper owns a host setjmp. Guest registers stay in Cpu;
+            # no C automatic modified after setjmp is read after longjmp.
+            fb = f'fb_{entry:x}'
+            entries = labels if all_labels else continuations | {entry}
+            cases = ' '.join(f'case {hx(t)}: goto L_{t:x};' for t in sorted(entries))
+            redispatch = f'{MUSTTAIL} {fb}(c);' if all_labels else f'{MUSTTAIL} rt_dispatch(c);'
+            out = [f'static void {fb}(Cpu *c);',
+                   f'void {fname(entry)}(Cpu *c) {{', f'    FN_ENTER({hx(entry)});',
+                   f'    RtJumpFrame *frame = rt_nonlocal_enter(c, {hx(entry)});',
+                   '    if (setjmp(frame->host)) rt_nonlocal_reentered(c, frame);',
+                   f'    else c->pc = {hx(entry)};', f'    {fb}(c);',
+                   '    rt_nonlocal_leave(frame);', '}',
+                   f'static void {fb}(Cpu *c) {{', f'    switch (c->pc) {{ {cases} default: break; }}',
+                   f'    {MUSTTAIL} rt_dispatch(c);']
+        elif all_labels:
             # An unresolved computed br re-enters the function through fb_<entry>, which switches on c->pc to any
             # instruction. A goto to a shared dispatch block inside the body instead turns every instruction into
             # a loop header, and clang's loop passes then take tens of seconds on one function.
@@ -375,11 +400,12 @@ class Emitter:
                 out.append('    ' + fp.decl())
 
         def call(t, a):
+            bind = f'rt_nonlocal_bind(c, c->x[0], {hx(a + 4)}); ' if t in self.setjmp_targets else ''
             if t in starts:
                 refs.add(t)
-                return f'c->x[30] = {hx(a + 4)}; {spill}{fname(t)}(c);{reload_call}'
+                return f'c->x[30] = {hx(a + 4)}; {spill}{bind}{fname(t)}(c);{reload_call}'
             self.stats['external_calls'] += 1
-            return f'c->x[30] = {hx(a + 4)}; {spill}c->pc = {hx(t)}; rt_dispatch(c);{reload_call}'
+            return f'c->x[30] = {hx(a + 4)}; {spill}{bind}c->pc = {hx(t)}; rt_dispatch(c);{reload_call}'
 
         def op(i, code):
             code = fx(i, code)
@@ -445,6 +471,8 @@ class Emitter:
             else:
                 raise ValueError(f'{a:#x}: unknown instruction kind {k!r}')
         n = len(insns)
+        if end in continuations:
+            emit(None, f'L_{end:x}:;')
         if k not in TERMINATORS:  # falls through into the next function
             if end < mod.hi:
                 emit(n, '    ' + jump(end, n))
@@ -475,6 +503,7 @@ def chunk_text(name, number, emitter, fns):
     """C text of one chunk. fns: [(entry, end)]."""
     body, refs = [], set()
     emitter.uses_patches = False
+    emitter.uses_nonlocal = False
     for entry, end in fns:
         lines, r = emitter.function(entry, end)
         body.append('\n'.join(lines))
@@ -483,6 +512,8 @@ def chunk_text(name, number, emitter, fns):
     protos = ''.join(f'void {fname(r)}(Cpu *c);\n' for r in sorted(refs))
     if emitter.uses_patches:
         protos += 'extern uint8_t rt_patch_on[];\n'
+    if emitter.uses_nonlocal:
+        protos = '#include "nonlocal.h"\n' + protos
     return (header(f'{name} chunk {number:04d}') + '#include "cpu.h"\n#include "simd.h"\n\n' + protos + '\n'
             + '\n\n'.join(body) + '\n')
 
@@ -711,6 +742,8 @@ def main():
                 'br_dispatch': stats['br_dispatch'],
                 'traps': stats['traps'],
                 'patched_sites': stats['patched_sites'],
+                'nonlocal_functions': stats['nonlocal_functions'],
+                'setjmp_continuations': stats['setjmp_continuations'],
                 'local_flag_functions': stats['local_flag_functions'],
                 'flag_reads_direct': stats['flag_reads_direct'],
                 'flag_reads_packed': stats['flag_reads_packed'],
