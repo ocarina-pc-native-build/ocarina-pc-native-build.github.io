@@ -201,6 +201,8 @@ static class SwshXlate
             int slot = TexSlot(handle, cbufSlot);
             if (slot >= 0) ImgQueried.Add(slot);
             string f = _job["img"] is JsonObject t && slot >= 0 && t[slot.ToString()] is JsonObject o ? (string)o["fmt"] : null;
+            if (f == "Unsupported")
+                throw new NotSupportedException($"Storage image slot {slot}, handle {handle:X}, constant buffer {cbufSlot} has an unsupported bound view format.");
             if (f == null) { Notes.Add($"图像句柄 {handle:X} 槽 {slot} 无 PC 格式，按 R8G8B8A8Unorm"); return TextureFormat.R8G8B8A8Unorm; }
             return Enum.TryParse(f, true, out TextureFormat tf) ? tf : TextureFormat.R8G8B8A8Unorm;
         }
@@ -326,6 +328,13 @@ static class SwshXlate
         Check(a.QuerySamplerType(0x70 / 4, 0) == SamplerType.Texture3D);
         Check(a.QuerySamplerType(0x78 / 4, 0) == SamplerType.TextureCube);
         Check(a.QueryTextureFormat(0x88 / 4, 0) == TextureFormat.R32Uint);
+        job["img"]["0"]["fmt"] = "Unsupported";
+        var deferred = new Accessor(Array.Empty<byte>(), job);
+        Check(deferred.QuerySamplerType(0x70 / 4, 0) == SamplerType.Texture3D);
+        bool unsupported = false;
+        try { _ = deferred.QueryTextureFormat(0x88 / 4, 0); } catch (NotSupportedException) { unsupported = true; }
+        Check(unsupported);
+        job["img"]["0"]["fmt"] = "R32Uint";
         job["c0"][0] = 1;
         Check(new Accessor(Array.Empty<byte>(), job).QuerySamplerType(0x70 / 4, 0) == SamplerType.Texture3D);
         job["c0_roots"] = new JsonArray(0, 0, 0, 0, 0, 0, 0, 0);

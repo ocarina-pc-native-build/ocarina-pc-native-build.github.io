@@ -39,6 +39,7 @@ OBJECT(NVNtexture, pattern_texture);
 OBJECT(NVNtexture, srgb_texture);
 OBJECT(NVNtexture, typed_texture);
 OBJECT(NVNtexture, array_texture);
+OBJECT(NVNtexture, unused_depth_texture);
 OBJECT(NVNsamplerBuilder, sampler_builder);
 OBJECT(NVNsampler, repeat_sampler);
 OBJECT(NVNsampler, clamp_sampler);
@@ -51,6 +52,7 @@ OBJECT(NVNcommandBuffer, command);
 static _Alignas(16) uint8_t control[0x880];
 static Cpu cpu;
 static unsigned checks, failures;
+static uint64_t unused_image_handle;
 
 static uint64_t call(void (*fn)(Cpu *), const uint64_t a[8]) {
     memcpy(cpu.x, a, sizeof cpu.x[0] * 8);
@@ -100,6 +102,7 @@ static int run_case(const char *name, uint8_t *memory, void *command_control, ui
     for (unsigned phase = 0; phase < phases; phase++) {
         CALL(nvnCommandBufferSetTexturePool, U(&command), U(textures[phase]));
         CALL(nvnCommandBufferSetSamplerPool, U(&command), U(samplers[phase]));
+        if(unused_image_handle) CALL(nvnCommandBufferBindImage,U(&command),NVN_SHADER_STAGE_COMPUTE,7,unused_image_handle);
         CALL(nvnCommandBufferBindStorageBuffer, U(&command), NVN_SHADER_STAGE_COMPUTE, 0,
              U(memory + OUTPUT_OFF + (phase + 1) * stride), 16);
         // SetPool alone changes descriptor identity: no handle/program bind or registration occurs between dispatches.
@@ -437,6 +440,18 @@ int probe_vkpool(void) {
     REQUIRE(make_array_texture(),"array texture"); textures_live=6;
     CALL(nvnTexturePoolRegisterTexture,U(&texture_a),ti,U(&array_texture),0);
     REQUIRE(run_array_gather(memory,command_control,handle,stride),"array gather layer and texel ordering");
+    CALL(nvnTextureBuilderSetDefaults,U(&texture_builder));
+    CALL(nvnTextureBuilderSetDevice,U(&texture_builder),U(&device));
+    CALL(nvnTextureBuilderSetTarget,U(&texture_builder),NVN_TEXTURE_TARGET_2D);
+    CALL(nvnTextureBuilderSetSize2D,U(&texture_builder),2,1);
+    CALL(nvnTextureBuilderSetLevels,U(&texture_builder),1);
+    CALL(nvnTextureBuilderSetFormat,U(&texture_builder),NVN_FORMAT_DEPTH32F);
+    CALL(nvnTextureBuilderSetStorage,U(&texture_builder),U(&memory_pool),0xe0000);
+    REQUIRE((uint8_t)CALL(nvnTextureInitialize,U(&unused_depth_texture),U(&texture_builder)),"unused depth image"); textures_live=7;
+    CALL(nvnTexturePoolRegisterTexture,U(&texture_a),ti+1,U(&unused_depth_texture),0);
+    unused_image_handle=ti+1;
+    REQUIRE(run_native_wide(memory,command_control,handle,stride),"unused unsupported image does not abort an unrelated shader");
+    unused_image_handle=0;
     REQUIRE(gfx_shader_failures() == shader_failures, "no shader translation failures");
 done:
     if (pool_live) backend->finish();
@@ -451,6 +466,7 @@ done:
     if (descriptor_pools_live >= 1) CALL(nvnTexturePoolFinalize, U(&texture_a));
     if (samplers_live >= 2) CALL(nvnSamplerFinalize, U(&clamp_sampler));
     if (samplers_live >= 1) CALL(nvnSamplerFinalize, U(&repeat_sampler));
+    if (textures_live >= 7) CALL(nvnTextureFinalize, U(&unused_depth_texture));
     if (textures_live >= 6) CALL(nvnTextureFinalize, U(&array_texture));
     if (textures_live >= 5) CALL(nvnTextureFinalize, U(&typed_texture));
     if (textures_live >= 4) CALL(nvnTextureFinalize, U(&srgb_texture));

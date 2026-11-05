@@ -1511,7 +1511,8 @@ static size_t build_request(char *o0, const char *hex, const char *stage, const 
         o += sprintf(o, "},\"img\":{");
         for (int i = 0; i < 32; i++)
             if (a->img_type[i] && a->img_type[i] < COUNT(tex_names)) {
-                const char *f = a->img_format[i] && a->img_format[i] < COUNT(fmt_names) ? fmt_names[a->img_format[i]] : "R8G8B8A8Unorm";
+                const char *f = a->img_format[i] == GFX_IMAGE_FORMAT_UNSUPPORTED ? "Unsupported" :
+                                a->img_format[i] && a->img_format[i] < COUNT(fmt_names) ? fmt_names[a->img_format[i]] : "R8G8B8A8Unorm";
                 o += sprintf(o, "%s\"%d\":{\"type\":\"%s\",\"fmt\":\"%s\"}", sep, i, tex_names[a->img_type[i]], f), sep = ",";
             }
         sep = "";
