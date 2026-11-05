@@ -181,6 +181,9 @@ class Lifter:
 
     def lift(self, w, pc):
         """pc is absolute. Returns an Insn."""
+        if (w & 0xFFE0FC00) == 0x9AC03000:  # PACGA Xd, Xn, Xm|SP
+            rd, rn, rm = bits(w, 0, 5), bits(w, 5, 5), bits(w, 16, 5)
+            return Insn('op', set_reg(1, rd, f'rt_pacga({X(rn)}, {XS(rm)})'))
         op0 = bits(w, 25, 4)
         if (op0 & 0b1110) == 0b1000:
             return self.dp_imm(w, pc)
