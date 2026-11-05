@@ -1068,7 +1068,22 @@ static VkShaderModule make_module_linked(const uint32_t *w, uint64_t words, int 
     if (fixed) w = fixed, words = fixed_n;
     VkShaderModuleCreateInfo ci = {.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO, .codeSize = (size_t)words * 4, .pCode = w};
     VkShaderModule m = VK_NULL_HANDLE;
+    // Save the exact post-link/fixup input, which can differ from the translator
+    // cache. Opt-in captures belong outside the repository; shaders are game data.
+    const char *dump = getenv("DKB_SHADER_MODULE_DUMP");
+    char hex[65] = {0};
+    if (dump && *dump) {
+        uint8_t hash[32];
+        rt_sha256(w, ci.codeSize, hash);
+        for (unsigned i = 0; i < 32; i++) snprintf(hex + i * 2, 3, "%02x", hash[i]);
+        char path[PLAT_PATH_MAX * 2];
+        int n = snprintf(path, sizeof path, "%s/%s.spv", dump, hex);
+        if (n < 0 || (size_t)n >= sizeof path || !plat_file_write_atomic(path, w, ci.codeSize))
+            rt_log("vk_pipeline: cannot capture shader module %s", hex);
+        rt_log("vk_pipeline: vkCreateShaderModule begin %s (%llu words)", hex, (unsigned long long)words);
+    }
     VkResult r = vkCreateShaderModule(P.device, &ci, NULL, &m);
+    if (hex[0]) rt_log("vk_pipeline: vkCreateShaderModule end %s result %d handle %llx", hex, (int)r, (unsigned long long)(uintptr_t)m);
     free(fixed);
     return r == VK_SUCCESS ? m : VK_NULL_HANDLE;
 }
@@ -2094,7 +2109,9 @@ static VkPipeline create_graphics(const VkPipeState *s, const GKey *k, const Lay
     if (k->fbl & 1) pi.flags |= VK_PIPELINE_CREATE_COLOR_ATTACHMENT_FEEDBACK_LOOP_BIT_EXT;
     if (k->fbl & 2) pi.flags |= VK_PIPELINE_CREATE_DEPTH_STENCIL_ATTACHMENT_FEEDBACK_LOOP_BIT_EXT;
     uint64_t p0 = perf_begin();
+    if (getenv("DKB_SHADER_MODULE_DUMP")) rt_log("vk_pipeline: graphics begin vs %llx fs %llx", (unsigned long long)(uintptr_t)vm, (unsigned long long)(uintptr_t)fm);
     VkResult r = vkCreateGraphicsPipelines(P.device, P.cache, 1, &pi, NULL, &pipe);
+    if (getenv("DKB_SHADER_MODULE_DUMP")) rt_log("vk_pipeline: graphics end result %d", (int)r);
     perf_end(PERF_PIPE, p0);   // counts on the render thread only, so background builds stay out of it
     if (r != VK_SUCCESS) {
         rt_log("vk_pipeline: vkCreateGraphicsPipelines failed (%d)", (int)r);
@@ -3191,7 +3208,10 @@ static VkPipeline compute_create(const GfxShader *cs, const Layout *l) {
                                       .layout = l->layout};
     pin_subgroup32(&ci.stage, &rqc, code, words);
     VkPipeline pipe = VK_NULL_HANDLE;
-    if (vkCreateComputePipelines(P.device, P.cache, 1, &ci, NULL, &pipe) != VK_SUCCESS) pipe = VK_NULL_HANDLE;
+    if (getenv("DKB_SHADER_MODULE_DUMP")) rt_log("vk_pipeline: compute begin module %llx", (unsigned long long)(uintptr_t)m);
+    VkResult result = vkCreateComputePipelines(P.device, P.cache, 1, &ci, NULL, &pipe);
+    if (getenv("DKB_SHADER_MODULE_DUMP")) rt_log("vk_pipeline: compute end result %d", (int)result);
+    if (result != VK_SUCCESS) pipe = VK_NULL_HANDLE;
     vkDestroyShaderModule(P.device, m, NULL);
     return pipe;
 }
