@@ -9,10 +9,14 @@ The supplied NUP identifies itself as Ocarina of Time 1.1.1. That metadata is no
 an independent authenticity or compatibility certificate. The game executable now
 executes the supplied code, mounts RomFS and displays AV1 video, the title/main
 menu and the options screen. Scripted menu navigation opens Options and returns.
-The black start image and two Vulkan buffer errors are fixed; 203 shader lowering
-failures remain, down from 464. Gameplay is unverified. See
+The original black start image and two Vulkan buffer errors are fixed. The
+regular New Game path now also displays a 3D Deku Tree cutscene, with overexposed
+and incomplete graphics. Its 12100-frame test still reports 287 shader failures
+and ten emitted shadow-descriptor validation messages. Controllable gameplay
+remains unverified. See
 [current results and blockers](docs/STATUS.md) and
-[rendering evidence](docs/RENDERING_BRINGUP.md).
+[new-game evidence](docs/GAMEPLAY_BRINGUP.md). The earlier
+[menu checkpoint](docs/RENDERING_BRINGUP.md) has its own shorter-path counts.
 The independent diagnostic launcher below is separate from that game executable.
 
 ## Run the independent runtime

@@ -1,12 +1,18 @@
-# Engineering status — 2026-11-05, visible title and menu
+# Engineering status — 2026-11-05, visible 3D cutscene
 
-**The supplied Zelda code now displays opening video, its title/main menu and
-the options screen on Windows. It is not yet a verified playable port.** The
-black image was caused by incorrect storage-view usage on an sRGB texture.
-Scripted menu selection opens Options and returns to the main menu. Vulkan
-validation errors fell from two to zero; shader failures fell from 464 to 203.
-Gameplay, working game saves, audible audio and a performance target remain
-unverified. See [rendering evidence and remaining failures](RENDERING_BRINGUP.md).
+**The regular New Game path now reaches visible game-rendered scenery and the
+Deku Tree's dialogue. It is not yet a verified playable port.** The cutscene
+remains overexposed and incomplete. Required compute shader translation,
+aliased RGB9E5 views and sampled numeric types were corrected and tested on the
+RX 7900 XTX. The 12100-frame validation run emits 287 shader failures and ten
+messages for the unresolved shadow descriptor binding, then exits normally.
+Controllable gameplay, game saves/reload and audible audio remain unverified.
+See [new-game investigation](GAMEPLAY_BRINGUP.md).
+
+The earlier [video/title/menu checkpoint](RENDERING_BRINGUP.md) fixed the sRGB
+storage-view issue and reduced its shorter path from 464 to 203 shader failures
+and two to zero Vulkan errors. Those counts do not describe the longer New Game
+path. PACGA and generated game compilation are preserved.
 
 ## Preserved compilation and PACGA
 
