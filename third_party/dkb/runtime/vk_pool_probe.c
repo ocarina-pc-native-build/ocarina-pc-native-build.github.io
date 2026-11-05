@@ -36,6 +36,7 @@ OBJECT(NVNtextureBuilder, texture_builder);
 OBJECT(NVNtexture, red_texture);
 OBJECT(NVNtexture, green_texture);
 OBJECT(NVNtexture, pattern_texture);
+OBJECT(NVNtexture, srgb_texture);
 OBJECT(NVNsamplerBuilder, sampler_builder);
 OBJECT(NVNsampler, repeat_sampler);
 OBJECT(NVNsampler, clamp_sampler);
@@ -64,7 +65,7 @@ static int make_texture(NVNtexture *texture, uint64_t off, const uint8_t pixels[
     CALL(nvnTextureBuilderSetTarget, U(&texture_builder), NVN_TEXTURE_TARGET_2D);
     CALL(nvnTextureBuilderSetSize2D, U(&texture_builder), 2, 1);
     CALL(nvnTextureBuilderSetLevels, U(&texture_builder), 1);
-    CALL(nvnTextureBuilderSetFormat, U(&texture_builder), NVN_FORMAT_RGBA8);
+    CALL(nvnTextureBuilderSetFormat, U(&texture_builder), texture == &srgb_texture ? NVN_FORMAT_RGBA8_SRGB : NVN_FORMAT_RGBA8);
     CALL(nvnTextureBuilderSetStorage, U(&texture_builder), U(&memory_pool), off);
     uint64_t bytes = CALL(nvnTextureBuilderGetStorageSize, U(&texture_builder));
     if (!bytes || bytes > 0x10000) return 0;
@@ -140,6 +141,58 @@ static int run_case(const char *name, uint8_t *memory, void *command_control, ui
 
 void vk_exec_draw_shutdown(void);
 void vk_exec_xfer_shutdown(void);
+
+// A real NVN2 surface store through a UNORM view of an sRGB image. The values
+// and instructions are authored here, so this exercises lowering, translation,
+// descriptor selection and GPU readback without a game shader or dummy output.
+static int run_srgb_store(uint8_t *memory, void *command_control, int ti) {
+    static const uint32_t native[][4] = {
+        {0x00007802, 0,          0xf00, 0}, // R0/R1: pixel (0,0)
+        {0x00017802, 0,          0xf00, 0},
+        {0x00047802, 0x3e800000, 0xf00, 0}, // R4..R7: .25, .5, .75, 1
+        {0x00057802, 0x3f000000, 0xf00, 0},
+        {0x00067802, 0x3f400000, 0xf00, 0},
+        {0x00077802, 0x3f800000, 0xf00, 0},
+        {0x00007b9b, 0x60000404, 0x00100f00, 0}, // SUST.P.2D c0[0x10], [R0,R1], R4..R7
+        {0x0000794d, 0, 0x03800000, 0},
+    };
+    static uint32_t ctl[0xd8 / 4];
+    memset(ctl, 0, sizeof ctl);
+    ctl[0]=0x98761234; ctl[1]=0xc9; ctl[0x30/4]=sizeof ctl; ctl[0x38/4]=sizeof native;
+    ctl[0x58/4]=ctl[0x5c/4]=ctl[0x60/4]=1;
+    ((uint8_t *)ctl)[0xb6]=1;
+    NVNshaderData shader={U(native),(const uint8_t *)ctl};
+    if (!(uint8_t)CALL(nvnProgramSetShaders,U(&program),1,U(&shader))) return 0;
+    NVNtextureView view;
+    CALL(nvnTextureViewSetDefaults,U(&view));
+    CALL(nvnTextureViewSetFormat,U(&view),NVN_FORMAT_RGBA8);
+    CALL(nvnTexturePoolRegisterTexture,U(&texture_a),ti,U(&srgb_texture),U(&view));
+    CALL(nvnCommandBufferAddControlMemory,U(&command),U(command_control),CONTROL_BYTES);
+    CALL(nvnCommandBufferBeginRecording,U(&command));
+    CALL(nvnCommandBufferSetTexturePool,U(&command),U(&texture_a));
+    CALL(nvnCommandBufferBindProgram,U(&command),U(&program),NVN_SHADER_STAGE_COMPUTE_BIT);
+    CALL(nvnCommandBufferBindImage,U(&command),NVN_SHADER_STAGE_COMPUTE,0,ti);
+    CALL(nvnCommandBufferDispatchCompute,U(&command),1,1,1);
+    uint64_t commands=CALL(nvnCommandBufferEndRecording,U(&command));
+    const GfxBackend *backend=&gfx_vulkan_backend;
+    uint64_t fence=backend->submit(&commands,1,rt_ticks());
+    if (!backend->fence_wait(fence,UINT64_C(10000000000))) return 0;
+    backend->cpu_synced(fence);
+    NVNcopyRegion region={0,0,0,2,1,1};
+    uint8_t pixels[8]={0};
+    // Read the Vulkan image explicitly: a CPU-cached pool's ReadTexels path
+    // intentionally reads its guest backing until it becomes GPU-owned.
+    if (!vk_texture_read_image((const tex_t *)&srgb_texture,NULL,&region,pixels,8,8)) return 0;
+    const uint8_t expected[8]={64,128,191,255,0,255,0,255};
+    checks++;
+    if (memcmp(pixels,expected,8)) {
+        printf("probe-vkpool: FAIL sRGB storage view: %u %u %u %u; untouched pixel %u %u %u %u\n",
+            pixels[0],pixels[1],pixels[2],pixels[3],pixels[4],pixels[5],pixels[6],pixels[7]);
+        failures++;
+    } else printf("probe-vkpool: UNORM storage view of sRGB image: exact GPU bytes and untouched texel passed\n");
+    (void)memory;
+    return 1;
+}
 
 int probe_vkpool(void) {
     const GfxBackend *backend = &gfx_vulkan_backend;
@@ -220,6 +273,8 @@ int probe_vkpool(void) {
     CALL(nvnSamplerPoolRegisterSampler, U(&sampler_clamp), si, U(&clamp_sampler));
     tp[1] = &texture_a; sp[1] = &sampler_clamp;
     REQUIRE(run_case("sampler repeat/clamp/repeat", memory, command_control, handle, tp, sp, trip, 3, stride), "sampler case completed");
+    REQUIRE(make_texture(&srgb_texture, 0xb0000, pattern), "sRGB texture"); textures_live = 4;
+    REQUIRE(run_srgb_store(memory, command_control, ti), "sRGB storage view case completed");
     REQUIRE(gfx_shader_failures() == shader_failures, "no shader translation failures");
 done:
     if (pool_live) backend->finish();
@@ -234,6 +289,7 @@ done:
     if (descriptor_pools_live >= 1) CALL(nvnTexturePoolFinalize, U(&texture_a));
     if (samplers_live >= 2) CALL(nvnSamplerFinalize, U(&clamp_sampler));
     if (samplers_live >= 1) CALL(nvnSamplerFinalize, U(&repeat_sampler));
+    if (textures_live >= 4) CALL(nvnTextureFinalize, U(&srgb_texture));
     if (textures_live >= 3) CALL(nvnTextureFinalize, U(&pattern_texture));
     if (textures_live >= 2) CALL(nvnTextureFinalize, U(&green_texture));
     if (textures_live >= 1) CALL(nvnTextureFinalize, U(&red_texture));

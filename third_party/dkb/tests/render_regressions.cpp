@@ -1,0 +1,98 @@
+// Authored instructions and address ranges; no game assets or generated shader bytes.
+#include <cstdio>
+#include <bit>
+#include <vector>
+#include "shader_recompiler/frontend/ampere/lower_to_maxwell.h"
+#include "../runtime/vk_import_window.h"
+using namespace Shader::Ampere;
+static unsigned checks, failures;
+#define CHECK(x) do { ++checks; if (!(x)) { ++failures; std::fprintf(stderr, "line %d: %s\n", __LINE__, #x); } } while (0)
+static void bits(Instruction& i, unsigned at, unsigned n, u32 v) {
+    for (unsigned b=0; b<n; b++) {
+        auto& w=i.words[(at+b)/32]; unsigned bit=(at+b)%32;
+        w=(w & ~(1u<<bit)) | (((v>>b)&1u)<<bit);
+    }
+}
+static Instruction op(u32 code) { Instruction i{}; bits(i,0,12,code); bits(i,12,4,7); return i; }
+static LoweredProgram lower(Instruction i) {
+    auto end=op(0x94d); bits(end,87,4,7);
+    const std::vector<Instruction> code{i,end}; return LowerToMaxwell(code,"full");
+}
+static void txq() {
+    for (u32 mask=1; mask<16; mask++) {
+        auto i=op(0xb6f); bits(i,16,8,8); bits(i,24,8,4); bits(i,54,5,2);
+        bits(i,64,8,255); bits(i,72,4,mask);
+        auto r=lower(i); unsigned n=std::popcount(mask);
+        CHECK(bool(r)==(n<=2));
+        if (r) {
+            CHECK(((r.instructions[0]>>31)&15)==mask);
+            CHECK((r.instructions[0]&255)==8);
+            CHECK(r.required_texture_buffer==2);
+        }
+        bits(i,64,8,12); r=lower(i); CHECK(bool(r));
+        if (r) {
+            CHECK((r.instructions[0]&255)==250);
+            for (unsigned k=0; k<n; k++) {
+                CHECK((r.instructions[k+1]&255)==(k<2?8+k:12+k-2));
+                CHECK(((r.instructions[k+1]>>20)&255)==250+k);
+            }
+        }
+    }
+    auto i=op(0xb6f); bits(i,64,8,255); CHECK(!lower(i)); // empty output mask
+}
+static void i2f() {
+    const u32 values[]={0,1,0x80,0x8000,0x7fff,0x80017fff,0xffffffff,0x81ff007f};
+    for (u32 half=0; half<2; half++) for (u32 sign=0; sign<2; sign++)
+        for (u32 sel=0; sel<(half?2u:4u); sel++) {
+            auto i=op(0x306); bits(i,16,8,8); bits(i,32,8,4); bits(i,60,2,sel);
+            i.words[2]=0x1000|(half<<20)|(sign<<10);
+            auto r=lower(i); CHECK(bool(r)); if (!r) continue;
+            const u64 m=r.instructions[0];
+            CHECK(((m>>10)&3)==half); CHECK(((m>>13)&1)==sign);
+            CHECK(((m>>41)&3)==sel*(half?2u:1u));
+            for (u32 value: values) {
+                unsigned width=((m>>10)&3)?16:8, shift=((m>>41)&3)*8;
+                u32 sample=(value>>shift)&((1u<<width)-1);
+                int result=int(sample); if ((m>>13)&1 && (sample&(1u<<(width-1)))) result-=1u<<width;
+                u32 part=value>>(sel*(half?16:8));
+                int expected=half?(sign?int(int16_t(part)):int(uint16_t(part))):
+                                  (sign?int(int8_t(part)):int(uint8_t(part)));
+                CHECK(float(result)==float(expected));
+            }
+        }
+    auto i=op(0x306); i.words[2]=0x101000; bits(i,60,2,2); CHECK(!lower(i));
+}
+static void texture_half_order() {
+    auto i=op(0xb60); bits(i,16,8,8); bits(i,24,8,4); bits(i,32,8,6);
+    bits(i,61,3,1); bits(i,64,8,255); bits(i,72,4,15); bits(i,79,1,1); bits(i,81,3,7);
+    auto r=lower(i); CHECK(bool(r)); if (!r) return;
+    unsigned merges=0;
+    for (u64 m:r.instructions) if ((m&0xfff8000000000000ull)==0x5c18000000000000ull) {
+        // Maxwell ISCADD Rd, Ra, Rb, 16 is (Ra << 16) + Rb.
+        const u32 a=(m>>8)&255, b=(m>>20)&255;
+        const u32 regs[2]={0x3400,0x3a00}; // authored half bits .25, .75
+        CHECK(a==247 && b==246);
+        if (a>=246 && a<=247 && b>=246 && b<=247)
+            CHECK((regs[a-246]<<16)+regs[b-246]==0x3a003400);
+        ++merges;
+    }
+    CHECK(merges==2);
+}
+static void windows() {
+    uint64_t lo=0,hi=0; const uint64_t base=0x100000000, end=base+0x98010000, cap=0x80000000;
+    CHECK(vk_import_window(base,end,base+0x7ffff000,0x20000,0x1000,cap,&lo,&hi));
+    CHECK(lo==base+0x7ffff000 && hi==end && hi-lo<=cap);
+    CHECK(vk_import_window(base,end,base,cap,0x1000,cap,&lo,&hi) && hi-lo==cap);
+    CHECK(!vk_import_window(base,end,base+1,cap,0x1000,cap,&lo,&hi));
+    CHECK(!vk_import_window(base,end,end-1,2,0x1000,cap,&lo,&hi));
+    CHECK(!vk_import_window(base,end,base,UINT64_MAX,0x1000,cap,&lo,&hi));
+    CHECK(!vk_import_window(base,end,base-1,1,0x1000,cap,&lo,&hi));
+    CHECK(!vk_import_window(base,end,base,1,3,cap,&lo,&hi));
+    CHECK(!vk_import_window(base,end,base,0,0x1000,cap,&lo,&hi));
+    CHECK(!vk_import_window(base,end,base,1,0x1000,0xfff,&lo,&hi));
+}
+int main() {
+    txq(); i2f(); texture_half_order(); windows();
+    std::printf("render regressions: %u checks, %u failures\n", checks, failures);
+    return failures?1:0;
+}

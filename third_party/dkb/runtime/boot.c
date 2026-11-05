@@ -231,17 +231,30 @@ void rt_write_png(const char *path, const uint8_t *rgba, uint32_t w, uint32_t h)
     free(raw);
 }
 
-static void save_shot(const tex_t *t, const char *path) {
+// The window can present a cropped part of a larger allocation. Capture that
+// same rectangle, rather than the unused black remainder of the backing image.
+static NVNcopyRegion shot_region(const tex_t *t, const int crop[4]) {
+    NVNcopyRegion r = {.width=t->d.width, .height=t->d.height, .depth=1};
+    if (crop && crop[2] > 0 && crop[3] > 0 && crop[0] >= 0 && crop[1] >= 0 &&
+        crop[0] < r.width && crop[1] < r.height) {
+        r.xoffset=crop[0]; r.yoffset=crop[1];
+        r.width=crop[2] < r.width-r.xoffset ? crop[2] : r.width-r.xoffset;
+        r.height=crop[3] < r.height-r.yoffset ? crop[3] : r.height-r.yoffset;
+    }
+    return r;
+}
+
+static void save_shot(const tex_t *t, const int crop[4], const char *path) {
     int fmt = t->d.format;
     int bgra = fmt == NVN_FORMAT_BGRA8 || fmt == NVN_FORMAT_BGRA8_SRGB;
     if (!bgra && fmt != NVN_FORMAT_RGBA8 && fmt != NVN_FORMAT_RGBA8_SRGB)
         rt_fatal("boot: --shot supports 8-bit RGBA and BGRA targets, the presented texture has NVN format %#x", fmt);
-    uint32_t w = t->d.width, h = t->d.height;
+    NVNcopyRegion r = shot_region(t, crop);
+    uint32_t w = r.width, h = r.height;
     uint8_t *px = malloc(4ull * w * h);
     if (!px) rt_fatal("boot: out of memory for the shot");
     view_t view;
     memset(&view, 0, sizeof view);
-    NVNcopyRegion r = {.width = (int)w, .height = (int)h, .depth = 1};
     if (gfx_replay_async()) gfx_backend()->finish();   // the presented frame may still be queued for the replay
     gfx_backend()->read_texels(t, &view, &r, px, 4ull * w, 4ull * w * h);
     if (bgra)
@@ -259,7 +272,7 @@ static void save_shot(const tex_t *t, const char *path) {
 // present), box-filtered to 480x270; TOTK_SHOTS=w<lo>-<hi>:<step> takes them by world-clock seconds instead, the first
 // present at or after each step (full size with TOTK_SHOTS_FULL=1), for finding short glitches. Pipeline builds stay asynchronous, so the
 // pictures show what a player sees.
-static void series_shot(const tex_t *t, uint64_t n) {
+static void series_shot(const tex_t *t, const int crop[4], uint64_t n) {
     static int parsed;
     static unsigned long long lo, hi, step, next;
     static const char *dir;
@@ -286,12 +299,12 @@ static void series_shot(const tex_t *t, uint64_t n) {
     int fmt = t->d.format;
     int bgra = fmt == NVN_FORMAT_BGRA8 || fmt == NVN_FORMAT_BGRA8_SRGB;
     if (!bgra && fmt != NVN_FORMAT_RGBA8 && fmt != NVN_FORMAT_RGBA8_SRGB) return;
-    uint32_t w = t->d.width, h = t->d.height, ow = full ? w : 480, oh = full ? h : 270;
+    NVNcopyRegion r = shot_region(t, crop);
+    uint32_t w = r.width, h = r.height, ow = full ? w : 480, oh = full ? h : 270;
     uint8_t *px = malloc(4ull * w * h), *out = malloc(4ull * ow * oh);
     if (!px || !out) rt_fatal("boot: out of memory for a TOTK_SHOTS frame");
     view_t view;
     memset(&view, 0, sizeof view);
-    NVNcopyRegion r = {.width = (int)w, .height = (int)h, .depth = 1};
     if (gfx_replay_async()) gfx_backend()->finish();   // the presented frame may still be queued for the replay
     gfx_backend()->read_texels(t, &view, &r, px, 4ull * w, 4ull * w * h);
     for (uint32_t y = 0; y < oh; y++)
@@ -317,13 +330,16 @@ static void series_shot(const tex_t *t, uint64_t n) {
 // A --seconds run ends at the first present after the world clock (game time since the save's first frame,
 // frame_step_world_us) passed S seconds, so a run covers the same game time at any frame rate; any other frame is
 // counted by the back end only.
-void rt_frame_presented(const tex_t *t, uint64_t n) {
+void rt_frame_presented(const tex_t *t, const int crop[4], uint64_t n) {
     const RtConfig *cfg = rt_config();
-    series_shot(t, n);
+    series_shot(t, crop, n);
     if (n == 1) rt_log("boot: first guest frame presented");
     int64_t w = cfg->seconds ? frame_step_world_us() : -1;
     if (cfg->frames ? n < cfg->frames : (w < 0 || (double)w < cfg->seconds * 1e6)) return;
-    if (cfg->shot) save_shot(t, cfg->shot);
+    gfx_backend()->finish(); // drain replay, queued presentation and the GPU before checkpoint evidence
+    rt_log("boot: checkpoint after %llu guest present requests; displayed crop %d,%d %dx%d of %dx%d",
+           (unsigned long long)n, crop[0], crop[1], crop[2], crop[3], t->d.width, t->d.height);
+    if (cfg->shot) save_shot(t, crop, cfg->shot);
     GfxStats g = gfx_stats();
     rt_logf("boot: frames %llu presented (nvn calls %llu, distinct %llu, unimplemented %llu, validation errors %llu, "
            "shader failures %llu, draws skipped %llu)\n", (unsigned long long)g.frames,

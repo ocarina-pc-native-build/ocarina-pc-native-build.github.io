@@ -20,6 +20,7 @@
 #include "nvn_api.h"
 #include "nvn_pool_index.h"
 #include "vk.h"
+#include "vk_import_window.h"
 #include "platform/platform.h"
 
 // Timestamps for the tracking cost, in ns; qpc_ms converts.
@@ -42,6 +43,9 @@ typedef struct PoolRec {
     uint64_t import_lo, import_hi;     // POOL_IMPORT: the imported host range (aligned outwards)
     VkBuffer buf;
     VkDeviceMemory mem;                // POOL_IMPORT
+    struct PoolRec *views, *next_view; // bounded imports share the original host bytes; owned by the parent
+    uint64_t view_limit;
+    int is_view;
     VmaAllocation alloc;               // POOL_PHYS
     VPage *pt;                         // POOL_VIRT: size / 64 KiB entries
     uint64_t npages;
@@ -89,6 +93,19 @@ static PoolRec **phys_list;            // physical pools by key, for MapVirtual 
 static int nphys, cap_phys;
 static int32_t n_imports, n_import_failures;
 static PFN_vkGetMemoryHostPointerPropertiesEXT p_host_props;
+static PlatMutex view_lock = PLAT_MUTEX_INIT;
+uint64_t vk_test_import_limit; // probe only: may lower the real limit, never raise it
+
+static uint64_t import_limit(VkCtx *c) {
+    VkPhysicalDeviceMaintenance4Properties p4 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_4_PROPERTIES};
+    VkPhysicalDeviceMaintenance3Properties p3 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_3_PROPERTIES,
+                                                .pNext = &p4};
+    VkPhysicalDeviceProperties2 p = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, .pNext = &p3};
+    vkGetPhysicalDeviceProperties2(c->phys, &p);
+    uint64_t limit = p4.maxBufferSize < p3.maxMemoryAllocationSize ? p4.maxBufferSize : p3.maxMemoryAllocationSize;
+    if (vk_test_import_limit && vk_test_import_limit < limit) limit = vk_test_import_limit;
+    return limit;
+}
 
 static VkBufferUsageFlags pool_usage(const VkCtx *c) {
     VkBufferUsageFlags u = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT |
@@ -112,13 +129,24 @@ static int memory_type(const VkCtx *c, uint32_t bits, VkMemoryPropertyFlags want
 
 // CPU-visible storage: the guest pages themselves become the buffer's memory (VK_EXT_external_memory_host).
 static int import_pool(VkCtx *c, PoolRec *r, uint64_t addr, uint64_t size) {
-    if (shadow_on) return shadow_pool(c, r, addr, size);
     if (!p_host_props)
         p_host_props = (PFN_vkGetMemoryHostPointerPropertiesEXT)vkGetDeviceProcAddr(c->device, "vkGetMemoryHostPointerPropertiesEXT");
     uint64_t al = c->min_imported_host_alignment ? c->min_imported_host_alignment : 0x1000;
     r->import_lo = addr & ~(al - 1);
     r->import_hi = (addr + size + al - 1) & ~(al - 1);
     uint64_t n = r->import_hi - r->import_lo;
+    uint64_t limit = import_limit(c);
+    if (!limit) return 0;
+    if (n > limit) {
+        // An NVN pool is an address space, not a requirement for one VkBuffer.
+        // Create bounded views on demand, retaining zero-copy host coherence.
+        r->view_limit = limit;
+        r->mstate = MS_REFUSED; // no oversized whole-pool mirror or shadow
+        rt_log("vk: pool %#llx+%#llx flags %#x: bounded host imports, device limit %#llx",
+               (unsigned long long)addr, (unsigned long long)size, r->flags, (unsigned long long)limit);
+        return 1;
+    }
+    if (shadow_on && !r->is_view) return shadow_pool(c, r, addr, size);
     VkMemoryHostPointerPropertiesEXT hp = {.sType = VK_STRUCTURE_TYPE_MEMORY_HOST_POINTER_PROPERTIES_EXT};
     VkResult res = p_host_props ? p_host_props(c->device, VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT,
                                                (void *)(uintptr_t)r->import_lo, &hp)
@@ -163,6 +191,36 @@ static int import_pool(VkCtx *c, PoolRec *r, uint64_t addr, uint64_t size) {
     }
     plat_inc32(&n_imports);
     return 1;
+}
+
+// The owning pool remains pinned by pool_lock. Views stay alive until the pool's
+// final GPU fence, including overlapping views used by different descriptors.
+static PoolRec *import_view(PoolRec *r, uint64_t addr, uint64_t size, int create) {
+    if (!r->view_limit) return r->buf ? r : NULL;
+    PoolRec *v;
+    plat_mutex_lock(&view_lock);
+    for (v = r->views; v; v = v->next_view)
+        if (addr >= v->import_lo && addr < v->import_hi && size <= v->import_hi - addr) break;
+    if (!v && create) {
+        VkCtx *c = vk_ctx();
+        uint64_t lo, hi, al = c->min_imported_host_alignment ? c->min_imported_host_alignment : 0x1000;
+        if (!vk_import_window(r->import_lo, r->import_hi, addr, size, al, r->view_limit, &lo, &hi))
+            rt_fatal("vk: buffer range %#llx+%#llx cannot fit host-import limit %#llx (pool %#llx+%#llx)",
+                     (unsigned long long)addr, (unsigned long long)size, (unsigned long long)r->view_limit,
+                     (unsigned long long)r->lo, (unsigned long long)r->size);
+        v = calloc(1, sizeof *v);
+        if (!v) rt_fatal("vk: bounded import record allocation failed");
+        v->is_view = 1;
+        if (!import_pool(c, v, lo, hi - lo) || !v->buf)
+            rt_fatal("vk: bounded import %#llx+%#llx failed", (unsigned long long)lo, (unsigned long long)(hi - lo));
+        v->next_view = r->views;
+        r->views = v;
+        rt_log("vk: import view pool %#llx range %#llx+%#llx buffer %p memory %p usage %#x",
+               (unsigned long long)r->lo, (unsigned long long)lo, (unsigned long long)(hi - lo),
+               (void *)v->buf, (void *)v->mem, pool_usage(c));
+    }
+    plat_mutex_unlock(&view_lock);
+    return v;
 }
 
 // Physical pool: device-local memory of the pool size that both buffers and optimal-tiling images can be bound to.
@@ -231,6 +289,10 @@ static PoolRec *phys_find(const pool_t *key) {
 }
 
 static void destroy_rec(VkCtx *c, PoolRec *r) {
+    for (PoolRec *v = r->views, *next; v; v = next) {
+        next = v->next_view;
+        destroy_rec(c, v);
+    }
     if (r->mbuf) vmaDestroyBuffer(c->vma, r->mbuf, r->malloc_);
     if (r->salloc) vmaDestroyBuffer(c->vma, r->buf, r->salloc), r->buf = VK_NULL_HANDLE;
     if (r->buf) vkDestroyBuffer(c->device, r->buf, NULL);
@@ -412,10 +474,11 @@ int vk_mem_inspect(uint64_t addr, uint64_t size, VkMemInspect *out) {
     uint64_t remaining = r->size - rel;
     result.pool_flags = r->flags;
     if (r->kind == POOL_IMPORT) {
-        if (!r->buf || addr < r->import_lo || addr + size > r->import_hi) goto done;
+        PoolRec *v = import_view((PoolRec *)r, addr, size, 0);
+        if (!v || addr < v->import_lo || addr + size > v->import_hi) goto done;
         result.pool_kind = VK_MEM_INSPECT_POOL_IMPORT;
-        result.offset = addr - r->import_lo;
-        result.avail = r->import_hi - addr;
+        result.offset = addr - v->import_lo;
+        result.avail = v->import_hi - addr;
         if (result.avail > remaining) result.avail = remaining;
         result.cls = rec_class(r);
         _Static_assert(MS_NONE == VK_MEM_INSPECT_MIRROR_NONE && MS_ON == VK_MEM_INSPECT_MIRROR_ON &&
@@ -531,12 +594,13 @@ static int resolve_locked(uint64_t addr, uint64_t size, VkMemSpan *out) {
             else h->base = r->lo, h->end = r->lo + r->size, h->alloc = r->alloc, h->pool = NULL;
         }
     }
-    if (r && r->kind == POOL_IMPORT && r->buf) {
+    if (r && r->kind == POOL_IMPORT && (r->buf || r->view_limit)) {
+        PoolRec *v = import_view(r, addr, size, 1);
         out->cls = rec_class(r);
         out->pool = r;
-        out->buffer = r->buf;
-        out->offset = addr - r->import_lo;
-        out->avail = r->import_hi - addr;
+        out->buffer = v->buf;
+        out->offset = addr - v->import_lo;
+        out->avail = v->import_hi - addr;
         if (r->smap && !r->stouched) shadow_touch(r);
         ok = 1;
     } else if (r && r->kind == POOL_PHYS) {
@@ -569,6 +633,20 @@ static int resolve_locked(uint64_t addr, uint64_t size, VkMemSpan *out) {
 
 uint64_t vk_mem_gen(void) {
     return __atomic_load_n(&pool_gen, __ATOMIC_ACQUIRE) + __atomic_load_n(&mirror_gen, __ATOMIC_ACQUIRE);
+}
+
+uint64_t vk_mem_pool_available(uint64_t addr) {
+    plat_mutex_lock_shared(&pool_lock);
+    const pidx_ent *e = pidx_find(&pool_index, addr, 1);
+    uint64_t n = e ? e->hi - addr : 0;
+    const PoolRec *r = e ? e->buf : NULL;
+    int bounded = r && r->view_limit;
+    plat_mutex_unlock_shared(&pool_lock);
+    if (bounded) return n; // resolve the complete binding in one view, not a one-byte view first
+    VkMemSpan span;
+    if (!n || !vk_mem_resolve(addr, 1, &span)) return 0;
+    // Virtual pools may only map a contiguous subset of their logical address space.
+    return n < span.avail ? n : span.avail;
 }
 
 int vk_mem_class_of(uint64_t addr) {

@@ -333,6 +333,16 @@ static Tex *create_tex(const tex_t *t, const TexKey *k, int defer_init) {
     // clear colour. Vulkan cannot add the usage later.
     if (!ds && (ff & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT) && samples == 1) usage |= VK_IMAGE_USAGE_STORAGE_BIT;
     VkImageCreateFlags flags = ds ? 0 : VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;   // format-reinterpreting views
+    // sRGB is sampled through its sRGB view but written through a compatible UNORM
+    // view. Storage support belongs to that view format, not the base image format.
+    VkFormat linear = f.vk == VK_FORMAT_R8G8B8A8_SRGB ? VK_FORMAT_R8G8B8A8_UNORM :
+                      f.vk == VK_FORMAT_B8G8R8A8_SRGB ? VK_FORMAT_B8G8R8A8_UNORM :
+                      f.vk == VK_FORMAT_R8G8_SRGB ? VK_FORMAT_R8G8_UNORM :
+                      f.vk == VK_FORMAT_R8_SRGB ? VK_FORMAT_R8_UNORM : VK_FORMAT_UNDEFINED;
+    if (linear && samples == 1 && (features_of(linear) & VK_FORMAT_FEATURE_STORAGE_IMAGE_BIT)) {
+        usage |= VK_IMAGE_USAGE_STORAGE_BIT;
+        flags |= VK_IMAGE_CREATE_EXTENDED_USAGE_BIT;
+    }
     // Cube compatible only for cube targets: the replay makes cube views of nothing else (vk_exec_draw.c get_view checks
     // the image's own view type). The flag on every square array of 6+ layers changed how AMD's Windows driver lays such
     // an image out, and terrain material arrays sampled through it came out in rainbow blocks that moved with the mip

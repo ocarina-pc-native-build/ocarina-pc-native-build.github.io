@@ -694,6 +694,10 @@ void vk_dump_draw(VkExec *ex, const VkPipeState *s, VkPipeline p, const VkPipeIn
     Str b = {0};
     sp(&b, "vs %016llx fs %016llx prog %llu prim %d", (unsigned long long)shader_hash(s->vs),
        (unsigned long long)shader_hash(s->fs), (unsigned long long)(ex->prog ? ex->prog->serial : 0), s->prim);
+    VkRect2D scissor = vk_exec_scissor(ex);
+    sp(&b, " viewport=%g,%g,%g,%g set=%d scissor=%d,%d,%u,%u", ex->vp[0][0], ex->vp[0][1],
+       ex->vp[0][2], ex->vp[0][3], ex->has_vp, scissor.offset.x, scissor.offset.y,
+       scissor.extent.width, scissor.extent.height);
     for (uint32_t k = 0; ex->prog && k < ex->prog->nstage && k < 6; k++) {   // NVN 2 stages: their DKB_SHADER_DUMP names
         uint64_t o = nvn2_origin((const uint8_t *)(uintptr_t)ex->prog->sd[k].data);
         if (o) sp(&b, " nvn2 %016llx", (unsigned long long)o);
@@ -786,6 +790,21 @@ void vk_dump_dispatch(VkExec *ex, const GfxShader *cs, VkPipeline p, const VkPip
     last_targets = 0;
     Str b = {0};
     describe_bindings(&b, ex, info);
+    for (uint32_t k = 0; ex->prog && k < ex->prog->nstage && k < 6; k++) {
+        uint64_t origin = nvn2_origin((const uint8_t *)(uintptr_t)ex->prog->sd[k].data);
+        if (origin) sp(&b, "    native shader %016llx\n", (unsigned long long)origin);
+    }
+    const Nvn2C0Layout *layout = gfx_shader_c0_layout(cs);
+    if (layout && dump_ubo) {
+        sp(&b, "    c0 counts: images=%u ubos=%u ssbos=%u textures=%u\n", layout->images, layout->ubos,
+           layout->ssbos, layout->textures);
+        for (unsigned k = 0; k < NVN2_ROOT_TABLES; k++) {
+            if (!layout->roots[k]) continue;
+            sp(&b, "    root %u:", k);
+            for (unsigned j = 0; j < layout->roots[k]; j++) sp(&b, " %08x", ex->push[1][k][j]);
+            sp(&b, "\n");
+        }
+    }
     fprintf(passes_f, "pass %04d: dispatch %dx%dx%d cs %016llx prog %llu caller %#llx, fence %llu\n%s", n, d->x, d->y,
             d->z, (unsigned long long)shader_hash(cs), (unsigned long long)(ex->prog ? ex->prog->serial : 0),
             (unsigned long long)d->caller, (unsigned long long)ex->fence, b.s ? b.s : "");
