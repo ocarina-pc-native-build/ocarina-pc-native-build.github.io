@@ -1,37 +1,51 @@
 # Roadmap
 
-This roadmap describes the next development milestones for Ocarina of Time — PC Native Build. It does not promise a release date. Progress is based on the supplied local development reports, most recently referencing `3555ea1` and `5971bd8`.
+Updated November 5, 2026 from [Development Update #01](UPDATE-01.md), reported local commit `e6125e6`. This roadmap does not promise a release date.
 
-## 1. Reach controllable 3D gameplay
+## Current milestone
 
-- [ ] Reproduce the working startup, title screen, main menu, and options menu path.
-- [ ] Start a new game using a separate test profile without overwriting existing saves.
-- [ ] Proceed through the normal introduction and loading sequence.
-- [ ] Identify and fix the first reproducible blocker using logs and, where needed, stack traces.
-- [ ] Prioritize the documented shader errors that affect the reached scene.
-- [ ] Verify visible character and environment rendering, movement, camera behavior, collisions, and interactions.
-- [ ] Record actual image output and the inputs tested.
+- [x] Display game video, title screen, main menu and options menu.
+- [x] Test opening and leaving the options menu.
+- [x] Reach real 3D output, including the Deku Tree and dialogue.
 
-A video, cutscene, or increasing frame counter does not complete this milestone.
+**Real 3D output is visible, but heavy overexposure and a CPU return crash remain unresolved. Controllable gameplay and saving/loading are not yet verified.**
 
-## 2. Save, restart, and continue
+## 1. Resolve the current blockers
+
+- [ ] Reproduce and fix the longer-run CPU return crash around frame **23,250**, reported at `main+0x1661690`.
+- [ ] Identify and correct the cause of heavy overexposure, washed-out colours and missing visual detail.
+- [ ] Prioritize relevant remaining shader errors from the **111** reported messages.
+- [ ] Recheck the affected 3D scene and the menu/options path after fixes.
+
+The current **0 Vulkan errors** result applies to the tested menu/options path; it does not establish error-free 3D rendering.
+
+## 2. Reach controllable gameplay
+
+- [ ] Reach the first genuinely controllable scene through the normal game flow.
+- [ ] Verify player movement, camera behavior, collisions and interactions.
+- [ ] Record the actual image output and the inputs tested.
+- [ ] Confirm that progression continues beyond the current reproducible stop.
+
+Visible scenes, dialogue or an increasing frame counter do not complete this milestone.
+
+## 3. Save, restart, and continue
 
 After controllable gameplay is reached:
 
 - [ ] Run a continuous gameplay session.
 - [ ] Check reachable room and scene transitions.
 - [ ] Verify gameplay audio.
-- [ ] Save through the game when saving becomes available.
+- [ ] Save through the game using a separate test profile.
 - [ ] Close normally, restart, and load the saved progress.
 
 Functions that cannot yet be reached remain unverified.
 
-## 3. Improve stability and compatibility
+## 4. Improve stability and compatibility
 
 - [ ] Test longer gameplay sections.
 - [ ] Expand hardware coverage beyond the reported RX 7900 XTX test.
 - [ ] Check startup and menu behavior for regressions.
-- [ ] Report Vulkan validation results separately for menus and gameplay.
+- [ ] Report Vulkan validation results separately for menus and 3D scenes/gameplay.
 - [ ] Measure performance before making targeted optimizations.
 
 1440p and 60 FPS remain targets, not demonstrated performance figures.
