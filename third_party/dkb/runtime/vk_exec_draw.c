@@ -830,7 +830,10 @@ static uint8_t image_format_of_handle(const VkExec *ex,uint64_t h) { // texture 
     }
     for (unsigned i=1;i<sizeof tex_format/sizeof *tex_format;i++)
         if (tex_format[i]==format) return (uint8_t)i;
-    rt_fatal("vk: storage view format %d cannot be represented by the shader translator",(int)format);
+    // The first request inspects all bound slots before the translator has
+    // supplied its use mask. A stale, unused depth image must not abort that
+    // request. The explicit sentinel still rejects an actual format query.
+    return GFX_IMAGE_FORMAT_UNSUPPORTED;
 }
 
 // The answers of stage st for the slots in mask; the types of other slots stay zero.
