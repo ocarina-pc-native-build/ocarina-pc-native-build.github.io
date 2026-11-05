@@ -222,6 +222,59 @@ static int make_array_texture(void) {
     return 1;
 }
 
+// Distinct texels and nonzero signed offsets expose gather order, FP16 packing
+// and texel-fetch offset errors through real shader translation and GPU readback.
+static int run_postprocess_fetches(uint8_t *memory,void *command_control,uint64_t handle,size_t stride) {
+    uint32_t native[][4]={
+        {0x00007802,0x3e800000,0xf00,0}, {0x00017802,0x3f000000,0xf00,0},
+        {0x00027802,0,0xf00,0}, {0x00037802,0,0xf00,0},
+        {0x000a7802,0xabcdef01,0xf00,0}, {0x000b7802,0xabcdef02,0xf00,0},
+        {0x00087b63,0x30000802,0x000eaf09,0}, // TLD4.PTP.F16, R8/R9 hold four half results
+        {0x000b7202,11,0xf00,0}, // retain the fourth output word
+        {0x00287a02,0x400,0xf00,0}, {0x00297a02,0x500,0xf00,0},
+        {0x28007386,8,0x0010ad00,0}, {0x0000794d,0,0x03800000,0}
+    };
+    uint32_t ctl[0xd8/4]={0};
+    ctl[0]=0x98761234; ctl[1]=0xc9; ctl[0x30/4]=sizeof ctl; ctl[0x38/4]=sizeof native;
+    ctl[0x58/4]=ctl[0x5c/4]=ctl[0x60/4]=1; ((uint8_t *)ctl)[0xb2]=1; ((uint8_t *)ctl)[0xb3]=1;
+    const NVNtexturePool *tp[3]={&texture_a,&texture_a,&texture_a};
+    const NVNsamplerPool *sp[3]={&sampler_repeat,&sampler_repeat,&sampler_repeat};
+    for(unsigned variant=0;variant<5;variant++) {
+        // PTP applies each offset to i0,j0, not to the four ordinary gather neighbors.
+        // Four zero offsets therefore fetch the same red texel four times.
+        uint32_t expected[3][4]={{0x3c003c00,0x3c003c00,0xabcdef01,0xabcdef02}};
+        if(variant==1) {
+            native[2][1]=0x00010001; native[3][1]=0x003f0000;
+            expected[0][0]=0; expected[0][1]=0x00003c00; // green, green, red, green
+        } else if(variant==4) {
+            const uint32_t shifts[][4]={
+                {0x00017882,0x81234567,0,0}, // UMOV UR1
+                {0x01117899,3,0x0800063f,0}, // USHF.L UR17,UR1,3,URZ
+                {0x11167899,4,0x0800163f,0}, // USHF.R UR22,UR17,4,URZ
+                {0x00007c82,22,0x08000000,0}, // UMOV UR0,UR22
+                {0x00087c02,0,0x08000f00,0},
+                {0x00097802,0,0xf00,0}, {0x000a7802,0xabcdef01,0xf00,0}
+            };
+            memcpy(native,shifts,sizeof shifts);
+            native[7][0]=0x000b7802; native[7][1]=0xabcdef02;
+            expected[0][0]=(UINT32_C(0x81234567)<<3)>>4; expected[0][1]=0;
+        } else if(variant>=2) {
+            native[0][1]=variant==2?0:1; native[1][1]=0;
+            native[2][1]=variant==2?1:15; // signed four-bit X offset +1/-1
+            native[6][0]=0x00087b66; native[6][1]=0x30000802; native[6][2]=0x008e1f0a;
+            expected[0][0]=variant==2?0:0x3f800000;
+            expected[0][1]=variant==2?0x3f800000:0;
+            expected[0][2]=0; expected[0][3]=0x3f800000;
+        }
+        NVNshaderData shader={U(native),(const uint8_t *)ctl};
+        if(!(uint8_t)CALL(nvnProgramSetShaders,U(&program),1,U(&shader)))return 0;
+        const char *names[]={"half gather zero offsets","half gather signed per-texel offsets",
+                             "texel fetch positive offset","texel fetch negative offset","uniform shifts through UR17 and UR22"};
+        if(!run_case(names[variant],memory,command_control,handle,tp,sp,expected,1,stride))return 0;
+    }
+    return 1;
+}
+
 static int run_native_wide(uint8_t *memory,void *command_control,uint64_t handle,size_t stride) {
     uint32_t native[][4]={
         {0x00047802,0xfffffff1,0xf00,0}, {0x000c7802,0xffffffff,0xf00,0},
@@ -432,6 +485,7 @@ int probe_vkpool(void) {
     tp[1] = &texture_a; sp[1] = &sampler_clamp;
     REQUIRE(run_case("sampler repeat/clamp/repeat", memory, command_control, handle, tp, sp, trip, 3, stride), "sampler case completed");
     REQUIRE(run_native_textures(memory,command_control,handle,stride),"native bindless texture cases completed");
+    REQUIRE(run_postprocess_fetches(memory,command_control,handle,stride),"postprocess fetch modes completed");
     REQUIRE(run_native_wide(memory,command_control,handle,stride),"native wide immediate products completed");
     REQUIRE(make_texture(&srgb_texture, 0xb0000, pattern), "sRGB texture"); textures_live = 4;
     REQUIRE(run_srgb_store(memory, command_control, ti), "sRGB storage view case completed");

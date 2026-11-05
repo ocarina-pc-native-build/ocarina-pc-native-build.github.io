@@ -120,6 +120,13 @@ are selectively adapted from the same Eglantine file and commit. Existing bound
 texture behavior and half-component ordering are retained. The additional
 ISETP.EX accumulator/predicate preservation and its semantic tests are original.
 
+The UR16-UR27 `USHF` mapping and `TLD.SCR.LZ.AOFFI` selection are selectively
+adapted from the same Eglantine file and commit. The PTP gather FP16 result
+packing reuses this repository's corrected TEX half-pair conversion. Its GPU
+fixtures are authored independently. Their PTP texel selection follows the
+Khronos Vulkan texture-gather rules for `ConstOffsets`:
+https://docs.vulkan.org/spec/latest/chapters/textures.html#textures-gather
+
 The Windows OoT integration adapts image-copy pitch recording and 64-bit address
 wait comparison from nxnative (`dm/gfx/nvn/hle_nvn.c`, `dm/gfx/nvn/nvn_obj.h`, `dm/host/hle_thread.c`),
 revision `84dea69835414b18a4351cd45054bb611e0e3185`, MIT, Copyright (c) 2026 seedds

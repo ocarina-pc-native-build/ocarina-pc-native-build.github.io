@@ -349,8 +349,39 @@ static void high_native_registers() {
     auto cross=op(0x321); bits(cross,16,8,214); bits(cross,74,2,3);
     NativeRegisterSpill plan; CHECK(!plan.Prepare(cross));
 }
+static void uniform_shift_registers() {
+    const u32 registers[]={0,15,16,21,22,27};
+    const u32 values[]={0,1,0x80000000,0xffffffff,0x12345678};
+    for (u32 dst:registers) for (u32 src:registers) for (u32 mode=0;mode<5;mode++)
+        for (u32 shift:{0u,1u,17u,31u,32u}) {
+            auto i=op(0x899); bits(i,16,8,dst); i.words[1]=shift;
+            const bool high=mode==1 || mode==3 || mode==4;
+            bits(i,24,8,high?63:src);
+            i.words[2]=(mode==0?0x08000600:mode==1?0x08010600:mode==2?0x08001600:
+                        mode==3?0x08011600:0x08011400)|(high?src:63);
+            auto out=lower(i); CHECK(bool(out)); if (!out) continue;
+            const u64 m=out.instructions[0];
+            CHECK((m&255)==(dst<22?216+dst:218+dst));
+            CHECK(((m>>8)&255)==(src<22?216+src:218+src));
+            CHECK(((m>>20)&0x7ffff)==shift);
+            const bool right=(m&0xfff8000000000000ull)==0x3828000000000000ull;
+            const bool signed_right=(m>>48)&1;
+            CHECK(right==(mode>=2)); CHECK(signed_right==(mode==4));
+            for (u32 value:values) {
+                const u32 expected=mode<2?(shift==32?0:value<<shift):
+                    mode==4?u32(s32(value)>>(shift<32?shift:31)):(shift==32?0:value>>shift);
+                const u32 actual=right?(signed_right?u32(s32(value)>>(shift<32?shift:31)):
+                    (shift==32?0:value>>shift)):(shift==32?0:value<<shift);
+                CHECK(actual==expected);
+            }
+        }
+    for (u32 bad:{28u,62u,63u}) {
+        auto i=op(0x899); bits(i,16,8,bad); bits(i,24,8,1); i.words[2]=0x0800063f;
+        CHECK(!lower(i));
+    }
+}
 int main() {
-    txq(); i2f(); texture_half_order(); extended_compare(); extended_accumulator(); bindless_textures(); wide_immediate_multiply(); array_gather(); high_native_registers(); windows();
+    txq(); i2f(); texture_half_order(); extended_compare(); extended_accumulator(); bindless_textures(); wide_immediate_multiply(); array_gather(); high_native_registers(); uniform_shift_registers(); windows();
     std::printf("render regressions: %u checks, %u failures\n", checks, failures);
     return failures?1:0;
 }
