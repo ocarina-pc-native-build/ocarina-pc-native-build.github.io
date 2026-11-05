@@ -50,7 +50,7 @@ static const struct { uint32_t imm; const char *name; } unimplemented[] = {
 };
 
 static __attribute__((noreturn)) void svc_fatal(Cpu *c, uint32_t imm, uint64_t pc, const char *why) {
-    const char *name = "unknown";
+    const char *name = imm == 0x26 ? "Break" : "unknown";
     for (unsigned i = 0; i < sizeof unimplemented / sizeof *unimplemented; i++)
         if (unimplemented[i].imm == imm) name = unimplemented[i].name;
     char at[160];
@@ -59,7 +59,7 @@ static __attribute__((noreturn)) void svc_fatal(Cpu *c, uint32_t imm, uint64_t p
             ldr_describe(pc, at, sizeof at), why, (unsigned long long)c->x[0], (unsigned long long)c->x[1],
             (unsigned long long)c->x[2], (unsigned long long)c->x[3]);
     kern_backtrace(c);
-    rt_fatal("svc #%#x %s is not implemented", imm, name);
+    rt_fatal("svc #%#x %s: %s", imm, name, why);
 }
 
 // QueryMemory sees the guest main thread's stack, which memory.c does not know: Stack inside it, free ranges
