@@ -78,7 +78,7 @@ ROOT = Path(__file__).resolve().parent.parent
 # them. MAIN_ROOT is where they land, so resolved paths still print and compare relative to a root.
 MAIN_ROOT = (ROOT / 'build').resolve().parent
 UCRT = Path(r'C:\msys64\ucrt64\bin')
-EXE = 'dkb.exe' if WIN else 'dkb'   # DKB Recomp: not TotK's executable
+EXE = 'oot2026.exe' if WIN else 'oot2026'
 
 
 def on_path(name):
@@ -138,8 +138,9 @@ def vma_include():
 
 # --toolchain: an llvm-mingw tree. The libraries, headers and DLLs MSYS2 supplies come from the deps directory instead.
 LLVM_LINK_LIBS = ['-lpsapi', '-lbcrypt', '-luser32', '-lgdi32', '-ldwmapi', '-limm32', '-lwinmm', '-lvulkan-1', '-lSDL3', '-lopus',
-                  '-l:libvpx.a', '-l:libzstd.a', '-l:libc++.a', '-l:libc++abi.a', '-l:libunwind.a', '-l:libwinpthread.a']
+                  '-ldav1d', '-l:libvpx.a', '-l:libzstd.a', '-l:libc++.a', '-l:libc++abi.a', '-l:libunwind.a', '-l:libwinpthread.a']
 DEFAULT_DEPS = ROOT / 'toolchain' / 'deps-mingw'
+LINK_LIBS.append('-ldav1d')
 # Runtime sources compiled per install, not in the library: romfs.c includes romfs_config.h, patches.c and ov_zstd.c
 # the patches.h of the player's game version (its patch page is the page after that version's main; ov_zstd.c's host
 # functions sit on it).
@@ -275,8 +276,25 @@ def runtime_object(out, src):
 def module_glue(layout, linked, hashes, paths, version):
     """C for build/<version>/modules.c: the layout table, the linked modules' function tables (dispatch.h), the
     expected ExeFS hashes, the game version and the default game paths (host.h)."""
+    npdm = (paths['exefs'] / 'main.npdm').read_bytes()
+    if len(npdm) < 0x80 or npdm[:4] != b'META':
+        raise ValueError('main.npdm: missing META header')
+    aci = int.from_bytes(npdm[0x70:0x74], 'little')
+    aci_size = int.from_bytes(npdm[0x74:0x78], 'little')
+    if aci_size < 0x20 or aci + aci_size > len(npdm) or npdm[aci:aci+4] != b'ACI0':
+        raise ValueError('main.npdm: invalid ACI0 bounds or magic')
+    application_id = int.from_bytes(npdm[aci+0x10:aci+0x18], 'little')
+    if not application_id:
+        raise ValueError('main.npdm: empty application ID')
     out = [f'// Module glue written by tools/build_game.py; do not edit. {GENERATED_MARKER}',
            '#include "dispatch.h"', '#include "host.h"', '#include "layout.h"', '']
+    out.append(f'const uint64_t rt_application_id = {application_id:#x}ull;')
+    catalog_path = paths['romfs'] / 'index.json'
+    catalog = json.loads(catalog_path.read_text(encoding='utf-8')) if catalog_path.exists() else {}
+    display = catalog.get('version', DISPLAY_VERSIONS.get(version, ''))
+    if not isinstance(display, str) or '\0' in display or len(display.encode('utf-8')) >= 16:
+        raise ValueError('RomFS metadata: display version must fit the 16-byte SDK field')
+    out.append(f'const char rt_display_version[] = {c_string(display)};')
     for name, base, size in layout:
         u = name.upper()
         out.append(f'_Static_assert(MOD_{u}_BASE == {base:#x}ull && MOD_{u}_SIZE == {size:#x}ull, '

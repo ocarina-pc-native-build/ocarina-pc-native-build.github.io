@@ -117,6 +117,15 @@ int probe_gfx_abi(void) {
     CHECK(RT_GPU_VA_BASE >= RT_ADDRESS_LIMIT && RT_GPU_VA_SIZE > 0, "GPU address window %#llx overlaps the guest space",
           RT_GPU_VA_BASE);
     check_write_watch();
+    // A rejected NVN2 stage must be visible in the public diagnostic count,
+    // even though it never reaches the downstream SPIR-V translator.
+    uint8_t bad_control[256] = {0}, bad_code[128] = {0};
+    const uint8_t *translated_control = NULL, *translated_code = NULL;
+    uint64_t shader_failures = gfx_shader_failures();
+    uint64_t stats_failures = gfx_stats().shader_failures;
+    CHECK(!nvn2_lower(bad_control, bad_code, &translated_control, &translated_code), "malformed NVN2 stage accepted");
+    CHECK(gfx_shader_failures() == shader_failures + 1, "NVN2 rejection absent from shader failure count");
+    CHECK(gfx_stats().shader_failures == stats_failures + 1, "NVN2 rejection absent from boot statistics");
     printf("gfx-abi: %d layouts fit (tightest %s, %zu bytes spare), cmd_t inline fields at +0x20/+0x28, "
            "NVNtextureView %zu bytes\n", (int)(sizeof fits / sizeof *fits), tight, tightest, sizeof(NVNtextureView));
     if (failures) {

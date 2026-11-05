@@ -28,12 +28,14 @@ enum { FS_ENTRY_DIRECTORY = 0, FS_ENTRY_FILE = 1 };                 // nn::fs::D
 #define ROMFS_HANDLE_BASE 0x100000000ull
 int romfs_owns(const char *path);                          // path is on the mounted RomFS ("<mount>:...")
 int romfs_handle(uint64_t h);                              // h is a RomFS file handle
-uint32_t romfs_mount(const char *name);                    // nn::fs::MountRom; a second name is fatal
+uint32_t romfs_mount(const char *name);                    // nn::fs::MountRom; aliases share the verified image
+int romfs_unmount(const char *name);
 uint32_t romfs_open(uint64_t *out, const char *path, int mode);
 uint32_t romfs_read(uint64_t *out, uint64_t h, int64_t offset, void *buffer, uint64_t size);
 uint32_t romfs_size(int64_t *out, uint64_t h);
 void romfs_close(uint64_t h);
 uint32_t romfs_entry_type(int *out, const char *path);
+uint32_t romfs_list(const char *path, void (*visit)(const char *name, int directory, uint64_t size, void *ctx), void *ctx);
 uint64_t romfs_file_count(void);                           // files in the index (fs_init first)
 const char *romfs_entry(uint64_t i, uint64_t *offset, uint64_t *size);   // path, image offset and size of index row i
 const char *romfs_image_path(void);                        // the romfs.bin path fs_init opened

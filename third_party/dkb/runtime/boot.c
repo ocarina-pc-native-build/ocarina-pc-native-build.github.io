@@ -111,13 +111,29 @@ static void cb_module_finis(Cpu *c) {
 // ---- checkpoints (host.h)
 static void stats_line(void) {
     RtStats s = rt_stats();
-    rt_logf("boot: passed (%llu SVCs, %llu threads, %llu host calls)\n", (unsigned long long)s.svcs,
+    rt_logf("boot: checkpoint reached (%llu SVCs, %llu threads, %llu host calls)\n", (unsigned long long)s.svcs,
            (unsigned long long)s.threads, (unsigned long long)s.host_calls);
 }
 
 void rt_boot_event(const char *what, Cpu *c, const char *detail) {
-    if (!rt_game_version) return;   // the expected call sites are TotK's main; Bananza has none pinned
     char at[128];
+    if (!rt_game_version) {
+        // New title profiles have no TotK-specific return addresses. Authenticate
+        // the lifecycle using the loaded modules' actual constructor state.
+        caller(c, at, sizeof at);
+        if (!plat_cas32(&inits_done, 0, 0))
+            rt_fatal("boot: %s before module constructors completed (%s)", what, at);
+        if (strcmp(what, "checkpoint") && strcmp(what, "nvn"))
+            rt_fatal("boot: unknown boot event %s from %s", what, at);
+        for (int i = 0; i < ldr_count(); i++)
+            if (ctor_state(ldr_module(i)) != CTOR_DONE)
+                rt_fatal("boot: %s constructor state changed", ldr_module(i)->name);
+        rt_log("boot: %s %s from %s", what, detail ? detail : "", at);
+        if (!strcmp(what, "nvn") && rt_config()->boot && !rt_config()->seconds) {
+            stats_line(); fflush(stdout); fflush(stderr); plat_exit(0);
+        }
+        return;
+    }
     const RtLoaded *main_mod = module_named("main");
     uint64_t ret = c->x[30];
     caller(c, at, sizeof at);
@@ -304,8 +320,9 @@ static void series_shot(const tex_t *t, uint64_t n) {
 void rt_frame_presented(const tex_t *t, uint64_t n) {
     const RtConfig *cfg = rt_config();
     series_shot(t, n);
+    if (n == 1) rt_log("boot: first guest frame presented");
     int64_t w = cfg->seconds ? frame_step_world_us() : -1;
-    if (w < 0 || (double)w < cfg->seconds * 1e6) return;
+    if (cfg->frames ? n < cfg->frames : (w < 0 || (double)w < cfg->seconds * 1e6)) return;
     if (cfg->shot) save_shot(t, cfg->shot);
     GfxStats g = gfx_stats();
     rt_logf("boot: frames %llu presented (nvn calls %llu, distinct %llu, unimplemented %llu, validation errors %llu, "
@@ -313,6 +330,8 @@ void rt_frame_presented(const tex_t *t, uint64_t n) {
            (unsigned long long)g.nvn_calls, (unsigned long long)g.nvn_distinct, (unsigned long long)g.unimplemented,
            (unsigned long long)g.validation_errors, (unsigned long long)g.shader_failures,
            (unsigned long long)g.draws_skipped);
+    if (g.shader_failures || g.validation_errors || g.unimplemented)
+        rt_log("boot: frame target reached with runtime/graphics errors; this is not a rendering pass");
     stats_line();
     if (rt_trace & RT_TRACE_HOSTCALL) hostfn_report();   // which host functions the run leaned on
     fflush(stdout);

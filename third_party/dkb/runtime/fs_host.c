@@ -786,6 +786,7 @@ static uint32_t read_cache_list(int *count, CacheStorageInfo *out, uint64_t h, i
 static void close_cache_list(uint64_t h) { free((void *)(uintptr_t)h); }
 
 static void unmount(const char *name) {
+    if (romfs_unmount(name)) return;
     save_wait_commit();   // else the working copy could go before a Commit queued just now has copied it
     plat_mutex_lock(&tx_lock);
     plat_mutex_lock(&lock);
@@ -1025,16 +1026,36 @@ static uint32_t delete_recursive(const char *path) {
     return remove_tree(p) ? FS_R_INVALID_ARGUMENT : 0;
 }
 
+static void romfs_listing_add(const char *name, int directory, uint64_t size, void *ctx) {
+    Listing *l = ctx;
+    if (l->n && !strcmp(l->e[l->n-1].name, name)) return;
+    listing_add(name, directory ? PLAT_FS_DIR : PLAT_FS_FILE, size, l);
+}
+static int listed_compare(const void *a, const void *b) {
+    return strcmp(((const Listed *)a)->name, ((const Listed *)b)->name);
+}
+
 static uint32_t open_directory(uint64_t *out, const char *path, int mode) {
-    if (romfs_owns(path)) rt_fatal("fs: OpenDirectory on the RomFS (%s) is not implemented", path);
-    char p[PATH_CAP];
-    uint32_t r = host_path(path, p, sizeof p);
-    if (r) return r;
     if (!out || mode < 1 || mode > 3) return FS_R_INVALID_ARGUMENT;
-    if (plat_fs_kind(p) != PLAT_FS_DIR) return FS_R_PATH_NOT_FOUND;
-    Listing l;
-    int e = list_dir(p, &l);
-    if (e) return fs_result(e);
+    Listing l = {0};
+    if (romfs_owns(path)) {
+        uint32_t r = romfs_list(path, romfs_listing_add, &l);
+        if (r) { listing_free(l.e, l.n); return r; }
+        if (l.n > 1) qsort(l.e, l.n, sizeof *l.e, listed_compare);
+        int unique = 0;
+        for (int j = 0; j < l.n; j++) {
+            if (unique && !strcmp(l.e[unique-1].name, l.e[j].name)) free(l.e[j].name);
+            else l.e[unique++] = l.e[j];
+        }
+        l.n = unique;
+    } else {
+        char p[PATH_CAP];
+        uint32_t r = host_path(path, p, sizeof p);
+        if (r) return r;
+        if (plat_fs_kind(p) != PLAT_FS_DIR) return FS_R_PATH_NOT_FOUND;
+        int e = list_dir(p, &l);
+        if (e) return fs_result(e);
+    }
     plat_mutex_lock(&lock);
     for (int i = 0; i < NDIRS; i++)
         if (!dirs[i].used) {
@@ -1050,7 +1071,8 @@ static uint32_t open_directory(uint64_t *out, const char *path, int mode) {
 static uint32_t read_directory(int64_t *count, DirectoryEntry *out, uint64_t h, int64_t max) {
     if (h < DIR_BASE || h >= DIR_BASE + NDIRS || !count || max < 0 || (!out && max)) return FS_R_INVALID_ARGUMENT;
     Dir *d = &dirs[h - DIR_BASE];
-    if (!d->used) return FS_R_INVALID_ARGUMENT;
+    plat_mutex_lock(&lock);
+    if (!d->used) { plat_mutex_unlock(&lock); return FS_R_INVALID_ARGUMENT; }
     int64_t n = 0;
     while (n < max && d->next < d->n) {
         const Listed *e = &d->e[d->next++];
@@ -1065,6 +1087,7 @@ static uint32_t read_directory(int64_t *count, DirectoryEntry *out, uint64_t h, 
         n++;
     }
     *count = n;
+    plat_mutex_unlock(&lock);
     return 0;
 }
 
@@ -1076,6 +1099,18 @@ static void close_directory(uint64_t h) {
     dirs[h - DIR_BASE] = (Dir){0};
     plat_mutex_unlock(&lock);
     listing_free(d.e, d.n);
+}
+
+static uint32_t directory_count(int64_t *out, uint64_t h) {
+    if (!out || h < DIR_BASE || h >= DIR_BASE + NDIRS) return FS_R_INVALID_ARGUMENT;
+    plat_mutex_lock(&lock);
+    const Dir *d = &dirs[h-DIR_BASE];
+    if (!d->used) { plat_mutex_unlock(&lock); return FS_R_INVALID_ARGUMENT; }
+    *out = 0;
+    for (int i = 0; i < d->n; i++)
+        if (d->mode & (d->e[i].kind == PLAT_FS_DIR ? 1 : 2)) ++*out;
+    plat_mutex_unlock(&lock);
+    return 0;
 }
 
 // ---- overrides: AAPCS64 thunks. FileHandle, DirectoryHandle, CacheStorageListHandle
@@ -1100,6 +1135,7 @@ static void ov_delete_recursive(Cpu *c) { ret_x(c, delete_recursive(arg_p(c, 0))
 static void ov_open_directory(Cpu *c) { ret_x(c, open_directory(arg_p(c, 0), arg_p(c, 1), I32(2))); }
 static void ov_read_directory(Cpu *c) { ret_x(c, read_directory(arg_p(c, 0), arg_p(c, 1), arg_x(c, 2), I64(3))); }
 static void ov_close_directory(Cpu *c) { close_directory(arg_x(c, 0)); }
+static void ov_directory_count(Cpu *c) { ret_x(c, directory_count(arg_p(c, 0), arg_x(c, 1))); }
 static void ov_mount_save(Cpu *c) { ret_x(c, mount_save(arg_p(c, 0), arg_p(c, 1))); }
 static void ov_mount_save_ro(Cpu *c) { ret_x(c, mount_save_ro(arg_p(c, 0), arg_x(c, 1), arg_p(c, 2))); }
 static void ov_save_exists(Cpu *c) { ret_x(c, save_exists(arg_x(c, 0), arg_p(c, 1))); }
@@ -1141,6 +1177,7 @@ static void ov_set_priority(Cpu *c) { (void)c; }
 #define S_OPEN_DIRECTORY "_ZN2nn2fs13OpenDirectoryEPNS0_15DirectoryHandleEPKci"
 #define S_READ_DIRECTORY "_ZN2nn2fs13ReadDirectoryEPlPNS0_14DirectoryEntryENS0_15DirectoryHandleEl"
 #define S_CLOSE_DIRECTORY "_ZN2nn2fs14CloseDirectoryENS0_15DirectoryHandleE"
+#define S_DIRECTORY_COUNT "_ZN2nn2fs22GetDirectoryEntryCountEPlNS0_15DirectoryHandleE"
 #define S_MOUNT_SAVE "_ZN2nn2fs13MountSaveDataEPKcRKNS_7account3UidE"
 #define S_MOUNT_SAVE_RO "_ZN2nn2fs21MountSaveDataReadOnlyEPKcNS_13ApplicationIdERKNS_7account3UidE"
 #define S_SAVE_EXISTS "_ZN2nn2fs18IsSaveDataExistingENS_13ApplicationIdERKNS_7account3UidE"
@@ -1177,6 +1214,7 @@ HOST_OVERRIDE(S_DELETE_RECURSIVE, ov_delete_recursive);
 HOST_OVERRIDE(S_OPEN_DIRECTORY, ov_open_directory);
 HOST_OVERRIDE(S_READ_DIRECTORY, ov_read_directory);
 HOST_OVERRIDE(S_CLOSE_DIRECTORY, ov_close_directory);
+HOST_OVERRIDE(S_DIRECTORY_COUNT, ov_directory_count);
 HOST_OVERRIDE(S_MOUNT_SAVE, ov_mount_save);
 HOST_OVERRIDE(S_MOUNT_SAVE_RO, ov_mount_save_ro);
 HOST_OVERRIDE(S_SAVE_EXISTS, ov_save_exists);
@@ -1198,7 +1236,7 @@ HOST_OVERRIDE(S_SET_PRIORITY, ov_set_priority);
 static const char *const probe_symbols[] = {
     S_OPEN_FILE, S_FILE_SIZE, S_CLOSE_FILE, S_ENTRY_TYPE, S_READ_FILE, S_READ_OPTIONS, S_READ_EXACT, S_WRITE_FILE,
     S_SET_FILE_SIZE, S_FLUSH_FILE, S_CREATE_FILE, S_DELETE_FILE, S_RENAME_FILE, S_CREATE_DIRECTORY, S_DELETE_RECURSIVE,
-    S_OPEN_DIRECTORY, S_READ_DIRECTORY, S_CLOSE_DIRECTORY, S_MOUNT_SAVE, S_MOUNT_SAVE_RO, S_SAVE_EXISTS, S_MOUNT_TEMP,
+    S_OPEN_DIRECTORY, S_READ_DIRECTORY, S_CLOSE_DIRECTORY, S_DIRECTORY_COUNT, S_MOUNT_SAVE, S_MOUNT_SAVE_RO, S_SAVE_EXISTS, S_MOUNT_TEMP,
     S_UNMOUNT, S_COMMIT, S_CREATE_CACHE, S_DELETE_CACHE, S_MOUNT_CACHE, S_OPEN_CACHE_LIST, S_READ_CACHE_LIST,
     S_CLOSE_CACHE_LIST, S_SET_PRIORITY, S_MOUNT_ROM, S_QUERY_CACHE, S_INITIALIZE};
 #define NPROBE ((int)(sizeof probe_symbols / sizeof *probe_symbols))
@@ -1277,6 +1315,46 @@ static void probe_paths(void) {
            bad ? "FAIL" : "ok");
 }
 
+static void probe_romfs_directory(const char *path) {
+    int64_t totals[4]={0};
+    for (int mode=1;mode<=3;mode++) {
+        uint64_t h=0;
+        CHECK(RES(S_OPEN_DIRECTORY,U(&h),U(path),mode)==0,"RomFS OpenDirectory mode %d",mode);
+        if (!h) continue;
+        int64_t expected=-1, count=-1, seen=0;
+        CHECK(RES(S_DIRECTORY_COUNT,U(&expected),h)==0 && expected>=0,"RomFS directory count");
+        DirectoryEntry entries[7]; char previous[769]="";
+        do {
+            CHECK(RES(S_READ_DIRECTORY,U(&count),U(entries),h,7)==0 && count>=0 && count<=7,
+                  "RomFS directory pagination");
+            if (count<0 || count>7) break;
+            for (int64_t i=0;i<count;i++) {
+                DirectoryEntry *e=&entries[i];
+                CHECK(!*previous || strcmp(previous,e->name)<0,"RomFS ordered unique children");
+                snprintf(previous,sizeof previous,"%s",e->name);
+                char child[4200]; snprintf(child,sizeof child,"%s/%s",path,e->name);
+                int type=-1;
+                CHECK(RES(S_ENTRY_TYPE,U(&type),U(child))==0 && type==e->type,
+                      "RomFS directory entry agrees with path lookup");
+                CHECK(mode==3 || type==(mode==1 ? FS_ENTRY_DIRECTORY : FS_ENTRY_FILE),"RomFS type filter");
+                if (type==FS_ENTRY_FILE) {
+                    uint64_t f=0; int64_t size=-1;
+                    CHECK(RES(S_OPEN_FILE,U(&f),U(child),FS_OPEN_READ)==0 &&
+                          RES(S_FILE_SIZE,U(&size),f)==0 && size==e->size,"RomFS listed file size");
+                    if (f) CALL(S_CLOSE_FILE,f);
+                } else CHECK(e->size==0,"RomFS directory has zero size");
+                seen++;
+            }
+        } while(count);
+        CHECK(seen==expected,"RomFS complete directory count");
+        CHECK(RES(S_DIRECTORY_COUNT,U(&count),h)==0 && count==expected,"count does not consume or follow cursor");
+        CHECK(RES(S_READ_DIRECTORY,U(&count),U(entries),h,7)==0 && count==0,"RomFS directory repeated EOF");
+        totals[mode]=seen; CALL(S_CLOSE_DIRECTORY,h);
+        CHECK(RES(S_DIRECTORY_COUNT,U(&count),h)!=0,"closed directory handle rejected");
+    }
+    CHECK(totals[1]+totals[2]==totals[3],"RomFS directory filters partition all entries");
+}
+
 static uint64_t probe_romfs(void) {
     uint64_t count = romfs_file_count(), cache = ~0ull;
     CHECK(RES(S_QUERY_CACHE, U(&cache)) == 0 && cache == 0, "QueryMountRomCacheSize");
@@ -1284,6 +1362,14 @@ static uint64_t probe_romfs(void) {
     CHECK(RES(S_MOUNT_ROM, U("rom"), 0, 0) == 0, "MountRom(\"rom\") again");
     CHECK(RES(S_MOUNT_ROM, U("../x"), 0, 0) == FS_R_INVALID, "MountRom with a bad name");
     probe_paths();
+    probe_romfs_directory("rom:/");
+    CHECK(romfs_mount("alias")==0 && romfs_owns("alias:/") && romfs_owns("rom:/"),"second RomFS mount alias");
+    probe_romfs_directory("alias:/");
+    CHECK(romfs_unmount("alias") && !romfs_owns("alias:/") && romfs_owns("rom:/"),"RomFS alias unmount isolation");
+    uint64_t bad_dir=0;
+    CHECK(RES(S_OPEN_DIRECTORY,U(&bad_dir),U("rom:/../"),3)!=0,"RomFS directory traversal rejected");
+    CHECK(RES(S_OPEN_DIRECTORY,U(&bad_dir),U("rom:/__missing_probe_directory__"),3)!=0,
+          "RomFS nonexistent directory rejected");
 
     PlatFile *image = plat_file_open(romfs_image_path());
     if (!image) rt_fatal("probe-fs: cannot open the RomFS image");
@@ -1346,6 +1432,7 @@ static uint64_t probe_romfs(void) {
     CHECK(same, "rom:/, rom:// and rom:/// do not open the same file");
     snprintf(path, sizeof path, "rom:/%.*s", (int)(strrchr(sample, '/') - sample), sample);
     CHECK(RES(S_ENTRY_TYPE, U(&type), U(path)) == 0 && type == FS_ENTRY_DIRECTORY, "a sampled file's folder");
+    probe_romfs_directory(path);
     snprintf(path, sizeof path, "rom://../%s", sample);
     CHECK(RES(S_OPEN_FILE, U(&h), U(path), FS_OPEN_READ) == FS_R_PATH_NOT_FOUND, "rom://../<file> opens");
     snprintf(path, sizeof path, "rom:/%s.absent", sample);

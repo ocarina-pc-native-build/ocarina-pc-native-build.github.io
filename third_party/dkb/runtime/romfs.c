@@ -47,7 +47,7 @@ static PlatFile *image;
 static const uint8_t *image_map;
 static char image_file[2048];
 static char index_dir[2048];         // the directory of romfs-index.bin: the proof file's default place
-static char mount_name[32];
+static char mount_names[16][32];
 static PlatMutex lock = PLAT_MUTEX_INIT;
 static uint64_t handles[NH];         // file index + 1; 0 is free
 static uint32_t handle_ovl[NH];      // overlay slot + 1 of an open handle, 0 = original
@@ -560,20 +560,44 @@ const char *romfs_overlay(size_t k, const char **file, uint64_t *size, int *is_a
 }
 
 int romfs_owns(const char *path) {
-    size_t n = strlen(mount_name);
-    return n && path && !strncmp(path, mount_name, n) && path[n] == ':';
+    if (!path) return 0;
+    size_t n=strcspn(path,":"); int found=0;
+    plat_mutex_lock_shared(&lock);
+    for (unsigned i=0;i<16;i++)
+        if (*mount_names[i] && strlen(mount_names[i])==n && !strncmp(path,mount_names[i],n) && path[n]==':')
+            { found=1; break; }
+    plat_mutex_unlock_shared(&lock); return found;
+}
+
+static const char *romfs_relative(const char *path) {
+    const char *p=NULL;
+    plat_mutex_lock_shared(&lock);
+    for (unsigned i=0;i<16 && !p;i++) if (*mount_names[i]) p=romfs_path_relative(mount_names[i],path);
+    plat_mutex_unlock_shared(&lock); return p;
+}
+
+int romfs_unmount(const char *name) {
+    if (!name || !*name) return 0;
+    int found=0; plat_mutex_lock(&lock);
+    for (unsigned i=0;i<16;i++) if (!strcmp(mount_names[i],name)) { mount_names[i][0]=0; found=1; break; }
+    plat_mutex_unlock(&lock); return found;
 }
 
 int romfs_handle(uint64_t h) { return h > ROMFS_HANDLE_BASE && h < ROMFS_HANDLE_BASE + NH; }
 
 uint32_t romfs_mount(const char *name) {
     fs_init();
-    if (!name || !romfs_path_valid_relative(name) || strlen(name) >= sizeof mount_name || strchr(name, '/') ||
+    if (!name || !romfs_path_valid_relative(name) || strlen(name) >= sizeof mount_names[0] || strchr(name, '/') ||
         strchr(name, ':'))
         return FS_R_INVALID;
     plat_mutex_lock(&lock);
-    if (*mount_name && strcmp(name, mount_name)) rt_fatal("second RomFS mount %s (%s is mounted)", name, mount_name);
-    strcpy(mount_name, name);
+    int slot=-1;
+    for (int i=0;i<16;i++) {
+        if (!strcmp(mount_names[i],name)) { plat_mutex_unlock(&lock); return 0; }
+        if (!*mount_names[i] && slot<0) slot=i;
+    }
+    if (slot<0) { plat_mutex_unlock(&lock); return FS_R_INVALID; }
+    strcpy(mount_names[slot], name);
     plat_mutex_unlock(&lock);
     rt_log("fs mount %s: -> RomFS", name);
     return 0;
@@ -582,7 +606,7 @@ uint32_t romfs_mount(const char *name) {
 uint32_t romfs_open(uint64_t *out, const char *path, int mode) {
     fs_trace("rom", path);
     if (!out || mode != FS_OPEN_READ) return FS_R_UNSUPPORTED_OPEN;
-    const char *p = romfs_path_relative(mount_name, path);
+    const char *p = romfs_relative(path);
     if (!p) return FS_R_PATH_NOT_FOUND;
     uint64_t i = file_index(p);
     if (i == UINT64_MAX) return FS_R_PATH_NOT_FOUND;
@@ -679,7 +703,14 @@ void romfs_close(uint64_t h) {
 
 uint32_t romfs_entry_type(int *out, const char *path) {
     if (!out) return FS_R_INVALID;
-    const char *p = romfs_path_relative(mount_name, path);
+    if (romfs_owns(path)) {
+        const char *root = strchr(path, ':') + 1;
+        if (*root == '/') {
+            while (*root == '/') root++;
+            if (!*root) { *out = FS_ENTRY_DIRECTORY; return 0; }
+        }
+    }
+    const char *p = romfs_relative(path);
     if (!p) return FS_R_PATH_NOT_FOUND;
     if (file_index(p) != UINT64_MAX) {
         *out = FS_ENTRY_FILE;
@@ -692,6 +723,36 @@ uint32_t romfs_entry_type(int *out, const char *path) {
         return 0;
     }
     return FS_R_PATH_NOT_FOUND;
+}
+
+uint32_t romfs_list(const char *path, void (*visit)(const char *, int, uint64_t, void *), void *ctx) {
+    if (!visit || !romfs_owns(path)) return FS_R_INVALID;
+    const char *p = strchr(path, ':') + 1;
+    if (*p != '/') return FS_R_PATH_NOT_FOUND;
+    while (*p == '/') p++;
+    if (*p && !romfs_path_valid_relative(p)) return FS_R_PATH_NOT_FOUND;
+    char prefix[4096];
+    size_t len = strlen(p);
+    while (len && p[len-1] == '/') len--;
+    if (len + 2 > sizeof prefix) return FS_R_INVALID;
+    memcpy(prefix, p, len);
+    if (len) prefix[len++] = '/';
+    prefix[len] = 0;
+    if (len && !folder_exists(prefix)) return FS_R_PATH_NOT_FOUND;
+    // The combined visible catalog includes replacement sizes and added files.
+    // The caller deduplicates directory names and snapshots entries at open.
+    for (uint64_t i = 0; i < file_count + nadded; i++) {
+        const char *name = i < file_count ? entry_name(entry(i)) : added[i-file_count];
+        if (strncmp(name, prefix, len)) continue;
+        const char *child = name + len, *slash = strchr(child, '/');
+        size_t n = slash ? (size_t)(slash-child) : strlen(child);
+        if (!n || n > 768) continue;
+        char leaf[769]; memcpy(leaf, child, n); leaf[n] = 0;
+        uint32_t ov = overlay_slot(i);
+        uint64_t size = slash ? 0 : ov ? overlays[ov-1].size : entry(i).size;
+        visit(leaf, !!slash, size, ctx);
+    }
+    return 0;
 }
 
 // ---- overrides
@@ -710,5 +771,6 @@ static void ov_initialize(Cpu *c) {
 }
 
 HOST_OVERRIDE("_ZN2nn2fs8MountRomEPKcPvm", ov_mount_rom);
+HOST_OVERRIDE("_ZN2nn2fs8MountRomEPKc", ov_mount_rom);
 HOST_OVERRIDE("_ZN2nn2fs22QueryMountRomCacheSizeEPm", ov_query_cache);
 HOST_OVERRIDE("_ZN2nn2fs24InitializeForApplicationEv", ov_initialize);

@@ -414,6 +414,23 @@ static void ov_vib_permit(Cpu *c) {
 }
 
 static volatile int32_t six_running;   // StartSixAxisSensor .. StopSixAxisSensor
+static volatile int32_t six_drift_mode=1;
+
+// SDL supplies host sensor samples; the Switch firmware's calibration itself
+// is not emulated. Preserve its requested mode for SDK callers (0 loose, 1
+// standard, 2 tight), as the existing host sensor fusion consumes SDL samples.
+static void ov_six_drift_set(Cpu *c) {
+    need_handle(arg_p(c,0),"SetGyroscopeZeroDriftMode");
+    const int32_t *mode=arg_p(c,1);
+    if (!mode || *mode<0 || *mode>2) rt_fatal("hid: invalid gyroscope drift mode");
+    plat_xchg32(&six_drift_mode,*mode);
+}
+static void ov_six_drift_get(Cpu *c) {
+    need_handle(arg_p(c,0),"GetGyroscopeZeroDriftMode");
+    ret_x(c,(uint64_t)plat_cas32(&six_drift_mode,0,0));
+}
+HOST_OVERRIDE("_ZN2nn3hid25SetGyroscopeZeroDriftModeERKNS0_19SixAxisSensorHandleERKNS0_22GyroscopeZeroDriftModeE",ov_six_drift_set);
+HOST_OVERRIDE("_ZN2nn3hid25GetGyroscopeZeroDriftModeERKNS0_19SixAxisSensorHandleE",ov_six_drift_get);
 
 static int six_axis_ours(const uint32_t *h, const char *fn) {
     uint32_t v = *need_handle(h, fn);

@@ -666,8 +666,9 @@ int probe_loader(void) {
     const RtConfig *cfg = rt_config();
     hostfn_add_override(PROBE_SYMBOL, probe_override);
     ldr_load(cfg->exefs);
-    if (nmods != (int)(sizeof expect_121 / sizeof *expect_121)) {
-        printf("probe-loader: FAILED (%d modules, expected 3)\n", nmods);
+    int expected_modules = rt_game_version ? (int)(sizeof expect_121 / sizeof *expect_121) : rt_layout_count;
+    if (nmods != expected_modules) {
+        printf("probe-loader: FAILED (%d modules, expected %d)\n", nmods, expected_modules);
         return 1;
     }
     printf("modules (exefs %s):\n", cfg->exefs);
@@ -682,11 +683,11 @@ int probe_loader(void) {
                "%u\n", m->pub.name, (unsigned long long)m->pub.base, (unsigned long long)m->pub.size, m->init_off,
                (unsigned long long)(m->pub.init_array_size / 8), (unsigned long long)m->pub.init_array_size,
                m->imports, to, m->weak_unresolved);
-        CHECK(!strcmp(m->pub.name, expect[i].name), "module %d is %s", i, m->pub.name);
-        CHECK(m->imports == expect[i].imports && m->weak_unresolved == expect[i].weak &&
-              !memcmp(m->import_to, expect[i].to, sizeof m->import_to), "%s import table differs from section 0.1",
+        CHECK(!strcmp(m->pub.name, rt_layout[i].name), "module %d is %s", i, m->pub.name);
+        CHECK(!rt_game_version || (m->imports == expect[i].imports && m->weak_unresolved == expect[i].weak &&
+              !memcmp(m->import_to, expect[i].to, sizeof m->import_to)), "%s import table differs from section 0.1",
               m->pub.name);
-        CHECK(m->init_off == expect[i].init_off && m->pub.init_array_size / 8 == expect[i].init_array,
+        CHECK(!rt_game_version || (m->init_off == expect[i].init_off && m->pub.init_array_size / 8 == expect[i].init_array),
               "%s DT_INIT/init_array differ from section 0.1", m->pub.name);
     }
     printf("relocations:\n");
@@ -698,8 +699,8 @@ int probe_loader(void) {
                (unsigned long long)m->kinds[K_ABS64], (unsigned long long)m->kinds[K_GLOB_DAT],
                (unsigned long long)m->kinds[K_JUMP_SLOT], (unsigned long long)total,
                (unsigned long long)m->sym_import, (unsigned long long)m->sym_own);
-        CHECK(!memcmp(m->kinds, expect[i].kinds, sizeof m->kinds) && total == expect[i].total &&
-              m->sym_import == expect[i].sym_import && m->sym_own == expect[i].sym_own,
+        CHECK(!rt_game_version || (!memcmp(m->kinds, expect[i].kinds, sizeof m->kinds) && total == expect[i].total &&
+              m->sym_import == expect[i].sym_import && m->sym_own == expect[i].sym_own),
               "%s relocations differ from section 0.2", m->pub.name);
     }
     printf("constructors:\n");

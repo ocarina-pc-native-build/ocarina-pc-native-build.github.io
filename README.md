@@ -2,12 +2,15 @@
 
 An experimental Windows x64 recompilation workspace. **This is not a playable
 Ocarina of Time port.** It contains an actually compiled independent host, a native
-diagnostic launcher, a Vulkan 1.3 transfer/readback test, SDL3 controller discovery,
-validated NSO preprocessing and an adapted ARM64-to-C lifter.
+diagnostic launcher, validated NSO preprocessing, an adapted ARM64-to-C lifter,
+and a locally linked Windows game executable using the inherited Horizon/NVN2 host.
 
 The supplied NUP identifies itself as Ocarina of Time 1.1.1. That metadata is not
-an independent authenticity or compatibility certificate. Its full game runtime,
-Horizon integration and NVN2 rendering are not connected to the diagnostic host.
+an independent authenticity or compatibility certificate. The game executable now
+executes the supplied code, mounts RomFS and decodes AV1 movies. A 600-frame
+diagnostic still captures a black image, with 464 shader translation failures and
+two Vulkan validation errors. See [current results and blockers](docs/STATUS.md).
+The independent diagnostic launcher below is separate from that game executable.
 
 ## Run the independent runtime
 
@@ -95,5 +98,7 @@ For compiler diagnosis only, including incomplete translations:
 ```
 
 This produces native COFF objects, not a linked game. Do not distribute them.
+To continue an existing translation and link the full host without starting over,
+use [the incremental runtime workflow](docs/FULL_RUNTIME.md).
 See [the engineering status](docs/STATUS.md), [repository audit](docs/UPSTREAM_AUDIT.md)
 and [license notices](THIRD_PARTY_NOTICES.md) for the verified scope and remaining work.

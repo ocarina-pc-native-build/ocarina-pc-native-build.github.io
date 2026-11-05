@@ -390,7 +390,7 @@ static void check_memory(void) {
     mem_query(RT_HOSTFN_BASE + 0x40, &q);
     CHECK(q.state == 0x10 && q.base == RT_HOSTFN_BASE, "QueryMemory on the host-function window");
     mem_query(g->alias.base + g->alias.size + 0x1000, &q);
-    CHECK(q.state == 3 && q.base == g->alias.base + g->alias.size, "QueryMemory on host memory");
+    CHECK(q.state == 0x10 && q.perm==0 && q.base == g->alias.base + g->alias.size, "QueryMemory on inaccessible host memory");
     CHECK(mem_set_heap_size(0, &heap) == 0, "SetHeapSize 0");
     printf("memory: heap, physical memory, stack move, QueryMemory, GetInfo: %s\n", failures > before ? "FAIL" : "ok");
 }
@@ -501,6 +501,12 @@ int main(int argc, char **argv) {
         if (path) {
             if (++i == argc) return usage(argv[0]);
             *path = argv[i];
+        } else if (!strcmp(argv[i], "--frames")) {
+            char *end;
+            if (++i == argc) return usage(argv[0]);
+            unsigned long long frames = strtoull(argv[i], &end, 10);
+            if (!*argv[i] || *end || argv[i][0] == '-' || !frames || frames > 1000000) return usage(argv[0]);
+            cfg.frames = frames;
         } else if (!strcmp(argv[i], "--seconds")) {
             char *end;
             if (++i == argc) return usage(argv[0]);
@@ -516,8 +522,9 @@ int main(int argc, char **argv) {
             return usage(argv[0]);
         }
     }
-    if (cfg.shot && !cfg.seconds) return usage(argv[0]);
-    if (cfg.seconds && mode) return usage(argv[0]);
+    if (cfg.shot && !cfg.seconds && !cfg.frames) return usage(argv[0]);
+    if ((cfg.seconds || cfg.frames) && mode) return usage(argv[0]);
+    if (cfg.seconds && cfg.frames) return usage(argv[0]);
     log_open(!mode);
     if (!mode) {
         cfg.boot = cfg.seconds > 0;   // --seconds starts the game like --boot, with its checkpoints
@@ -533,6 +540,11 @@ int main(int argc, char **argv) {
     if (!strcmp(mode, "--probe-kernel")) return probe_kernel();
     if (!strcmp(mode, "--probe-ipc")) return probe_ipc();
     if (!strcmp(mode, "--probe-ipc-lifetime")) return probe_ipc_lifetime();
+    if (!strcmp(mode, "--probe-audio-device")) return probe_audio_device();
+    if (!strcmp(mode, "--probe-system-core")) return probe_system_core();
+    if (!strcmp(mode, "--probe-nifm")) return probe_nifm();
+    if (!strcmp(mode, "--probe-bsd")) return probe_bsd();
+    if (!strcmp(mode, "--probe-ipc-domains")) return probe_ipc_domains();
     if (!strcmp(mode, "--probe-services")) return probe_services();
     if (!strcmp(mode, "--probe-fs")) return probe_fs();
     if (!strcmp(mode, "--probe-gfx-abi")) return probe_gfx_abi();
@@ -553,6 +565,7 @@ int main(int argc, char **argv) {
     if (!strcmp(mode, "--probe-astc")) return probe_astc();
     if (!strcmp(mode, "--probe-vkdevice")) return probe_vkdevice();
     if (!strcmp(mode, "--probe-movie")) return probe_movie();
+    if (!strcmp(mode, "--probe-codec")) return probe_codec();
     if (!strcmp(mode, "--prepare-shaders")) return vk_pipeline_prepare_shaders();
     if (!strcmp(mode, "--warm-shaders")) return vk_pipeline_warm_shaders();
     if (!strcmp(mode, "--boot")) { cfg.boot = 1; rt_boot(); return 0; }

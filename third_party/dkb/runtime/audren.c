@@ -498,7 +498,7 @@ void audren_manager_handler(IpcSession *s, const IpcRequest *rq, IpcResponse *rs
         return;
     }
     case 2: case 4:   // GetAudioDeviceService(aruid), GetAudioDeviceServiceWithRevisionInfo(revision, aruid)
-        rs->move[rs->nmove++] = ipc_session_new("IAudioDevice", audio_device_handler, NULL, NULL);
+        rs->move[rs->nmove++] = audio_device_open();
         return;
     default: ipc_unimplemented(s, rq);
     }

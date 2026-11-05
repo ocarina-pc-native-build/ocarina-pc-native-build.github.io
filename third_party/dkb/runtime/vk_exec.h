@@ -70,6 +70,8 @@ typedef struct VkExec {
     p_prim_restart prim_restart;         // OP_PRIM_RESTART: applied to indexed strip and fan draws (op_draw_idx)
     float blend_color[4];                // OP_BLEND_COLOR
     int64_t copy_stride;                 // OP_COPY_STRIDE: row stride of buffer <-> texture copies (vk_exec_xfer.c)
+    int64_t copy_image_stride;           // bytes between array layers or depth slices; zero is tightly packed
+    uint32_t workload_priority[2];       // graphics, compute scheduling hints; replay stays ordered on one queue
     dpool_ref tex_pool, samp_pool;       // OP_SET_TEX_POOL, OP_SET_SAMP_POOL, captured by value
     // Pipeline inputs. vk_exec.c writes depth_clamp (OP_DEPTH_CLAMP), raster_discard (OP_RASTER_DISCARD) and, at pass
     // begin, color_fmt, depth_fmt and samples; vk_exec_draw.c owns every other field (shaders, prim, y_flip, state

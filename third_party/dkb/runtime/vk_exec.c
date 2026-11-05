@@ -930,7 +930,19 @@ static void walk(VkExec *ex, const op_hdr *h, int depth) {
         case OP_DEPTH_CLAMP: ex->pipe.depth_clamp = ((const p_flag *)a)->value != 0; break;
         case OP_RASTER_DISCARD: ex->pipe.raster_discard = ((const p_flag *)a)->value != 0; break;
         case OP_PRIM_RESTART: ex->prim_restart = *(const p_prim_restart *)a; break;
-        case OP_COPY_STRIDE: ex->copy_stride = ((const p_copy_stride *)a)->stride; break;
+        case OP_COPY_STRIDE: {
+            const p_copy_stride *p = (const p_copy_stride *)a;
+            if (p->image) ex->copy_image_stride = p->stride; else ex->copy_stride = p->stride;
+            break;
+        }
+        case OP_WORKLOAD_PRIORITY: {
+            const p_workload_priority *p=(const p_workload_priority *)a;
+            ex->workload_priority[!!p->compute]=p->priority;
+            // Vulkan queue priority is fixed at device creation. Preserve stream
+            // ordering and synchronization; this scheduling hint cannot change
+            // mathematical shader results. No concurrent work is reordered.
+            break;
+        }
         case OP_SET_TEX_POOL: ex->tex_pool = ((const p_set_pool *)a)->pool, ex->tex_serial++; break;
         case OP_SET_SAMP_POOL: ex->samp_pool = ((const p_set_pool *)a)->pool, ex->tex_serial++; break;
         case OP_BARRIER: vk_exec_barrier(ex); break;
