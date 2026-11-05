@@ -115,6 +115,11 @@ Eden Emulator Project), retaining its original file header. Decoder flush
 ownership was compared with `src/core/hle/service/nx2_gsv.h`,
 `INx2VideoSession::Flush`, at that revision; that host C correction is original.
 
+The bindless `TEX` forms (`0xf60`, uniform handle, and `0x361`, per-lane handle)
+are selectively adapted from the same Eglantine file and commit. Existing bound
+texture behavior and half-component ordering are retained. The additional
+ISETP.EX accumulator/predicate preservation and its semantic tests are original.
+
 The Windows OoT integration adapts image-copy pitch recording and 64-bit address
 wait comparison from nxnative (`dm/gfx/nvn/hle_nvn.c`, `dm/gfx/nvn/nvn_obj.h`, `dm/host/hle_thread.c`),
 revision `84dea69835414b18a4351cd45054bb611e0e3185`, MIT, Copyright (c) 2026 seedds

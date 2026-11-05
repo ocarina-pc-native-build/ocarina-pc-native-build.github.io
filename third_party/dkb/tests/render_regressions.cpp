@@ -179,8 +179,49 @@ static void extended_accumulator() {
         }
     }
 }
+static void bindless_textures() {
+    const u32 coord_count[]={1,2,3,3,2,3,0,4}, types[]={0,2,4,6,1,3,0,7};
+    for (u32 opcode:{0xf60u,0x361u}) for (u32 dim:{0u,1u,2u,3u,4u,5u,7u})
+    for (u32 lod=0;lod<4;lod++) for (u32 offset=0;offset<2;offset++)
+    for (u32 depth=0;depth<2;depth++) for (u32 packed=0;packed<2;packed++) {
+        const u32 coords=coord_count[dim], handle_count=opcode==0x361, has_lod=lod>=2;
+        const u32 count=coords+handle_count+has_lod+offset+depth;
+        const u32 a_count=opcode==0x361 && (!packed || count>4) ? coords : count<=4 ? (count+1)/2 : 4;
+        auto input=[&](u32 n) {return 1000+(n<a_count ? 20+n : 40+n-a_count);};
+        auto i=op(opcode); bits(i,16,8,8); bits(i,24,8,20); bits(i,32,8,40);
+        if (opcode==0xf60) bits(i,40,6,22); // UR22 maps to R240, not R238.
+        bits(i,59,1,opcode==0x361); bits(i,60,1,packed); bits(i,61,3,dim);
+        bits(i,64,8,depth?255:10); bits(i,72,4,depth?1:15); bits(i,76,1,offset);
+        bits(i,78,1,depth); bits(i,81,3,7); bits(i,87,3,lod);
+        auto out=lower(i); CHECK(bool(out)); if (!out) continue;
+        CHECK(out.required_texture_buffer==~0U);
+        u32 reg[256]; for (u32 n=0;n<256;n++) reg[n]=1000+n;
+        bool sampled=false;
+        for (u64 m:out.instructions) {
+            if ((m&0xfff8000000000000ull)==0x5c98000000000000ull) {
+                reg[m&255]=reg[(m>>20)&255];
+            } else if ((m&0xff80000000000000ull)==0xde80000000000000ull) {
+                CHECK(!sampled); sampled=true;
+                CHECK(((m>>8)&255)==250 && ((m>>20)&255)==246);
+                CHECK(((m>>28)&7)==types[dim]); CHECK(((m>>31)&15)==(depth?1:15));
+                CHECK(((m>>36)&1)==offset && ((m>>37)&7)==lod && ((m>>50)&1)==depth);
+                for (u32 n=0;n<coords;n++) CHECK(reg[250+n]==input(n));
+                CHECK(reg[246]==(opcode==0xf60?1240:input(coords)));
+                u32 meta=247,next=coords+handle_count;
+                if (has_lod) CHECK(reg[meta++]==input(next++));
+                if (offset) CHECK(reg[meta++]==input(next++));
+                if (depth) CHECK(reg[meta++]==input(next++));
+                for (u32 n=0;n<4;n++) reg[250+n]=2000+n; // distinguish packed result components
+            }
+        }
+        CHECK(sampled); CHECK(reg[8]==2000);
+        if (!depth) {CHECK(reg[9]==2001); CHECK(reg[10]==2002); CHECK(reg[11]==2003);}
+        auto bad=i; bits(bad,81,3,2); CHECK(!lower(bad));
+        if (opcode==0xf60) {bad=i; bits(bad,40,6,28); CHECK(!lower(bad));}
+    }
+}
 int main() {
-    txq(); i2f(); texture_half_order(); extended_compare(); extended_accumulator(); windows();
+    txq(); i2f(); texture_half_order(); extended_compare(); extended_accumulator(); bindless_textures(); windows();
     std::printf("render regressions: %u checks, %u failures\n", checks, failures);
     return failures?1:0;
 }
