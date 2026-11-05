@@ -77,11 +77,13 @@ def pipeline_source():
     prefix += source[start:source.index('} VtxInput;', start) + len('} VtxInput;')]
     prefix += '''
 static void vertex_input(const VkPipeState *s,VtxInput *v) { (void)s;(void)v;abort(); }
+void rt_sha256(const void *p,size_t n,uint8_t out[32]) { (void)p;(void)n;(void)out;abort(); }
+int plat_file_write_atomic(const char *path,const void *data,size_t n) { (void)path;(void)data;(void)n;abort(); }
 static uint32_t vs_outs(const GfxShader *v,const GfxShader *f,GfxShaderIo io[32]) {(void)v;(void)f;(void)io;abort();}
 '''
     names = ['static uint64_t fnv(', 'static VkBlendFactor blend_factor(', 'static VkBlendOp blend_op(',
              'static VkPolygonMode polygon_mode(', 'VkPrimitiveTopology vk_pipeline_topology(',
-             'uint8_t vk_geometry_input(', 'static int topology_class(', 'static int format_type(',
+             'uint8_t vk_geometry_input(', 'static int topology_class(', 'int vk_pipeline_format_type(',
              'static VkFormatFeatureFlags format_features(', 'static VkFormat target_format(',
              'static uint32_t *spirv_rebind(', 'static uint32_t *spirv_set(',
              'static uint32_t *spirv_dual_source(', 'static uint32_t *spirv_alpha_test(', 'static uint32_t *spirv_add_outputs(',

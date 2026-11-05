@@ -815,7 +815,15 @@ static uint8_t type_of_handle(const VkExec *ex, uint64_t h) {   // texture lock 
     view_t v;
     int hv;
     const VkTexImage *img = h ? vk_texture_by_id_locked(&ex->tex_pool, (int)(h & 0xfffff), &v, &hv) : NULL;
-    return img ? (uint8_t)gfx_type_of(img, &v, hv) : 0;
+    if (!img) return 0;
+    VkFormat format=img->format;
+    if (hv && v.set_format) {
+        TexVkFormat requested;
+        if (!tex_vk_format(v.format,&requested)) rt_fatal("vk: sampled view has unknown NVN format %#x",v.format);
+        format=requested.vk;
+    }
+    return (uint8_t)(gfx_type_of(img,&v,hv) |
+                    vk_pipeline_format_type(format)<<GFX_TEX_COMPONENT_SHIFT);
 }
 
 static uint8_t image_format_of_handle(const VkExec *ex,uint64_t h) { // texture lock held
@@ -868,10 +876,10 @@ static void answers_for(VkExec *ex, int st, const uint8_t *ctl, uint32_t mask, G
         if ((tmiss || imiss || check) && !locked) vk_texture_lock(), locked = 1, BS.ac_miss++;
         if (tmiss) c->tt[slot] = type_of_handle(ex, h), c->tex[slot] = h, c->ttok[slot] = tt, c->tgen[slot] = gen;
         if (imiss) {
-            c->it[slot]=type_of_handle(ex,hi); c->ifmt[slot]=image_format_of_handle(ex,hi);
+            c->it[slot]=type_of_handle(ex,hi)&GFX_TEX_DIM_MASK; c->ifmt[slot]=image_format_of_handle(ex,hi);
             c->img[slot]=hi; c->itok[slot]=it; c->igen[slot]=gen;
         }
-        if (check && (type_of_handle(ex, h) != c->tt[slot] || type_of_handle(ex, hi) != c->it[slot] ||
+        if (check && (type_of_handle(ex, h) != c->tt[slot] || (type_of_handle(ex, hi)&GFX_TEX_DIM_MASK) != c->it[slot] ||
                       image_format_of_handle(ex,hi)!=c->ifmt[slot]))   // TOTK_SHADER_MEMO=check
             rt_fatal("vk_exec: kept texture types of stage %d slot %d differ from a lookup", st, slot);
         a->tex_type[slot] = c->tt[slot], a->img_type[slot] = c->it[slot];

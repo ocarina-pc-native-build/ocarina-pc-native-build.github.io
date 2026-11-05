@@ -530,6 +530,7 @@ int vk_pipeline_vertex_input_dynamic(void);    // 1: vertex input is VK_EXT_vert
 // colour target formats (fs). Other fields are left as they are; either pointer may be NULL.
 void vk_pipeline_answers(const VkPipeState *s, GfxShaderAnswers *vs, GfxShaderAnswers *fs);
 int vk_pipeline_tex_type(int nvn_target);      // NVN_TEXTURE_TARGET_* -> GFX_TEX_* (GfxShaderAnswers.tex_type)
+int vk_pipeline_format_type(VkFormat format); // GFX_TYPE_* of sampled/fragment components
 uint32_t vk_pipeline_target_wmask(const VkPipeState *s, int i);   // colour write mask of target i the pipeline uses
 VkPrimitiveTopology vk_pipeline_topology(int nvn_prim);   // quads -> triangle list, line loop -> strip: the replay
                                                           // rewrites those draws; polygon -> fan

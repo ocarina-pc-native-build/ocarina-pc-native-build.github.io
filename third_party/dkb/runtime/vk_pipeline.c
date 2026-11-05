@@ -442,7 +442,7 @@ int vk_pipeline_tex_type(int target) {
 }
 
 // Numeric type of a colour format as a shader sees it: GFX_TYPE_*.
-static int format_type(VkFormat f) {
+int vk_pipeline_format_type(VkFormat f) {
     switch (f) {
     case VK_FORMAT_R8_UINT: case VK_FORMAT_R8G8_UINT: case VK_FORMAT_R8G8B8_UINT: case VK_FORMAT_R8G8B8A8_UINT:
     case VK_FORMAT_R16_UINT: case VK_FORMAT_R16G16_UINT: case VK_FORMAT_R16G16B16_UINT: case VK_FORMAT_R16G16B16A16_UINT:
@@ -587,7 +587,7 @@ void vk_pipeline_answers(const VkPipeState *s, GfxShaderAnswers *vs, GfxShaderAn
     if (fs)
         for (int i = 0; i < 8; i++) {
             VkFormat f = target_format(s->color_fmt[i], NULL, NULL);
-            fs->frag_out_type[i] = (uint8_t)(f == VK_FORMAT_UNDEFINED ? GFX_TYPE_FLOAT : format_type(f));
+            fs->frag_out_type[i] = (uint8_t)(f == VK_FORMAT_UNDEFINED ? GFX_TYPE_FLOAT : vk_pipeline_format_type(f));
         }
 }
 
