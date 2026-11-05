@@ -27,6 +27,7 @@
 #include "host.h"
 #include "platform/platform.h"
 #include "sha256.h"
+#include "vk.h"
 
 #define MAX_MODULES 16
 
@@ -566,6 +567,14 @@ int main(int argc, char **argv) {
     if (!strcmp(mode, "--probe-vkdevice")) return probe_vkdevice();
     if (!strcmp(mode, "--probe-movie")) return probe_movie();
     if (!strcmp(mode, "--probe-codec")) return probe_codec();
+    if (!strcmp(mode, "--probe-fatal-exit")) {
+        // Deliberate SDK Break with a live Vulkan device; the external regression
+        // expects exit 70 and the complete diagnostic, never a successful probe.
+        if (!vk_init()) return 1;
+        Cpu c = {0};
+        rt_svc(&c, 0x26, 0);
+        return 1;
+    }
     if (!strcmp(mode, "--prepare-shaders")) return vk_pipeline_prepare_shaders();
     if (!strcmp(mode, "--warm-shaders")) return vk_pipeline_warm_shaders();
     if (!strcmp(mode, "--boot")) { cfg.boot = 1; rt_boot(); return 0; }

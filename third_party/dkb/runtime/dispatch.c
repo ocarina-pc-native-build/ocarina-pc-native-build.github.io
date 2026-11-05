@@ -54,7 +54,9 @@ void rt_fatal(const char *fmt, ...) {
     rt_log("fatal: memory commit: this process %.0f MB, the system %.0f of %.0f MB", proc, used, limit);
     fflush(stdout);
     fflush(stderr);
-    _Exit(70);
+    // The fatal path has active decoder/GPU workers too. Use the same immediate
+    // termination contract as normal shutdown, avoiding Windows DLL-detach waits.
+    plat_exit(70);
 }
 
 static const RtModule *module_at(uint64_t pc) {
