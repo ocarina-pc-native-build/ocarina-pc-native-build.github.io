@@ -103,8 +103,8 @@ typedef struct {
                                 // 0x200 multisample, 0x400 shadow
     uint8_t format;             // IMG: declared format as a GfxShaderAnswers.img_format code, 0 unknown
     uint8_t flags;              // SSBO: 1 written, GFX_RES_SSBO_GUARDED; TEX/IMG: Ryujinx TextureUsageFlags
-    int8_t cbuf_slot;           // TEX/IMG: constant buffer of the handle (-1: bound texture buffer); SSBO: of its address
-    uint16_t handle;            // TEX/IMG: raw handle (word offset; separate: texture | sampler << 14); SSBO: address offset
+    int32_t cbuf_slot;          // TEX/IMG: packed texture/sampler cbuf slots (-1: default); SSBO: address cbuf slot
+    uint32_t handle;            // TEX/IMG: full packed offsets and handle-kind tag in bits 28..31; SSBO: address offset
     uint16_t count;             // descriptors (array length)
     uint8_t separate;           // TEX: texture and sampler handles are separate
 } GfxShaderRes;
