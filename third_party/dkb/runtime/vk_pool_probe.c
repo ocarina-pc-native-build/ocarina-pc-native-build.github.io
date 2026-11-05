@@ -178,6 +178,37 @@ static int run_native_textures(uint8_t *memory,void *command_control,uint64_t ha
     return 1;
 }
 
+static int run_native_wide(uint8_t *memory,void *command_control,uint64_t handle,size_t stride) {
+    uint32_t native[][4]={
+        {0x00047802,0xfffffff1,0xf00,0}, {0x000c7802,0xffffffff,0xf00,0},
+        {0x000d7802,0x12345678,0xf00,0},
+        {0x04087825,0x10001,0x078e000c,0}, // R8:R9 = R4 * 65537 + R12:R13
+        {0x00087202,8,0xf00,0}, {0x00097202,9,0xf00,0}, // register control; changed to UR reads below
+        {0x000a7802,0xabcdef01,0xf00,0}, {0x000b7802,0xabcdef02,0xf00,0},
+        {0x00287a02,0x400,0xf00,0}, {0x00297a02,0x500,0xf00,0},
+        {0x28007386,8,0x0010ad00,0}, {0x0000794d,0,0x03800000,0}
+    };
+    uint32_t ctl[0xd8/4]={0};
+    ctl[0]=0x98761234; ctl[1]=0xc9; ctl[0x30/4]=sizeof ctl; ctl[0x38/4]=sizeof native;
+    ctl[0x58/4]=ctl[0x5c/4]=ctl[0x60/4]=1; ((uint8_t *)ctl)[0xb2]=1;
+    const NVNtexturePool *tp[3]={&texture_a,&texture_a,&texture_a};
+    const NVNsamplerPool *sp[3]={&sampler_repeat,&sampler_repeat,&sampler_repeat};
+    const uint64_t product=UINT64_C(0xfffffff1)*0x10001+UINT64_C(0x12345678ffffffff);
+    const uint32_t expected[3][4]={{(uint32_t)product,(uint32_t)(product>>32),0xabcdef01,0xabcdef02}};
+    for (unsigned variant=0;variant<2;variant++) {
+        if (variant) {
+            for (unsigned n=0;n<3;n++) native[n][0]|=0x80, native[n][2]=0; // UMOV
+            native[3][0]|=0x80; native[3][2]|=0x08000000; // UIMAD.WIDE
+            for (unsigned n=4;n<6;n++) native[n][0]=(native[n][0]&~0xfffU)|0xc02, native[n][2]=0x08000f00;
+        }
+        NVNshaderData shader={U(native),(const uint8_t *)ctl};
+        if (!(uint8_t)CALL(nvnProgramSetShaders,U(&program),1,U(&shader))) return 0;
+        if (!run_case(variant?"NVN2 uniform wide immediate":"NVN2 wide immediate",memory,command_control,
+                      handle,tp,sp,expected,1,stride)) return 0;
+    }
+    return 1;
+}
+
 // A real NVN2 surface store through a UNORM view of an sRGB image. The values
 // and instructions are authored here, so this exercises lowering, translation,
 // descriptor selection and GPU readback without a game shader or dummy output.
@@ -357,6 +388,7 @@ int probe_vkpool(void) {
     tp[1] = &texture_a; sp[1] = &sampler_clamp;
     REQUIRE(run_case("sampler repeat/clamp/repeat", memory, command_control, handle, tp, sp, trip, 3, stride), "sampler case completed");
     REQUIRE(run_native_textures(memory,command_control,handle,stride),"native bindless texture cases completed");
+    REQUIRE(run_native_wide(memory,command_control,handle,stride),"native wide immediate products completed");
     REQUIRE(make_texture(&srgb_texture, 0xb0000, pattern), "sRGB texture"); textures_live = 4;
     REQUIRE(run_srgb_store(memory, command_control, ti), "sRGB storage view case completed");
     REQUIRE(make_texture(&typed_texture,0xc0000,pattern),"typed image"); textures_live=5;

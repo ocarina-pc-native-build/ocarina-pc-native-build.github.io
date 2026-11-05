@@ -220,8 +220,50 @@ static void bindless_textures() {
         if (opcode==0xf60) {bad=i; bits(bad,40,6,28); CHECK(!lower(bad));}
     }
 }
+static void wide_immediate_multiply() {
+    const u32 vals[]={0,1,0xffff,0x10000,0x10001,0x7fffffff,0x80000000,0xffffffff};
+    const u64 adds[]={0,1,0xffffffff,0x100000000ull,0x12345678ffffffffull,~u64{0}};
+    for (bool uniform:{false,true}) for (u32 dst:{4u,8u,12u})
+    for (u32 guard: {7u,1u,9u}) {
+        if (uniform && guard!=7) continue;
+        for (u32 a:vals) for (u32 b:vals) for (u64 c:adds) {
+            auto i=op(uniform?0x8a5:0x825); bits(i,12,4,guard); bits(i,16,8,dst); bits(i,24,8,4);
+            i.words[1]=b; i.words[2]=(uniform?0x0f8e0000:0x078e0000)|12;
+            auto out=lower(i); CHECK(bool(out)); if (!out) continue;
+            for (bool gate:{false,true}) {
+                u32 r[256]={}; const unsigned bank=uniform?216:0;
+                r[bank+4]=a; r[bank+12]=u32(c); r[bank+13]=u32(c>>32);
+                const u64 before=u64{r[bank+dst]}|(u64{r[bank+dst+1]}<<32);
+                bool carry=false;
+                for (unsigned n=0;n<out.source_instruction_offsets[1];n++) {
+                    const u64 m=out.instructions[n]; const unsigned pred=(m>>16)&15;
+                    if (!((pred&7)==7 || (gate^bool(pred&8)))) continue;
+                    u32 value=0; const u32 x=r[(m>>8)&255],y=r[(m>>20)&255];
+                    if ((m&0xffc0000000000000ull)==0x3600000000000000ull ||
+                        (m&0xffc0000000000000ull)==0x5b00000000000000ull) {
+                        const bool imm=(m>>56)==0x36;
+                        u32 av=(x>>(((m>>53)&1)?16:0))&0xffff;
+                        u32 bv=imm ? (m>>20)&0xffff : (y>>(((m>>35)&1)?16:0))&0xffff;
+                        u32 cv=r[(m>>39)&255];
+                        switch ((m>>50)&3) {case 1:cv&=0xffff;break;case 2:cv>>=16;break;default:break;}
+                        value=av*bv+cv;
+                    } else if ((m&0xfff8000000000000ull)==0x3828000000000000ull) value=x>>((m>>20)&31);
+                    else if ((m&0xfff8000000000000ull)==0x5c18000000000000ull) value=(x<<((m>>39)&31))+y;
+                    else if ((m&0xfff0000000000000ull)==0x5c10000000000000ull) {
+                        const u64 sum=u64{x}+y+(((m>>43)&1)?carry:0); value=u32(sum);
+                        if ((m>>47)&1) carry=bool(sum>>32);
+                    } else CHECK(false);
+                    r[m&255]=value; r[255]=0;
+                }
+                const bool enabled=guard==7 || (gate^bool(guard&8));
+                const u64 expected=enabled ? u64{a}*b+c : before;
+                CHECK((u64{r[bank+dst]}|(u64{r[bank+dst+1]}<<32))==expected);
+            }
+        }
+    }
+}
 int main() {
-    txq(); i2f(); texture_half_order(); extended_compare(); extended_accumulator(); bindless_textures(); windows();
+    txq(); i2f(); texture_half_order(); extended_compare(); extended_accumulator(); bindless_textures(); wide_immediate_multiply(); windows();
     std::printf("render regressions: %u checks, %u failures\n", checks, failures);
     return failures?1:0;
 }
