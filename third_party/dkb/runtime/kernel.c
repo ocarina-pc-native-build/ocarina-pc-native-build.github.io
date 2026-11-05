@@ -9,6 +9,7 @@
 // G with one condition variable per thread; wake order is the kernel's: lower priority value first, then first come.
 // Semantics follow the public Horizon kernel (KConditionVariable, KAddressArbiter, KSynchronization).
 #include <setjmp.h>
+#include "nonlocal.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1415,6 +1416,7 @@ static void thr_free(RtThread *t) {   // holding G; t has exited and its handle 
         }
     mem_kernel_free(t->tlr, TLR_SIZE + THREAD_OBJ_SIZE);
     mem_kernel_free(t->tls, TLS_SIZE);
+    rt_nonlocal_discard(t->cpu);
     plat_aligned_free(t->cpu);
     free(t);
 }
@@ -2218,6 +2220,7 @@ void kern_fiber_initialize(Cpu *c) {
     } else if (f->host) {
         plat_fiber_free(f->host);
     }
+    rt_nonlocal_discard(f->cpu);
     memset(f->cpu, 0, sizeof *f->cpu);
     f->cpu->excl_addr = ~0ull;
     f->addr = addr;
@@ -2245,6 +2248,7 @@ void kern_fiber_finalize(Cpu *c) {
     if (!f) rt_fatal("FinalizeFiber(%#llx): not an initialized fiber", (unsigned long long)addr);
     if (f->running) rt_fatal("FinalizeFiber(%#llx): the fiber is running", (unsigned long long)addr);
     plat_fiber_free(f->host);
+    rt_nonlocal_discard(f->cpu);
     plat_aligned_free(f->cpu);
     free(f);
 }

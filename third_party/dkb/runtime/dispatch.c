@@ -12,6 +12,7 @@
 // is also fixed at init; they are looked up only after the flat table misses.
 #include "dispatch.h"
 #include "host.h"
+#include "nonlocal.h"
 #include "platform/platform.h"
 
 #include <stdarg.h>
@@ -179,6 +180,7 @@ GuestFn rt_dispatch_lookup(uint64_t pc) {
 }
 
 __attribute__((noinline, noreturn, cold)) static void dispatch_fail(Cpu *c) {
+    rt_nonlocal_diagnose(c,"unresolved dispatch");
     char at[64], lr[64];
     uint64_t pc = c->pc;
     if (!g_ready) rt_fatal("rt_dispatch to %#llx before rt_dispatch_init", (unsigned long long)pc);
@@ -192,7 +194,7 @@ __attribute__((noinline, noreturn, cold)) static void dispatch_fail(Cpu *c) {
 // Host functions, and the fatal error. A separate tail call keeps the fast path below free of a stack frame.
 __attribute__((noinline)) static void dispatch_slow(Cpu *c) {
     GuestFn f = g_ready ? host_lookup(c->pc) : NULL;
-    if (!f) dispatch_fail(c);
+    if (!f) { rt_nonlocal_try_resume(c); dispatch_fail(c); }
     __attribute__((musttail)) return f(c);
 }
 

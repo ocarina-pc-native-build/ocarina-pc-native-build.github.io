@@ -80,6 +80,37 @@ class Module:
 
     # ---- function seeds
 
+    def setjmp_targets(self):
+        """Defined setjmp entries and standard AArch64 PLT entries importing them.
+
+        Match symbols and relocations, never a game-version-specific address. The
+        PLT's ADRP/LDR pair identifies the relocated GOT slot; ADD/BR are checked
+        too so an unrelated load cannot become a returns-twice call.
+        """
+        names = {'setjmp', '_setjmp'}
+        syms = self.nso.syms
+        targets = {self.base + value for name, info, shndx, value, _ in syms
+                   if name in names and shndx and (info & 15) == 2}
+        slots = {self.base + off for off, typ, sym, _ in self.nso.relocs
+                 if typ in (1025, 1026) and sym < len(syms) and syms[sym][0] in names}
+        if not slots:
+            return targets
+        candidates = np.flatnonzero((self.words & 0x9F00001F) == 0x90000010)
+        for idx in candidates.tolist():
+            if idx + 3 >= len(self.words):
+                continue
+            a, b, c, d = map(int, self.words[idx:idx + 4])
+            if (b & 0xFFC003FF) != 0xF9400211 or (c & 0xFFC003FF) != 0x91000210 or d != 0xD61F0220:
+                continue
+            imm = ((a >> 5) & 0x7FFFF) << 2 | ((a >> 29) & 3)
+            if imm & (1 << 20):
+                imm -= 1 << 21
+            pc = self.lo + idx * 4
+            page = (pc & ~0xFFF) + (imm << 12)
+            if page + (((b >> 10) & 0xFFF) << 3) in slots:
+                targets.add(pc)
+        return targets
+
     def eh_frame_functions(self):
         """Function starts from .eh_frame_hdr's binary search table (absolute addresses)."""
         img, hdr = self.image, self.nso.eh_start
