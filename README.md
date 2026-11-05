@@ -1,10 +1,24 @@
 # Ocarina of Time — PC Native Build
 
+## Gameplay Update
+
+**[▶ Watch the full gameplay video — 4:07](https://ocarina-pc-native-build.github.io/#gameplay)**
+
+[![Watch the latest gameplay video](gameplay-poster.jpg)](https://ocarina-pc-native-build.github.io/#gameplay)
+
+I’ve now tested a bit of actual gameplay. **As you can see, there are still graphical glitches, but gameplay runs smoothly overall in the sections I’ve tested so far.**
+
+The biggest issues remain **flickering, overexposure and other rendering errors**. I’m continuing to work on those fixes, but it’s encouraging to see the game running beyond the menus and into actual gameplay!
+
+[Open the MP4 video directly](https://ocarina-pc-native-build.github.io/gameplay.mp4)
+
+---
+
 ![Ocarina of Time Native 2026 project artwork](project-artwork.png)
 
 ### Native Windows x64 recompilation · Switch 2 → PC
 
-**Experimental build · Now in-game · Graphics fixes in progress**
+**Experimental build · Gameplay tested in some sections · Graphics fixes in progress**
 
 I’m working on a native Windows x64 recompilation of the Switch 2 version of **Ocarina of Time**. The goal is to run the translated game code with a Windows runtime and a Vulkan graphics backend.
 
@@ -15,9 +29,10 @@ This project page documents my current development progress and the next steps. 
 **Maintainer:**  https://github.com/HotDevilSauce
 **Status updated:** November 5, 2026  
 **Latest documented commit:** `e6125e6`  
-**Latest report:** [Development Update #01](UPDATE-01.md)
+**Latest report:** [Gameplay Update](https://ocarina-pc-native-build.github.io/#gameplay)  
+**Earlier detailed report:** [Development Update #01](UPDATE-01.md)
 
-## Development Update #01 — we’re now in-game!
+## Earlier Development Update #01 — we’re now in-game!
 
 **November 5, 2026 · Latest documented commit: `e6125e6`**
 
@@ -46,7 +61,7 @@ The zero Vulkan error count applies to the tested menu/options path. Shader repo
 ### Current focus and development status
 
 - **Graphics first:** correct lighting and colour output, eliminate flickering, and fix the shader and rendering errors affecting the visible scene. The overexposure and other rendering defects **are not fixed yet**.
-- **Gameplay and stability:** basic movement appears possible, but reliable gameplay, longer-run stability and saving/loading still need verification.
+- **Gameplay and stability:** the latest follow-up reports smooth gameplay overall in the sections tested so far. Broader playability, longer-run stability and saving/loading still need verification.
 - **Earlier CPU crash:** the previously reported longer-run crash has **not been confirmed resolved**. The earlier report recorded a stop around frame **23,250** at `main+0x1661690`.
 
 This remains an **experimental development build**, not a finished playable release.
@@ -87,4 +102,4 @@ This is an unofficial project and is not affiliated with Nintendo.
 
 ---
 
-*All progress claims refer to local development reports. Reaching an in-game scene and initial movement observations do not establish reliable gameplay, longer-run stability or verified saving/loading.*
+*All progress claims refer to local development reports. The latest gameplay report applies to the sections tested so far. Broader playability, longer-run stability and saving/loading still need verification.*

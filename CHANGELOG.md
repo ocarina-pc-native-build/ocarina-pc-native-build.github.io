@@ -2,6 +2,17 @@
 
 This log summarizes the supplied local development reports. Commit identifiers refer to local development history; the website repository does not automatically contain those commits or the game code. Update #01 is dated November 5, 2026; dates for individual earlier commits were not supplied.
 
+## Gameplay follow-up — latest report
+
+- Tested actual gameplay beyond the menus; it runs smoothly overall in the sections tested so far.
+- Published the full **4 minute 7 second gameplay recording** at the beginning of the website, with audio and playback controls.
+- Added a prominent video link and preview to the GitHub overview.
+- Continued work on **flickering, overexposure and other rendering errors**.
+
+This report is scoped to the tested sections. Broader playability, longer-run stability and saving/loading remain unverified; the previously reported CPU crash has not been confirmed resolved. No newer commit identifier was supplied with this follow-up.
+
+[Watch the gameplay video](https://ocarina-pc-native-build.github.io/#gameplay).
+
 ## November 5, 2026 — Development Update #01 · `e6125e6`
 
 Revised with the in-game screenshot and current development focus.

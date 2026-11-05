@@ -1,14 +1,15 @@
 # Roadmap
 
-Updated November 5, 2026 from the revised [Development Update #01](UPDATE-01.md), latest documented commit `e6125e6`. This roadmap does not promise a release date.
+Updated with the latest [gameplay follow-up](https://ocarina-pc-native-build.github.io/#gameplay), after [Development Update #01](UPDATE-01.md). Latest documented commit: `e6125e6`. This roadmap does not promise a release date.
 
 ## Current milestone
 
 - [x] Display game video, title screen, main menu and options menu.
 - [x] Test opening and leaving the options menu.
 - [x] Reach an actual 3D in-game scene, including the Deku Tree and dialogue.
+- [x] Test actual gameplay in some sections and publish the gameplay recording.
 
-**We’re now in-game!** Basic movement appears possible, but rendering problems need attention before gameplay can be properly assessed. Reliable gameplay, longer-run stability and saving/loading still need verification.
+**Actual gameplay has now been tested.** It runs smoothly overall in the sections tested so far. Flickering, overexposure and other rendering errors remain the main focus. Broader playability, longer-run stability and saving/loading still need verification.
 
 ## 1. Fix the graphical issues
 
@@ -20,15 +21,15 @@ Updated November 5, 2026 from the revised [Development Update #01](UPDATE-01.md)
 
 These issues are not fixed yet. The latest recorded **0 Vulkan errors** applies to the tested menu/options path; it does not establish error-free in-game rendering. The latest recorded shader report count is **111**, down from **464**.
 
-## 2. Assess gameplay and longer-run stability
+## 2. Expand gameplay testing and check longer-run stability
 
-- [ ] Verify player movement, camera behavior, collisions and interactions once the scene can be properly assessed.
+- [ ] Test additional areas, player movement, camera behavior, collisions and interactions.
 - [ ] Record the inputs tested and actual image output.
 - [ ] Recheck the previously reported longer-run CPU crash and investigate it if it still occurs.
 - [ ] Confirm that progression continues beyond the earlier stop around frame **23,250**, reported at `main+0x1661690`.
 - [ ] Run a longer continuous gameplay session.
 
-The earlier CPU crash has **not been confirmed resolved**. Initial movement observations do not establish reliable gameplay or longer-run stability.
+The earlier CPU crash has **not been confirmed resolved**. Smooth gameplay in the sections tested so far does not establish broader playability or longer-run stability.
 
 ## 3. Save, restart, and continue
 
