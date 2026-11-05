@@ -17,15 +17,16 @@ Reference: [GitHub Pages publishing documentation](https://docs.github.com/en/pa
 
 Keep `index.html`, `README.md`, `ROADMAP.md`, `CHANGELOG.md`, and `.nojekyll` together so that local links resolve.
 
-## Add Buy Me a Coffee later
+## Support link
 
-Once the account exists, verify its exact profile URL before adding it.
+The website and README link to [HotDevilSauce on Buy Me a Coffee](https://buymeacoffee.com/hotdevilsauce). If the profile URL changes, update both files together.
 
-- In `index.html`, replace the pending support label with an anchor pointing to that profile, and remove the “Coming soon” and unavailable-page text.
-- In `README.md`, replace the “coming soon” line with a link to the verified profile.
-- Optionally create `.github/FUNDING.yml` containing `buy_me_a_coffee: YOUR_VERIFIED_USERNAME` after replacing the example with the actual username. Do not publish the example value.
+## Project media
 
-The present website intentionally has no active payment link.
+- `project-artwork.png`: artwork supplied by the maintainer, displayed on the website and in the README.
+- `development-video.mp4`: the original recording supplied by the maintainer, with player controls and no autoplay.
+
+Keep both media files in the repository root. The website links directly to the MP4 as a playback fallback.
 
 ## Update project progress
 

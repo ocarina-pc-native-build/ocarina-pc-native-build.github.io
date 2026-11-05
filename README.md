@@ -1,5 +1,7 @@
 # Ocarina of Time — PC Native Build
 
+![Ocarina of Time Native 2026 project artwork](project-artwork.png)
+
 ### Native Windows x64 recompilation · Switch 2 → PC
 
 **In development · Video and menus working · 3D gameplay not yet verified**
@@ -12,6 +14,12 @@ This project page documents my current development progress and the next steps. 
 **Maintainer:**  https://github.com/HotDevilSauce
 **Status updated:** November 5, 2026  
 **Latest reported local development commits:** `3555ea1` and `5971bd8`
+
+## Development video
+
+[Watch the development video on the project website](https://ocarina-pc-native-build.github.io/#video) · [Open the MP4 recording](https://ocarina-pc-native-build.github.io/development-video.mp4) (14.7 MB)
+
+Recorded November 5, 2026. The artwork above is project artwork; the video is the development recording. See the status below for the scope of reported testing.
 
 ## Current milestone
 
@@ -64,7 +72,7 @@ See the [roadmap](ROADMAP.md) for details and the [changelog](CHANGELOG.md) for 
 
 I’m developing this project independently. Voluntary support helps cover **development tools, testing, and ongoing development work**, including investigating bugs and documenting progress.
 
-**Buy Me a Coffee — coming soon.** A support link will be added once the account is ready.
+**[Buy Me a Coffee](https://buymeacoffee.com/hotdevilsauce)** — support independent development.
 
 Support is optional and does not purchase a game, early access, or a guaranteed release. Following the project and sharing useful feedback also help.
 
