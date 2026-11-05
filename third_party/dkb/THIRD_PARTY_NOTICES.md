@@ -138,6 +138,14 @@ The encoding was checked against Mesa NAK `sm70_encode.rs`, `OpRedux`, revision
 `b1fe47e94409d81924c8663f58fac97e66ab4527` (MIT, Copyright 2022 Collabora, Ltd.):
 https://chromium.googlesource.com/external/gitlab.freedesktop.org/mesa/mesa/+/b1fe47e94409d81924c8663f58fac97e66ab4527/src/nouveau/compiler/nak/sm70_encode.rs
 
+Uniform-source FSETP (`0xc0b`) was checked against the same Eglantine lowering
+revision. The operand mapper already implements this source form. The authored
+GPU fixtures also exposed ordered NE constant folding in Ryujinx; patch 0020's
+explicit NaN exclusion is original MIT code. Eglantine's
+`frontend/maxwell/translate/impl/common_funcs.cpp`, `FloatingPointCompare`, was
+consulted for the distinction between NE and NEU; no GPL code was copied into
+the MIT translator or runtime probe.
+
 The Windows OoT integration adapts image-copy pitch recording and 64-bit address
 wait comparison from nxnative (`dm/gfx/nvn/hle_nvn.c`, `dm/gfx/nvn/nvn_obj.h`, `dm/host/hle_thread.c`),
 revision `84dea69835414b18a4351cd45054bb611e0e3185`, MIT, Copyright (c) 2026 seedds
