@@ -866,6 +866,7 @@ static int fmt_code(const char *name) {
 // c2 slot of a texture or image handle (Service.cs of MNG's totk_xlate: combined handles at 0x20, 32 slots; images at
 // 0x120; separate textures at 0x168), -1 outside those ranges or for a handle in another constant buffer.
 static int handle_slot(int kind, int cbuf_slot, int handle, int separate) {
+    if ((uint32_t)handle >> 28 == 4) return -1; // direct texture/sampler pool arrays are not bound c2 slots
     if (cbuf_slot >= 0 && cbuf_slot != 2) return -1;
     int bytes = (handle & 0x3fff) * 4;
     if (kind == GFX_RES_IMG) return bytes >= 0x120 && bytes < 0x168 ? (bytes - 0x120) / 8 : -1;
@@ -881,8 +882,8 @@ static void add_res(GfxShader *s, int kind, const char *o, const char *e) {
         r->slot = (int16_t)json_int(o, e, "slot", -1);
         r->count = 1;
         if (kind == GFX_RES_SSBO) {
-            r->cbuf_slot = (int8_t)json_int(o, e, "cb_slot", -1);
-            r->handle = (uint16_t)json_int(o, e, "cb_offset", 0);
+            r->cbuf_slot = (int32_t)json_int(o, e, "cb_slot", -1);
+            r->handle = (uint32_t)json_int(o, e, "cb_offset", 0);
             r->flags = (uint8_t)json_int(o, e, "flags", 0);
             // NVN 2 compute: the address's place in the packed bank, as the NVN 1 compute offset of the same buffer
             // (uniform buffer u at 0x210 + 16u, storage buffer k at 0x310 + 16k), which is what vk_exec_draw.c's
@@ -901,13 +902,13 @@ static void add_res(GfxShader *s, int kind, const char *o, const char *e) {
     r->type = (uint16_t)json_int(o, e, "type", 0);
     r->format = (uint8_t)fmt_code(buf);
     r->flags = (uint8_t)json_int(o, e, "flags", 0);
-    r->cbuf_slot = (int8_t)json_int(o, e, "cbuf_slot", -1);
+    r->cbuf_slot = (int32_t)json_int(o, e, "cbuf_slot", -1);
     int handle = (int)json_int(o, e, "handle", 0);
-    r->handle = (uint16_t)handle;
+    r->handle = (uint32_t)handle;
     r->count = (uint16_t)json_int(o, e, "array", 1);
     r->separate = sep && *sep == 't';
     r->slot = (int16_t)handle_slot(kind, r->cbuf_slot, handle, r->separate);
-    if (s->has_c0 && (r->cbuf_slot <= 0 || r->cbuf_slot == 2)) {   // NVN 2 compute: packed-bank handles, 8 bytes each
+    if ((r->handle >> 28) != 4 && s->has_c0 && (r->cbuf_slot <= 0 || r->cbuf_slot == 2)) {   // NVN 2 compute: packed-bank handles, 8 bytes each
         int bytes = (handle & 0x3fff) * 4, at = (int)nvn2_c0_part(&s->c0, kind == GFX_RES_IMG ? 4 : 3);
         int n = kind == GFX_RES_IMG ? s->c0.images : s->c0.textures;
         r->slot = (int16_t)(bytes >= at && bytes < at + 8 * n && (bytes - at) % 8 == 0 ? (bytes - at) / 8 : -1);
