@@ -4,7 +4,7 @@
 
 ### Native Windows x64 recompilation · Switch 2 → PC
 
-**Experimental build · Real 3D output visible · Controllable gameplay unverified**
+**Experimental build · Now in-game · Graphics fixes in progress**
 
 I’m working on a native Windows x64 recompilation of the Switch 2 version of **Ocarina of Time**. The goal is to run the translated game code with a Windows runtime and a Vulkan graphics backend.
 
@@ -14,55 +14,44 @@ This project page documents my current development progress and the next steps. 
 **Discord:** [Join our Discord](https://discord.gg/vDPAcc6JnY)  
 **Maintainer:**  https://github.com/HotDevilSauce
 **Status updated:** November 5, 2026  
-**Latest reported local development commit:** `e6125e6`  
+**Latest documented commit:** `e6125e6`  
 **Latest report:** [Development Update #01](UPDATE-01.md)
 
-## Development Update #01 — first real 3D output
+## Development Update #01 — we’re now in-game!
 
-**November 5, 2026 · Reported local commit: `e6125e6`**
+**November 5, 2026 · Latest documented commit: `e6125e6`**
 
-**Real 3D output is now visible, including the Deku Tree and dialogue.** This is an experimental development milestone. **There is no playable release yet, and controllable gameplay and saving/loading have not been verified.**
+The build has progressed beyond the menus and now reaches an actual **3D in-game scene**, including the Deku Tree and dialogue. Basic movement appears possible, but the rendering problems need attention before we can properly assess gameplay.
 
-### Implemented and fixed
+**The next priority is fixing the overexposure, flickering and other graphical errors.**
 
-- Native game code linked successfully with the Windows runtime; all **58** previously unresolved PACGA cases implemented and tested.
-- **AV1 video decoding** added; a reproduced thread-switch crash and shutdown hang fixed.
-- Incorrect **sRGB texture-view usage** corrected, resolving the black screen in the tested startup path.
-- Game video, title screen, main menu and options menu display correctly. Opening and leaving the options menu works.
-- The Deku Tree and dialogue are now visible in real 3D output, with rendering problems still present.
+![Link in an early 3D in-game scene with heavy overexposure and a performance overlay](in-game-update-01.png)
 
-### Latest testing
+*In-game development screenshot · November 5, 2026. Heavy overexposure is visible; graphics fixes are still in progress.*
 
-Reported testing used an **AMD Radeon RX 7900 XTX**.
+### Latest recorded test results
 
-| Metric | Earlier report | Previous report | Update #01 |
-| :--- | ---: | ---: | ---: |
-| Shader error reports | 464 | 203 | **111** |
-| Vulkan errors in the tested menu/options path | 2 | 0 | **0** |
+Testing used an **AMD Radeon RX 7900 XTX**.
 
-| Passed checks | Reported count |
-| :--- | ---: |
-| Runtime checks | **15** |
-| Project tests | **17** |
-| GPU checks | **245** |
+| Metric | Latest recorded result |
+| :--- | :--- |
+| Vulkan errors in the tested menu/options path | **0** |
+| Shader error reports | **111**, down from **464** |
+| Runtime checks passed | **15** |
+| Project tests passed | **17** |
+| GPU checks passed | **245** |
 
 The zero Vulkan error count applies to the tested menu/options path. Shader report counts do not necessarily represent distinct shaders or root causes.
 
-### Known issues
+### Current focus and development status
 
-- **Heavy overexposure:** washed-out colours and missing visual detail in the 3D scene. The rendering issue is being investigated and **is not fixed yet**.
-- **Reproducible CPU return crash:** a longer test stops around **frame 23,250**, at a CPU return reported as `main+0x1661690`.
-- **Controllable gameplay and saving/loading remain unverified.** Visible 3D scenes and working menus do not establish full playability, stable gameplay performance, or compatibility with other hardware.
+- **Graphics first:** correct lighting and colour output, eliminate flickering, and fix the shader and rendering errors affecting the visible scene. The overexposure and other rendering defects **are not fixed yet**.
+- **Gameplay and stability:** basic movement appears possible, but reliable gameplay, longer-run stability and saving/loading still need verification.
+- **Earlier CPU crash:** the previously reported longer-run crash has **not been confirmed resolved**. The earlier report recorded a stop around frame **23,250** at `main+0x1661690`.
 
-### Next priorities
+This remains an **experimental development build**, not a finished playable release.
 
-1. Fix the CPU return crash.
-2. Identify and correct the overexposure.
-3. Resolve relevant remaining shader errors.
-4. Reach and verify the first genuinely controllable gameplay scene.
-5. Then test scene transitions, saving/loading, longer sessions and additional hardware.
-
-[Read the full Development Update #01](UPDATE-01.md) · [Detailed roadmap](ROADMAP.md) · [Earlier milestones](CHANGELOG.md)
+[Read the full Development Update #01](UPDATE-01.md) for the runtime, AV1, PACGA and menu fixes · [Detailed roadmap](ROADMAP.md) · [Development changelog](CHANGELOG.md)
 
 ## Earlier development video
 
@@ -98,4 +87,4 @@ This is an unofficial project and is not affiliated with Nintendo.
 
 ---
 
-*All progress claims refer to local development reports. Visible 3D scenes and tested menu features are explicitly distinguished from controllable gameplay that has not yet been verified.*
+*All progress claims refer to local development reports. Reaching an in-game scene and initial movement observations do not establish reliable gameplay, longer-run stability or verified saving/loading.*
