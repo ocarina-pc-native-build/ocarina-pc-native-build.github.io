@@ -7,6 +7,7 @@ game functions are included in the distributable archive.
 
 | Component | Revision / version | License and location | Use |
 |---|---|---|---|
+| QEMU QARMA5 | `ba93f3ae5cbe9bace0a8163843f0d678f08a3e6e` | LGPL-2.1-or-later; `licenses/QEMU-LGPL-2.1.txt` | Arithmetic helpers from `target/arm/tcg/pauth_helper.c` adapted in `third_party/dkb/runtime/pacga.c`; process key supplied by Windows BCrypt. |
 | DKB Recomp | `8c76e84af43d70d8d98b2398272d38d368039149` | GPL-3.0-or-later aggregate, MIT inherited portions; `third_party/dkb/LICENSE`, `LICENSE-MIT`, `THIRD_PARTY_NOTICES.md` | Full tracked source snapshot, modified only in `recomp/simd_c.py`; CPU lifter and headers actively used. Horizon/NVN2 sources retained for integration, not linked into the diagnostic executable. |
 | nxnative NSO reader | `84dea69835414b18a4351cd45054bb611e0e3185` | MIT; `third_party/nxnative/LICENSE` | `dm/tools/nso.py` copied unchanged as `nso_reader.py` for a separate normalization tool. |
 | SDL3 | 3.4.18 | zlib; `licenses/SDL3-LICENSE.txt` | Controller enumeration; distributed SDL3.dll from the pinned development archive. |

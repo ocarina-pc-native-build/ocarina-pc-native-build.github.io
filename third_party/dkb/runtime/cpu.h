@@ -37,6 +37,7 @@ void rt_spin_gate(Cpu *c, uint64_t head);  // a pass of a spin wait loop (kernel
 void rt_svc(Cpu *c, uint32_t imm, uint64_t pc);
 void rt_brk(Cpu *c, uint32_t imm, uint64_t pc) __attribute__((noreturn));
 void rt_udf(Cpu *c, uint64_t pc) __attribute__((noreturn));
+uint64_t rt_pacga(uint64_t data, uint64_t modifier);
 uint64_t rt_ticks(void);
 uint32_t rt_tick_hz(void);   // the guest counter rate: 19.2 MHz (Switch), 31.25 MHz (Switch 2)
 uint64_t rt_ticks_to_ns(uint64_t ticks);
