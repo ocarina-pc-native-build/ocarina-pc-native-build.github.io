@@ -285,6 +285,7 @@ static int create_device(void) {
     else if (!c->f13.dynamicRendering) miss = "dynamicRendering";
     else if (!c->f13.synchronization2) miss = "synchronization2";
     else if (!h->shaderStorageImageWriteWithoutFormat) miss = "shaderStorageImageWriteWithoutFormat";
+    else if (!h->shaderStorageImageExtendedFormats) miss = "shaderStorageImageExtendedFormats";
     else if (!c->clip.depthClipControl) miss = "depthClipControl";
     else if (!h->shaderInt64) miss = "shaderInt64";
     else if (!h->samplerAnisotropy) miss = "samplerAnisotropy";
@@ -320,8 +321,10 @@ static int create_device(void) {
                              .pQueueCreateInfos = qi, .enabledExtensionCount = n_ext, .ppEnabledExtensionNames = ext};
     VkResult r = vkCreateDevice(g_vk.phys, &di, NULL, &g_vk.device);
     if (r == VK_SUCCESS) rt_log("vk: enabled features: shaderInt64 %u shaderFloat64 %u geometryShader %u timelineSemaphore %u "
-           "dynamicRendering %u synchronization2 %u", c->f2.features.shaderInt64, c->f2.features.shaderFloat64,
-           c->f2.features.geometryShader, c->f12.timelineSemaphore, c->f13.dynamicRendering, c->f13.synchronization2);
+           "dynamicRendering %u synchronization2 %u storageImageExtendedFormats %u storageImageReadWithoutFormat %u",
+           c->f2.features.shaderInt64, c->f2.features.shaderFloat64, c->f2.features.geometryShader,
+           c->f12.timelineSemaphore, c->f13.dynamicRendering, c->f13.synchronization2,
+           c->f2.features.shaderStorageImageExtendedFormats,c->f2.features.shaderStorageImageReadWithoutFormat);
     free(c);
     if (r != VK_SUCCESS) { rt_log("vk: vkCreateDevice failed (%d)", (int)r); return 0; }
     vkGetDeviceQueue(g_vk.device, g_vk.gfx_family, 0, &g_vk.gfx_queue);

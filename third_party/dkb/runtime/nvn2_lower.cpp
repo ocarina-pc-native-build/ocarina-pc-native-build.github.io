@@ -5,6 +5,7 @@
 #include <atomic>
 #include <cstring>
 #include <map>
+#include <set>
 #include <mutex>
 #include <unordered_map>
 #include <utility>
@@ -28,6 +29,8 @@ std::mutex lock;
 // ponytail: kept for the process (a few thousand small stages); free with the program if memory ever matters
 std::map<uint64_t, Lowered *> cache;
 std::atomic<uint64_t> failures{0}; // distinct rejected shader stages, not just downstream SPIR-V errors
+std::set<std::pair<uint64_t,unsigned>> failed_program_uses;
+std::set<uint64_t> active_failed_shaders;
 // Lowered code buffer -> its key, for nvn2_origin: the draw path asks it on every draw (vk_exec_draw.c
 // light_quad_fault_skip), and a scan of the cache there cost most of the render thread in heavy scenes.
 std::unordered_map<const uint8_t *, uint64_t> origins;
@@ -136,6 +139,18 @@ Lowered *lower(const uint8_t *control, const uint8_t *code) {
     return out;
 }
 }  // namespace
+
+// Called only for native stages that survived ProgramSetShaders unlowered.
+// Correlate the first actual GPU use with the earlier translation diagnostic.
+extern "C" void nvn2_note_failed_use(const uint8_t *control,const uint8_t *code,
+                                    uint64_t program,unsigned stage,uint64_t frame) {
+    std::lock_guard<std::mutex> g(lock);
+    if (!failed_program_uses.emplace(program,stage).second) return;
+    const uint64_t hash=gfx_shader_nvn2_hash(control,code);
+    if (active_failed_shaders.insert(hash).second)
+        rt_log("nvn2: active unlowered shader %016llx NVN stage %u program %llu first used at frame %llu; GPU work blocked",
+            (unsigned long long)hash,stage,(unsigned long long)program,(unsigned long long)frame);
+}
 
 // 1 and the replacement control and code for an NVN 2 stage, 0 when it does not lower.
 extern "C" int nvn2_lower(const uint8_t *control, const uint8_t *code, const uint8_t **out_control,

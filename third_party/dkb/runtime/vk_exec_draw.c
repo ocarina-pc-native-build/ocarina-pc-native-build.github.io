@@ -686,14 +686,26 @@ void vk_exec_image_gone(VkImage image) {
 typedef struct { uint64_t serial; int stage; int used; GfxShaderAnswers a; const GfxShader *s; } ShaderEnt;
 static ShaderEnt shader_tab[SHADER_SETS][SHADER_WAYS];
 
+static void stage_metadata(const uint8_t *ctl,const uint8_t *code,uint32_t *stage,uint32_t *len) {
+    if (gfx_shader_is_nvn2(ctl)) {
+        // A rejected native stage still has the compact NVN2 control block;
+        // reading legacy offsets 0x704/0x714 would read unrelated guest memory.
+        uint32_t w; memcpy(&w,code,4); memcpy(len,ctl+0x38,4);
+        int graphics=((w & 31)==1 || (w & 31)==2) && ((w>>5)&31)==4;
+        uint32_t type=(w>>10)&15;
+        *stage=!graphics ? 5 : type==5 ? 1 : type==4 ? 2 : type==2 ? 3 : type==3 ? 4 : 0;
+    } else {
+        memcpy(stage,ctl+0x714,4); memcpy(len,ctl+0x704,4);
+    }
+}
+
 static int find_stage_scan(const prog_t *p, int nvn_stage, const uint8_t **ctl, const uint8_t **code, uint32_t *len) {
     for (uint32_t i = 0; i < p->nstage && i < 6; i++) {
         const uint8_t *c = p->sd[i].control;
         if (!c || !p->sd[i].data) continue;
         uint32_t st;
-        memcpy(&st, c + 0x714, 4);
+        stage_metadata(c,(const uint8_t *)(uintptr_t)p->sd[i].data,&st,len);
         if ((int)st != nvn_stage) continue;
-        memcpy(len, c + 0x704, 4);
         *ctl = c, *code = (const uint8_t *)(uintptr_t)p->sd[i].data;
         return 1;
     }
@@ -716,8 +728,9 @@ static int find_stage(const prog_t *p, int nvn_stage, const uint8_t **ctl, const
             const uint8_t *c = p->sd[i].control;
             if (!c || !p->sd[i].data) continue;
             uint32_t st;
-            memcpy(&st, c + 0x714, 4);
-            if (st < 6 && m->idx[st] < 0) m->idx[st] = (int8_t)i, memcpy(&m->len[st], c + 0x704, 4);
+            uint32_t length;
+            stage_metadata(c,(const uint8_t *)(uintptr_t)p->sd[i].data,&st,&length);
+            if (st < 6 && m->idx[st] < 0) m->idx[st]=(int8_t)i,m->len[st]=length;
         }
     }
     int i = m->idx[nvn_stage];
@@ -726,10 +739,33 @@ static int find_stage(const prog_t *p, int nvn_stage, const uint8_t **ctl, const
     return 1;
 }
 
+int probe_nvn2_stage_controls(void) {
+    uint8_t control[0x880]={0};
+    uint32_t magic=0x98761234,version=0xc9,length=0x120,wrong=0xdeadbeef;
+    memcpy(control,&magic,4); memcpy(control+4,&version,4); memcpy(control+0x38,&length,4);
+    // Deliberately misleading bytes where legacy metadata would reside.
+    memcpy(control+0x704,&wrong,4); memcpy(control+0x714,&wrong,4);
+    const unsigned sph_types[]={1,5,4,2,3,0};
+    unsigned checks=0,failures=0;
+    for (unsigned stage=0;stage<6;stage++) {
+        uint32_t word=sph_types[stage] ? 1u | (4u<<5) | (sph_types[stage]<<10) : 0x00007802;
+        prog_t p={0}; p.nstage=1; p.sd[0]=(NVNshaderData){(uint64_t)(uintptr_t)&word,control};
+        for (unsigned cached=0;cached<2;cached++) {
+            p.serial=cached ? UINT64_MAX-stage : 0;
+            const uint8_t *ctl=NULL,*code=NULL; uint32_t len=0;
+            int found=find_stage(&p,(int)stage,&ctl,&code,&len);
+            checks++; failures+=!found || ctl!=control || code!=(const uint8_t *)&word || len!=length;
+            checks++; failures+=find_stage(&p,(int)((stage+1)%6),&ctl,&code,&len)!=0;
+        }
+    }
+    printf("probe-nvn2-stage-controls: %u checks, %u failures (compact controls, all stages, direct and cached lookup)\n",checks,failures);
+    return !!failures;
+}
+
 // Texture and image types of a stage's first 32 slots, each kept with the handle and the generation and slot token it
 // was looked up under: a slot is looked up again, a hash probe, only when the handle changed or its slot may resolve
 // otherwise (slot_still).
-static struct { uint64_t context, tex[32], img[32], ttok[32], itok[32]; uint32_t tgen[32], igen[32]; uint8_t tt[32], it[32]; } AC[6];
+static struct { uint64_t context, tex[32], img[32], ttok[32], itok[32]; uint32_t tgen[32], igen[32]; uint8_t tt[32], it[32], ifmt[32]; } AC[6];
 static uint64_t descriptor_serial = 1;
 
 // vk_texture_slot_token of the slot a texture or image handle names; an empty handle always resolves to nothing.
@@ -780,6 +816,21 @@ static uint8_t type_of_handle(const VkExec *ex, uint64_t h) {   // texture lock 
     return img ? (uint8_t)gfx_type_of(img, &v, hv) : 0;
 }
 
+static uint8_t image_format_of_handle(const VkExec *ex,uint64_t h) { // texture lock held
+    view_t v; int hv;
+    const VkTexImage *img=h ? vk_texture_by_id_locked(&ex->tex_pool,(int)(h & 0xfffff),&v,&hv):NULL;
+    if (!img) return 0;
+    VkFormat format=img->format;
+    if (hv && v.set_format) {
+        TexVkFormat requested;
+        if (!tex_vk_format(v.format,&requested)) rt_fatal("vk: storage view has unknown NVN format %#x",v.format);
+        format=requested.vk;
+    }
+    for (unsigned i=1;i<sizeof tex_format/sizeof *tex_format;i++)
+        if (tex_format[i]==format) return (uint8_t)i;
+    rt_fatal("vk: storage view format %d cannot be represented by the shader translator",(int)format);
+}
+
 // The answers of stage st for the slots in mask; the types of other slots stay zero.
 static void answers_for(VkExec *ex, int st, const uint8_t *ctl, uint32_t mask, GfxShaderAnswers *a) {
     descriptor_state(ex);
@@ -811,10 +862,15 @@ static void answers_for(VkExec *ex, int st, const uint8_t *ctl, uint32_t mask, G
         uint64_t tt = tmiss ? token_of(ex, h) : 0, it = imiss ? token_of(ex, hi) : 0;
         if ((tmiss || imiss || check) && !locked) vk_texture_lock(), locked = 1, BS.ac_miss++;
         if (tmiss) c->tt[slot] = type_of_handle(ex, h), c->tex[slot] = h, c->ttok[slot] = tt, c->tgen[slot] = gen;
-        if (imiss) c->it[slot] = type_of_handle(ex, hi), c->img[slot] = hi, c->itok[slot] = it, c->igen[slot] = gen;
-        if (check && (type_of_handle(ex, h) != c->tt[slot] || type_of_handle(ex, hi) != c->it[slot]))   // TOTK_SHADER_MEMO=check
+        if (imiss) {
+            c->it[slot]=type_of_handle(ex,hi); c->ifmt[slot]=image_format_of_handle(ex,hi);
+            c->img[slot]=hi; c->itok[slot]=it; c->igen[slot]=gen;
+        }
+        if (check && (type_of_handle(ex, h) != c->tt[slot] || type_of_handle(ex, hi) != c->it[slot] ||
+                      image_format_of_handle(ex,hi)!=c->ifmt[slot]))   // TOTK_SHADER_MEMO=check
             rt_fatal("vk_exec: kept texture types of stage %d slot %d differ from a lookup", st, slot);
         a->tex_type[slot] = c->tt[slot], a->img_type[slot] = c->it[slot];
+        a->img_format[slot]=c->ifmt[slot];
     }
     if (locked) vk_texture_unlock();
 }
@@ -829,6 +885,11 @@ static const GfxShader *shader_for(VkExec *ex, int st, int *present, int *pendin
     if (pending) *pending = 0;
     if (!ex->prog || !find_stage(ex->prog, st, &ctl, &code, &len)) return NULL;
     *present = 1;
+    if (gfx_shader_is_nvn2(ctl)) {
+        nvn2_note_failed_use(ctl,code,ex->prog->serial,(unsigned)st,
+            __atomic_load_n(&gfx_counters.frames,__ATOMIC_RELAXED));
+        return NULL;
+    }
     GfxShaderAnswers a;
     uint64_t serial = ex->prog->serial;
     answers_for(ex, st, ctl, slot_mask_of(serial, st), &a);

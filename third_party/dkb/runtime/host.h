@@ -310,6 +310,7 @@ int probe_loader(void), probe_kernel(void), probe_ipc(void), probe_ipc_lifetime(
 int probe_audio_device(void);
 int probe_system_core(void);
 int probe_prepo_async(void);
+int probe_nvn2_stage_controls(void);
 int probe_nifm(void);
 int probe_bsd(void);
 int probe_ipc_domains(void);
