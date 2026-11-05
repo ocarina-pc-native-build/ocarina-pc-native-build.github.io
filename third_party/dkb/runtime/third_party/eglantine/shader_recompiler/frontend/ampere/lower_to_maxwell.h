@@ -1126,6 +1126,23 @@ inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code,
                 (u64{15} << 20) | (u64{dimension} << 33) | (u64{offset} << 36) | (u64{1} << 51));
             break;
         }
+        case 0x59f: { // SURED.D.2D.{ADD,OR}.STRONG.GPU.IGN U32, direct descriptor.
+            const u32 binding = insn.Bits(54, 5), offset = insn.Bits(40, 14);
+            const u32 data = insn.Bits(32, 8), coordinate = insn.Bits(24, 8);
+            const u32 operation = insn.Bits(87, 3);
+            if ((insn.words[2] & ~0x03800000U) != 0x0010e000 || (operation != 0 && operation != 6) ||
+                insn.Bits(61, 3) != 3 || binding >= 18 ||
+                offset > 0x1fff || insn.Bits(59, 2) || coordinate > 253)
+                return fail(index, "native surface reduction mode");
+            if (result.required_texture_buffer != ~0U && result.required_texture_buffer != binding)
+                return fail(index, "native surface descriptor buffer conflict");
+            result.required_texture_buffer = binding;
+            // Ryujinx InstTable.Sured uses the 0xeb58 prefix (the reference's 0xeb48 prefix
+            // is not a surface reduction in this frontend). U32 is zero at bit 20.
+            emit(0xeb50000000000000ULL | predicate | data | (u64{coordinate} << 8) |
+                (u64{operation} << 24) | (u64{3} << 33) | (u64{offset} << 36) | (u64{1} << 51));
+            break;
+        }
         case 0x301: // BREV register.
             if (insn.words[2] || insn.words[1] > 255) return fail(index, "native bit reverse mode");
             emit(base(0x3828000000000000ULL) | (u64{insn.words[1]} << 8) |

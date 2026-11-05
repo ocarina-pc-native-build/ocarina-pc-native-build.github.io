@@ -1097,7 +1097,10 @@ static Tex *slot_resolve(TexSlot *s, view_t *view, int *has_view) {
     // A registered descriptor can outlive its texture wrapper and follow a live image
     // at the same storage address. The image supplies the bytes, but the descriptor
     // still decides their format (for example RGB9E5 in R11G11B10 backing).
-    if (e && e->key.d.format != s->t.d.format && !(s->has_view && s->v.set_format)) {
+    TexVkFormat descriptor_format;
+    if (e && e->key.d.format != s->t.d.format && !(s->has_view && s->v.set_format) &&
+        tex_vk_format(s->t.d.format, &descriptor_format) &&
+        tex_vk_color_view_compatible(e->pub.format, descriptor_format.vk)) {
         view->format = s->t.d.format;
         view->set_format = 1;
         *has_view = 1;

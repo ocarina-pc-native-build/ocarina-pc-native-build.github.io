@@ -9,6 +9,7 @@
 #include "host.h"
 #include "nvn_api.h"
 #include "vk_exec.h"
+#include "tex.h"
 
 #define NVN_PROC(n) void nvnp_##n(Cpu *c);
 #include "nvn_procs.inc"
@@ -289,6 +290,17 @@ static int run_postprocess_fetches(uint8_t *memory,void *command_control,uint64_
 
 static int run_descriptor_format_alias(uint8_t *memory,void *command_control,uint64_t handle,size_t stride,int ti) {
     int live=0,ok=0;
+    const VkFormat valid[][2]={{VK_FORMAT_B10G11R11_UFLOAT_PACK32,VK_FORMAT_E5B9G9R9_UFLOAT_PACK32},
+        {VK_FORMAT_R16G16_UINT,VK_FORMAT_R32_UINT},{VK_FORMAT_R8G8B8A8_SRGB,VK_FORMAT_R8G8B8A8_UNORM}};
+    const VkFormat invalid[][2]={{VK_FORMAT_R8_UNORM,VK_FORMAT_D32_SFLOAT},
+        {VK_FORMAT_D32_SFLOAT,VK_FORMAT_R32_UINT},{VK_FORMAT_D32_SFLOAT,VK_FORMAT_D16_UNORM},
+        {VK_FORMAT_R16_UINT,VK_FORMAT_R32_UINT},{VK_FORMAT_BC1_RGBA_UNORM_BLOCK,VK_FORMAT_R32G32_UINT}};
+    for(unsigned i=0;i<sizeof valid/sizeof *valid;i++) {
+        checks++; if(!tex_vk_color_view_compatible(valid[i][0],valid[i][1]))failures++;
+    }
+    for(unsigned i=0;i<sizeof invalid/sizeof *invalid;i++) {
+        checks++; if(tex_vk_color_view_compatible(invalid[i][0],invalid[i][1]))failures++;
+    }
     CALL(nvnTextureBuilderSetDefaults,U(&texture_builder));
     CALL(nvnTextureBuilderSetDevice,U(&texture_builder),U(&device));
     CALL(nvnTextureBuilderSetTarget,U(&texture_builder),NVN_TEXTURE_TARGET_2D);
@@ -403,6 +415,50 @@ static int run_srgb_store(uint8_t *memory, void *command_control, int ti) {
 
 // Copy pixel zero to pixel one through actual SULD/SUST. Re-registering one
 // handle with UINT, SINT and FLOAT views must refresh the translator answers.
+static int run_surface_atomic(void *command_control,int ti) {
+    uint32_t native[][4]={
+        {0x00007802,3,0xf00,0}, {0x00047802,0,0xf00,0}, {0x00057802,0,0xf00,0},
+        {0x0400759f,0x60000400,0x0010e000,0}, // SURED.D.2D.ADD U32 [R4,R5],R0
+        {0x0000794d,0,0x03800000,0}
+    };
+    uint32_t ctl[0xd8/4]={0};
+    ctl[0]=0x98761234; ctl[1]=0xc9; ctl[0x30/4]=sizeof ctl; ctl[0x38/4]=sizeof native;
+    ctl[0x58/4]=ctl[0x5c/4]=ctl[0x60/4]=1; ((uint8_t *)ctl)[0xb6]=1;
+    for(unsigned phase=0;phase<2;phase++) {
+    native[0][1]=phase?0x80000001:3;
+    native[3][2]=0x0010e000|(phase?6u<<23:0);
+    NVNshaderData shader={U(native),(const uint8_t *)ctl};
+    if(!(uint8_t)CALL(nvnProgramSetShaders,U(&program),1,U(&shader)))return 0;
+    const uint32_t initial[2]={phase?0x12:0xfffffffe,0xabcdef12};
+    NVNcopyRegion region={0,0,0,2,1,1};
+    CALL(nvnTextureWriteTexels,U(&typed_texture),0,U(&region),U(initial));
+    NVNtextureView view;
+    CALL(nvnTextureViewSetDefaults,U(&view)); CALL(nvnTextureViewSetFormat,U(&view),NVN_FORMAT_R32UI);
+    CALL(nvnTexturePoolRegisterTexture,U(&texture_a),ti,U(&typed_texture),U(&view));
+    CALL(nvnCommandBufferAddControlMemory,U(&command),U(command_control),CONTROL_BYTES);
+    CALL(nvnCommandBufferBeginRecording,U(&command));
+    CALL(nvnCommandBufferSetTexturePool,U(&command),U(&texture_a));
+    CALL(nvnCommandBufferBindProgram,U(&command),U(&program),NVN_SHADER_STAGE_COMPUTE_BIT);
+    CALL(nvnCommandBufferBindImage,U(&command),NVN_SHADER_STAGE_COMPUTE,0,ti);
+    // Multiple workgroups contend for the same texel. Ordinary loads/stores cannot implement this sum.
+    CALL(nvnCommandBufferDispatchCompute,U(&command),64,1,1);
+    uint64_t commands=CALL(nvnCommandBufferEndRecording,U(&command));
+    const GfxBackend *backend=&gfx_vulkan_backend;
+    uint64_t fence=backend->submit(&commands,1,rt_ticks());
+    if(!backend->fence_wait(fence,UINT64_C(10000000000)))return 0;
+    backend->cpu_synced(fence);
+    uint32_t pixels[2]={0};
+    if(!vk_texture_read_image((const tex_t *)&typed_texture,NULL,&region,(uint8_t *)pixels,8,8))return 0;
+    checks++;
+    uint32_t expected=phase?0x80000013:190;
+    if(pixels[0]!=expected || pixels[1]!=initial[1]) {
+        printf("probe-vkpool: FAIL surface atomic %s: %08x %08x expected %08x abcdef12\n",phase?"OR":"ADD",pixels[0],pixels[1],expected);
+        failures++;
+    } else printf("probe-vkpool: surface atomic %s: 64 workgroups and untouched texel passed\n",phase?"OR":"ADD");
+    }
+    return 1;
+}
+
 static int run_typed_images(void *command_control,int ti) {
     static const uint32_t native[][4]={
         {0x00007802,0,0xf00,0}, {0x00017802,0,0xf00,0},
@@ -534,6 +590,7 @@ int probe_vkpool(void) {
     REQUIRE(run_srgb_store(memory, command_control, ti), "sRGB storage view case completed");
     REQUIRE(make_texture(&typed_texture,0xc0000,pattern),"typed image"); textures_live=5;
     REQUIRE(run_typed_images(command_control,ti),"typed image load/store and view changes completed");
+    REQUIRE(run_surface_atomic(command_control,ti),"surface atomic accumulation completed");
     REQUIRE(make_array_texture(),"array texture"); textures_live=6;
     CALL(nvnTexturePoolRegisterTexture,U(&texture_a),ti,U(&array_texture),0);
     REQUIRE(run_array_gather(memory,command_control,handle,stride),"array gather layer and texel ordering");
