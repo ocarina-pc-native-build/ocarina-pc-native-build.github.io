@@ -380,8 +380,51 @@ static void uniform_shift_registers() {
         CHECK(!lower(i));
     }
 }
+static void clamped_immediate_funnel() {
+    for (u32 wrap:{0u,1u}) for (u32 value:{0u,1u,0xffffffffu,0x80000001u,0x12345678u}) {
+        auto i=op(0x419); bits(i,16,8,8); bits(i,24,8,255); i.words[1]=value;
+        i.words[2]=0x00010600|(wrap<<11)|4;
+        auto out=lower(i); CHECK(bool(out)); if (!out) continue;
+        CHECK(out.instructions.size()==3); // materialize immediate, shift, EXIT
+        const u64 mov=out.instructions[0], shift=out.instructions[1];
+        CHECK(((mov>>20)&0xffffffff)==value); CHECK((mov&255)==250);
+        CHECK(((shift>>8)&255)==250 && ((shift>>20)&255)==4 && (shift&255)==8);
+        CHECK(((shift>>39)&1)==wrap);
+        for (u32 amount:{0u,1u,31u,32u,33u,63u,64u,0xffffffffu}) {
+            const u32 n=(shift>>39)&1?amount&31:amount;
+            const u32 got=n>=32?0:value<<n;
+            // High 32 bits of (value:0 << min(amount,32)), or modulo-32 shift.
+            const u32 expected=wrap?value<<(amount&31):(amount>=32?0:value<<amount);
+            CHECK(got==expected);
+        }
+    }
+}
+static void high_address_subtract() {
+    for (u32 dst:{0u,1u,8u}) for (u32 sign:{0u,1u}) for (u32 amount:{0u,1u,17u,30u,31u}) {
+        auto i=op(0x211); bits(i,16,8,dst); bits(i,24,8,0); bits(i,32,8,1); bits(i,63,1,1);
+        bits(i,64,8,255); bits(i,73,1,sign); bits(i,75,5,amount); bits(i,80,1,1); bits(i,81,3,7);
+        auto out=lower(i); CHECK(bool(out)); if (!out) continue;
+        for (u32 a:{0u,1u,0x80000000u,0xffffffffu,0x87654321u})
+            for (u32 b:{0u,1u,0xffffffffu,0x12345678u}) {
+                u32 regs[256]={}; regs[0]=a; regs[1]=b;
+                for (u64 m:out.instructions) {
+                    u32 d=m&255,ra=(m>>8)&255,rb=(m>>20)&255;
+                    const u64 opcode=m&0xfff8000000000000ull;
+                    if(opcode==0x3828000000000000ull) {
+                        u32 n=(m>>20)&0x7ffff;
+                        regs[d]=(m>>48)&1?u32(s32(regs[ra])>>(n<32?n:31)):(n<32?regs[ra]>>n:0);
+                    } else if(opcode==0x5c10000000000000ull) {
+                        regs[d]=regs[ra]+(((m>>48)&3)==1?0-regs[rb]:regs[rb]);
+                    }
+                }
+                const u64 full=sign?u64(s64(s32(a))):u64(a);
+                const u32 expected=u32((full<<amount)>>32)-b;
+                CHECK(regs[dst]==expected);
+            }
+    }
+}
 int main() {
-    txq(); i2f(); texture_half_order(); extended_compare(); extended_accumulator(); bindless_textures(); wide_immediate_multiply(); array_gather(); high_native_registers(); uniform_shift_registers(); windows();
+    txq(); i2f(); texture_half_order(); extended_compare(); extended_accumulator(); bindless_textures(); wide_immediate_multiply(); array_gather(); high_native_registers(); uniform_shift_registers(); clamped_immediate_funnel(); high_address_subtract(); windows();
     std::printf("render regressions: %u checks, %u failures\n", checks, failures);
     return failures?1:0;
 }

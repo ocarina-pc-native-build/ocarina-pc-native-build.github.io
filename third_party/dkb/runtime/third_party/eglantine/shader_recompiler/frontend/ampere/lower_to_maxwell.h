@@ -2178,12 +2178,12 @@ inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code,
                  (u64{source} << 8) | (u64{shift} << 20) | (u64{insn.Bits(75, 1)} << 39));
             break;
         }
-        case 0x419: { // SHF.L.W.U32.HI Rd, RZ, Rb, imm (high word of imm:0 << Rb) = imm << (Rb & 31)
-            if (insn.Bits(24, 8) != 255 || (insn.words[2] & ~0xffU) != 0x00010e00)
+        case 0x419: { // SHF.L[.W].U32.HI with zero low word: immediate << register.
+            if (insn.Bits(24, 8) != 255 || (insn.words[2] & ~0x8ffU) != 0x00010600)
                 return fail(index, "native funnel shift immediate mode");
             mov_imm(250, insn.words[1]);
             emit(base(0x5c48000000000000ULL) | (u64{250} << 8) | (u64{insn.Bits(64, 8)} << 20) |
-                 (u64{1} << 39));
+                 (u64{insn.Bits(75, 1)} << 39)); // .W wraps modulo 32; otherwise amounts >=32 produce zero.
             break;
         }
         case 0x805: { // CS2R SRZ
@@ -2426,9 +2426,10 @@ inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code,
                 const u32 c = insn.Bits(64, 8);
                 if (insn.Bits(72, 1) || insn.Bits(74, 1) || insn.Bits(81, 3) != 7 ||
                     (c != 255 && (opcode != 0x211 || insn.Bits(73, 1) || c >= 250)) ||
-                    (opcode == 0x211 && insn.Bits(62, 2)))
+                    (opcode == 0x211 && insn.Bits(62, 1)))
                     return fail(index, "native high effective address mode");
                 u32 b = insn.Bits(32, 8);
+                const u64 subtract = u64{opcode == 0x211 ? insn.Bits(63, 1) : 0U} << 48;
                 if (opcode == 0x811) {
                     b = insn.words[1] ? 251U : 255U;
                     if (b == 251) mov_imm(251, insn.words[1]);
@@ -2438,12 +2439,12 @@ inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code,
                     emit(0x3828000000000000ULL | predicate | 250 | (u64{insn.Bits(24, 8)} << 8) | shift);
                     emit(0x3848000000000000ULL | predicate | 252 | (u64{c} << 8) | (u64{insn.Bits(75, 5)} << 20));
                     emit(0x5c40000000000000ULL | predicate | 250 | (u64{250} << 8) | (u64{252} << 20) | (u64{1} << 41));
-                    emit(base(0x5c10000000000000ULL) | (u64{250} << 8) | (u64{b} << 20));
+                    emit(base(0x5c10000000000000ULL) | (u64{250} << 8) | (u64{b} << 20) | subtract);
                 } else if (b == 255) {
                     emit(base(0x3828000000000000ULL) | (u64{insn.Bits(24, 8)} << 8) | shift);
                 } else {
                     emit(0x3828000000000000ULL | predicate | 250 | (u64{insn.Bits(24, 8)} << 8) | shift);
-                    emit(base(0x5c10000000000000ULL) | (u64{250} << 8) | (u64{b} << 20));
+                    emit(base(0x5c10000000000000ULL) | (u64{250} << 8) | (u64{b} << 20) | subtract);
                 }
                 break;
             }
