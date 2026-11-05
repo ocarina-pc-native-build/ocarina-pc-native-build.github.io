@@ -225,6 +225,10 @@ static class SwshXlate
                 false /* 不做 Y 取反 | no Y flip */, true /* 原点左上 | origin upper-left */, false);
         }
         public bool QueryHostSupportsDepthClipControl() => true;
+        // Storage-image component types must match the bound view even on a
+        // device supporting formatless reads. Request the runtime's explicit
+        // format so integer surfaces stay integer and reads declare their format.
+        public bool QueryHostSupportsImageLoadFormatted() => false;
         public bool QueryHostSupportsGeometryShaderPassthrough() => false;
         // Vulkan: the ConstOffset / ConstOffsets image operands Ryujinx emits must be constants. A TLD4.PTP whose offsets
         // come from registers (agl_technique_pfx compute b940aa86, dfe7662f) otherwise becomes an OpConstantComposite over

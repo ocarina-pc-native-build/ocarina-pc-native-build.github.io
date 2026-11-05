@@ -10,7 +10,8 @@ import time
 # symbol-count goldens. They remain available explicitly, but are not portable
 # Zelda regression fixtures. These probes exercise the integrated host instead.
 DEFAULT = ['selftest','probe-loader','probe-kernel','probe-ipc-lifetime','probe-ipc-domains',
-           'probe-system-core','probe-audio-device','probe-nifm','probe-bsd','probe-fs','probe-gfx-abi','probe-nvn','probe-codec']
+           'probe-system-core','probe-audio-device','probe-nifm','probe-bsd','probe-fs','probe-gfx-abi','probe-nvn','probe-codec',
+           'probe-prepo-async','probe-nvn2-stage-controls']
 
 
 def main():

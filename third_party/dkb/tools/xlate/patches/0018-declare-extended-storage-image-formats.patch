@@ -1,0 +1,21 @@
+--- a/src/Ryujinx.Graphics.Shader/CodeGen/Spirv/Declarations.cs
++++ b/src/Ryujinx.Graphics.Shader/CodeGen/Spirv/Declarations.cs
+@@ -234,6 +234,18 @@
+ 
+                 Dim dim = GetDim(image.Type);
+ 
++                // SPIR-V Image Format table: these baseline formats need only
++                // Shader; the other formats emitted here need the extended capability.
++                ImageFormat declaredFormat = GetImageFormat(image.Format);
++                if (declaredFormat is not (ImageFormat.Unknown or
++                    ImageFormat.Rgba32f or ImageFormat.Rgba16f or ImageFormat.R32f or
++                    ImageFormat.Rgba8 or ImageFormat.Rgba8Snorm or
++                    ImageFormat.Rgba32i or ImageFormat.Rgba16i or ImageFormat.Rgba8i or ImageFormat.R32i or
++                    ImageFormat.Rgba32ui or ImageFormat.Rgba16ui or ImageFormat.Rgba8ui or ImageFormat.R32ui))
++                {
++                    context.AddCapability(Capability.StorageImageExtendedFormats);
++                }
++
+                 SpvInstruction imageType = context.TypeImage(
+                     context.GetType(image.Format.GetComponentType()),
+                     dim,
