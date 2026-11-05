@@ -1569,6 +1569,29 @@ inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code,
                          (u64{15} << 39) | (u64{250 + component} << 20));
                 break;
             }
+            // Packed 2D-array gather: the native scalar argument list is layer,
+            // X in Ra:Ra+1 and Y in Rb. Maxwell expects all three in Ra..Ra+2.
+            // Stage the inputs before writing results, including aliased destinations.
+            if (insn.Bits(61, 3) == 5 && insn.Bits(60, 1) && !insn.Bits(59, 1) &&
+                !insn.Bits(76, 5) && insn.Bits(81, 3) == 7 && !insn.Bits(89, 1) &&
+                !insn.Bits(91, 1) && mask && binding < 18 && insn.Bits(40, 14) <= 0x1fff &&
+                source_a < 245 && source_b < 246 && dest + (components > 1) < 246 &&
+                (components == 1 || !(dest & 1)) &&
+                (components > 2 ? second_dest < 245 && (components < 4 || !(second_dest & 1)) : second_dest == 255)) {
+                if (result.required_texture_buffer != ~0U && result.required_texture_buffer != binding)
+                    return fail(index, "native texture descriptor buffer conflict");
+                result.required_texture_buffer = binding;
+                for (u32 i = 0; i < 3; ++i)
+                    emit(0x5c98000000000000ULL | predicate | (250 + i) | (u64{15} << 39) |
+                         (u64{i < 2 ? source_a + i : source_b} << 20));
+                emit(0xc800000000000000ULL | predicate | 250 | (u64{250} << 8) | (u64{255} << 20) |
+                     (u64{3} << 28) | (u64{mask} << 31) | (u64{insn.Bits(40, 14)} << 36) |
+                     (u64{insn.Bits(90, 1)} << 49) | (u64{7} << 51) | (u64{insn.Bits(87, 2)} << 56));
+                for (u32 i = 0; i < components; ++i)
+                    emit(0x5c98000000000000ULL | predicate | (i < 2 ? static_cast<u32>(dest) + i : second_dest + i - 2) |
+                         (u64{15} << 39) | (u64{250 + i} << 20));
+                break;
+            }
             if (insn.Bits(61, 3) != 1 || insn.Bits(76, 4) || insn.Bits(81, 3) != 7 || insn.Bits(59, 1) ||
                 insn.Bits(40, 14) > 0x1fff || binding >= 18 || insn.Bits(89, 1) || mask == 0 ||
                 (result.required_texture_buffer != ~0U && result.required_texture_buffer != binding))

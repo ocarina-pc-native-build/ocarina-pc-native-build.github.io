@@ -38,6 +38,7 @@ OBJECT(NVNtexture, green_texture);
 OBJECT(NVNtexture, pattern_texture);
 OBJECT(NVNtexture, srgb_texture);
 OBJECT(NVNtexture, typed_texture);
+OBJECT(NVNtexture, array_texture);
 OBJECT(NVNsamplerBuilder, sampler_builder);
 OBJECT(NVNsampler, repeat_sampler);
 OBJECT(NVNsampler, clamp_sampler);
@@ -175,6 +176,46 @@ static int run_native_textures(uint8_t *memory,void *command_control,uint64_t ha
         if (!run_case(variant?"NVN2 uniform handle":"NVN2 per-lane handle",memory,command_control,
                       handle,tp,sp,expected,3,stride)) return 0;
     }
+    return 1;
+}
+
+static int run_array_gather(uint8_t *memory,void *command_control,uint64_t handle,size_t stride) {
+    uint32_t native[][4]={
+        {0x00007802,0,0xf00,0}, // integer array layer
+        {0x00017802,0x3f000000,0xf00,0}, {0x00027802,0x3f000000,0xf00,0},
+        {0x00087b63,0xb0000802,0x000e0f0a,0}, // TLD4.R.2D.ARRAY, layer/X in R0:R1, Y in R2
+        {0x00047a02,0x400,0xf00,0}, {0x00057a02,0x500,0xf00,0},
+        {0x04007386,8,0x0010ad00,0}, {0x0000794d,0,0x03800000,0}
+    };
+    uint32_t ctl[0xd8/4]={0};
+    ctl[0]=0x98761234; ctl[1]=0xc9; ctl[0x30/4]=sizeof ctl; ctl[0x38/4]=sizeof native;
+    ctl[0x58/4]=ctl[0x5c/4]=ctl[0x60/4]=1; ((uint8_t *)ctl)[0xb2]=1; ((uint8_t *)ctl)[0xb3]=1;
+    const NVNtexturePool *tp[3]={&texture_a,&texture_a,&texture_a};
+    const NVNsamplerPool *sp[3]={&sampler_repeat,&sampler_repeat,&sampler_repeat};
+    for(unsigned layer=0;layer<2;layer++) {
+        native[0][1]=layer;
+        const uint32_t expected[3][4]={{layer?0:0x3f800000,layer?0x3f800000:0,layer?0x3f800000:0,layer?0:0x3f800000}};
+        NVNshaderData shader={U(native),(const uint8_t *)ctl};
+        if(!(uint8_t)CALL(nvnProgramSetShaders,U(&program),1,U(&shader)))return 0;
+        if(!run_case(layer?"native array gather layer 1":"native array gather layer 0",memory,
+                     command_control,handle,tp,sp,expected,1,stride))return 0;
+    }
+    return 1;
+}
+
+static int make_array_texture(void) {
+    CALL(nvnTextureBuilderSetDevice,U(&texture_builder),U(&device));
+    CALL(nvnTextureBuilderSetDefaults,U(&texture_builder));
+    CALL(nvnTextureBuilderSetTarget,U(&texture_builder),NVN_TEXTURE_TARGET_2D_ARRAY);
+    CALL(nvnTextureBuilderSetSize3D,U(&texture_builder),2,1,2);
+    CALL(nvnTextureBuilderSetLevels,U(&texture_builder),1);
+    CALL(nvnTextureBuilderSetFormat,U(&texture_builder),NVN_FORMAT_RGBA8);
+    CALL(nvnTextureBuilderSetStorage,U(&texture_builder),U(&memory_pool),0xd0000);
+    uint64_t bytes=CALL(nvnTextureBuilderGetStorageSize,U(&texture_builder));
+    if(!bytes || bytes>0x10000 || !(uint8_t)CALL(nvnTextureInitialize,U(&array_texture),U(&texture_builder)))return 0;
+    const uint8_t pixels[16]={255,0,0,255,0,255,0,255,0,0,255,255,255,255,255,255};
+    NVNcopyRegion region={0,0,0,2,1,2};
+    CALL(nvnTextureWriteTexels,U(&array_texture),0,U(&region),U(pixels));
     return 1;
 }
 
@@ -393,6 +434,9 @@ int probe_vkpool(void) {
     REQUIRE(run_srgb_store(memory, command_control, ti), "sRGB storage view case completed");
     REQUIRE(make_texture(&typed_texture,0xc0000,pattern),"typed image"); textures_live=5;
     REQUIRE(run_typed_images(command_control,ti),"typed image load/store and view changes completed");
+    REQUIRE(make_array_texture(),"array texture"); textures_live=6;
+    CALL(nvnTexturePoolRegisterTexture,U(&texture_a),ti,U(&array_texture),0);
+    REQUIRE(run_array_gather(memory,command_control,handle,stride),"array gather layer and texel ordering");
     REQUIRE(gfx_shader_failures() == shader_failures, "no shader translation failures");
 done:
     if (pool_live) backend->finish();
@@ -407,6 +451,7 @@ done:
     if (descriptor_pools_live >= 1) CALL(nvnTexturePoolFinalize, U(&texture_a));
     if (samplers_live >= 2) CALL(nvnSamplerFinalize, U(&clamp_sampler));
     if (samplers_live >= 1) CALL(nvnSamplerFinalize, U(&repeat_sampler));
+    if (textures_live >= 6) CALL(nvnTextureFinalize, U(&array_texture));
     if (textures_live >= 5) CALL(nvnTextureFinalize, U(&typed_texture));
     if (textures_live >= 4) CALL(nvnTextureFinalize, U(&srgb_texture));
     if (textures_live >= 3) CALL(nvnTextureFinalize, U(&pattern_texture));

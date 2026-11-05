@@ -262,8 +262,43 @@ static void wide_immediate_multiply() {
         }
     }
 }
+static void array_gather() {
+    for (u32 mask=1;mask<16;mask++) for (u32 component=0;component<4;component++)
+    for (u32 dst:{8u,20u,40u}) for (u32 guard:{7u,2u,10u}) {
+        const u32 count=std::popcount(mask), second=count>2?60:255;
+        auto i=op(0xb63); bits(i,16,8,dst); bits(i,24,8,20); bits(i,32,8,40);
+        bits(i,12,4,guard); bits(i,40,14,8); bits(i,54,5,2); bits(i,60,1,1); bits(i,61,3,5);
+        bits(i,64,8,second); bits(i,72,4,mask); bits(i,81,3,7); bits(i,87,2,component);
+        auto out=lower(i); CHECK(bool(out)); if (!out) continue;
+        CHECK(out.required_texture_buffer==2);
+        for (bool enabled:{false,true}) {
+            u32 r[256]; for(u32 n=0;n<256;n++)r[n]=1000+n;
+            const bool execute=guard==7 || enabled; bool gathered=false;
+            for(unsigned k=0;k<out.source_instruction_offsets[1];k++) {
+                const u64 m=out.instructions[k]; CHECK(((m>>16)&15)==guard);
+                if(!execute)continue;
+                if((m&0xfff8000000000000ull)==0x5c98000000000000ull)r[m&255]=r[(m>>20)&255];
+                else if((m&0xfc00000000000000ull)==0xc800000000000000ull) {
+                    CHECK(!gathered); gathered=true;
+                    CHECK(((m>>28)&7)==3 && ((m>>31)&15)==mask && ((m>>56)&3)==component);
+                    CHECK(((m>>36)&8191)==8 && ((m>>20)&255)==255);
+                    CHECK(r[250]==1020 && r[251]==1021 && r[252]==1040);
+                    for(u32 n=0;n<count;n++)r[250+n]=2000+n;
+                } else CHECK(false);
+            }
+            CHECK(gathered==execute);
+            for(u32 n=0;n<count;n++) {
+                const u32 target=n<2?dst+n:second+n-2;
+                CHECK(r[target]==(execute?2000+n:1000+target));
+            }
+        }
+        auto bad=i; bits(bad,78,1,1); CHECK(!lower(bad));
+        bad=i; bits(bad,79,1,1); CHECK(!lower(bad));
+        bad=i; bits(bad,76,2,1); CHECK(!lower(bad));
+    }
+}
 int main() {
-    txq(); i2f(); texture_half_order(); extended_compare(); extended_accumulator(); bindless_textures(); wide_immediate_multiply(); windows();
+    txq(); i2f(); texture_half_order(); extended_compare(); extended_accumulator(); bindless_textures(); wide_immediate_multiply(); array_gather(); windows();
     std::printf("render regressions: %u checks, %u failures\n", checks, failures);
     return failures?1:0;
 }
