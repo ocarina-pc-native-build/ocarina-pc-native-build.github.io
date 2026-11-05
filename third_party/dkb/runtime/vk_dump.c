@@ -828,6 +828,40 @@ out:
     plat_mutex_unlock(&rec_lock);
 }
 
+// Observe rejected geometry at its actual targets. Never resolve textures here:
+// doing so would upload resources for a draw that the normal replay cannot issue.
+void vk_dump_blocked_draw(VkExec *ex, int prim, int32_t count, unsigned missing_stages) {
+    plat_mutex_lock(&rec_lock);
+    if (!active()) goto out;
+    fprintf(passes_f, "blocked draw before next pass %04d: prog %llu prim %d count %d missing NVN stages %#x "
+            "frame %llu; pending render draws %d\n",seq,(unsigned long long)(ex->prog?ex->prog->serial:0),
+            prim,count,missing_stages,(unsigned long long)frame_now(),pass_draws);
+    for (unsigned k=0;k<9;k++) {
+        const VkExecTarget *t=k==8?&ex->depth:&ex->color[k];
+        if (!t->tex) continue;
+        fprintf(passes_f,"    target %s%u nvn %#x vk %u %ux%u layer %u+%u addr %#llx\n",
+                k==8?"depth":"color",k==8?0:k,t->nvn_format,(unsigned)t->format,t->width,t->height,
+                t->base_layer,t->layers,(unsigned long long)(uintptr_t)t->tex->mem);
+    }
+    for (uint32_t k=0;ex->prog&&k<ex->prog->nstage&&k<6;k++) {
+        const uint8_t *ctl=ex->prog->sd[k].control;
+        const uint8_t *code=(const uint8_t *)(uintptr_t)ex->prog->sd[k].data;
+        if (!ctl||!code) continue;
+        int native=gfx_shader_is_nvn2(ctl);
+        uint64_t origin=native?gfx_shader_nvn2_hash(ctl,code):nvn2_origin(code);
+        fprintf(passes_f,"    native shader %016llx lowering %s\n",(unsigned long long)origin,
+                native?"failed":"completed or legacy");
+    }
+    for (unsigned st=0;st<5;st++) for (unsigned k=0;k<128;k++) {
+        uint64_t h=handle_of(ex,st,k,0);
+        if (h) fprintf(passes_f,"    stage %u tex slot %u handle %#llx texture %u sampler %u\n",
+                       st,k,(unsigned long long)h,NVN_HANDLE_TEX(h),NVN_HANDLE_SAMP(h));
+    }
+    fflush(passes_f);
+out:
+    plat_mutex_unlock(&rec_lock);
+}
+
 void vk_dump_dispatch(VkExec *ex, const GfxShader *cs, VkPipeline p, const VkPipeInfo *info, const p_dispatch *d) {
     (void)p;
     plat_mutex_lock(&rec_lock);

@@ -146,6 +146,12 @@ explicit NaN exclusion is original MIT code. Eglantine's
 consulted for the distinction between NE and NEU; no GPL code was copied into
 the MIT translator or runtime probe.
 
+Masked TXD (`0xb6c`) channel selection and split-result moves are selectively
+adapted from Eglantine `lower_to_maxwell.h` at
+`23f383cab532bf3834ea55f3488b48841f3c727b` (GPL-3.0-or-later, original header
+retained). Allowing an odd single high destination for three selected channels
+and the independently authored regression fixtures are local changes.
+
 The Windows OoT integration adapts image-copy pitch recording and 64-bit address
 wait comparison from nxnative (`dm/gfx/nvn/hle_nvn.c`, `dm/gfx/nvn/nvn_obj.h`, `dm/host/hle_thread.c`),
 revision `84dea69835414b18a4351cd45054bb611e0e3185`, MIT, Copyright (c) 2026 seedds
