@@ -97,6 +97,7 @@ this New Game path are not interchangeable with the original 600-frame or
 - Its 66 SPIR-V modules pass spirv-val --target-env vulkan1.3.
 - 1,206 cached game modules pass the same validator at the 12100-frame checkpoint.
 - After the longer run, 1,750 collected game-cache modules pass it.
+- After the final Options regression, all 1,765 collected game-cache modules pass it.
 - Translator compute-table probe: 13 checks.
 - Descriptor pool cache seam: 60 checks at each of O0 and O2.
 - Geometry pipeline seam: 6,289 checks, CPU spies only.
