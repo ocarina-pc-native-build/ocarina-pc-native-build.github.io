@@ -423,8 +423,23 @@ static void high_address_subtract() {
             }
     }
 }
+static void surface_reduction() {
+    for(u32 operation:{0u,6u}) {
+    auto i=op(0x59f); bits(i,24,8,4); bits(i,32,8,8); bits(i,40,14,4);
+    bits(i,61,3,3); i.words[2]=0x0010e000|(operation<<23);
+    auto out=lower(i); CHECK(bool(out));
+    if(out) {
+        const u64 m=out.instructions[0];
+        CHECK((m&0xfff8000000000000ull)==0xeb58000000000000ull);
+        CHECK((m&255)==8 && ((m>>8)&255)==4);
+        CHECK(((m>>20)&15)==0 && ((m>>24)&7)==operation); // U32 ADD/OR
+        CHECK(((m>>33)&7)==3 && ((m>>36)&0x1fff)==4 && ((m>>51)&1));
+    }
+    bits(i,73,1,1); CHECK(!lower(i)); // other element/reduction modes are not this operation
+    }
+}
 int main() {
-    txq(); i2f(); texture_half_order(); extended_compare(); extended_accumulator(); bindless_textures(); wide_immediate_multiply(); array_gather(); high_native_registers(); uniform_shift_registers(); clamped_immediate_funnel(); high_address_subtract(); windows();
+    txq(); i2f(); texture_half_order(); extended_compare(); extended_accumulator(); bindless_textures(); wide_immediate_multiply(); array_gather(); high_native_registers(); uniform_shift_registers(); clamped_immediate_funnel(); high_address_subtract(); surface_reduction(); windows();
     std::printf("render regressions: %u checks, %u failures\n", checks, failures);
     return failures?1:0;
 }

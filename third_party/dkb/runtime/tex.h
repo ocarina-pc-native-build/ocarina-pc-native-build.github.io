@@ -66,3 +66,5 @@ typedef struct TexVkFormat {
 int tex_vk_format(int nvn_format, TexVkFormat *out);
 // 1 when vk_ctx()->phys reports every bit of f->need for f->vk in optimal tiling. Needs vk_init().
 int tex_vk_format_supported(const TexVkFormat *f);
+// Core uncompressed color format compatibility classes; depth/stencil and compressed formats are excluded.
+int tex_vk_color_view_compatible(VkFormat image, VkFormat view);

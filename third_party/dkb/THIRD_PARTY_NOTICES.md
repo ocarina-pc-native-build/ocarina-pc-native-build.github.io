@@ -127,6 +127,10 @@ fixtures are authored independently. Their PTP texel selection follows the
 Khronos Vulkan texture-gather rules for `ConstOffsets`:
 https://docs.vulkan.org/spec/latest/chapters/textures.html#textures-gather
 
+The direct U32 `SURED.ADD` lowering (`0x59f`) is selectively copied from the same
+Eglantine file at `23f383cab532bf3834ea55f3488b48841f3c727b`, retaining the GPL
+header. The contended image-atomic GPU probe is original.
+
 The Windows OoT integration adapts image-copy pitch recording and 64-bit address
 wait comparison from nxnative (`dm/gfx/nvn/hle_nvn.c`, `dm/gfx/nvn/nvn_obj.h`, `dm/host/hle_thread.c`),
 revision `84dea69835414b18a4351cd45054bb611e0e3185`, MIT, Copyright (c) 2026 seedds
