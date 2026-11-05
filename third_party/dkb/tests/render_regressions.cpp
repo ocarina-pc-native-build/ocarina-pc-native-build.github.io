@@ -78,6 +78,44 @@ static void texture_half_order() {
     }
     CHECK(merges==2);
 }
+template<class T> static bool compare(T a,T b,unsigned relation) {
+    switch (relation) {
+    case 1:return a<b; case 2:return a==b; case 3:return a<=b;
+    case 4:return a>b; case 5:return a!=b; case 6:return a>=b;
+    default:return false;
+    }
+}
+static void extended_compare() {
+    const u32 highs[]={0,1,0x7fffffff,0x80000000,0xffffffff}, lows[]={0,1,0xffffffff};
+    for (u32 sign=0;sign<2;sign++) for (u32 relation=1;relation<=6;relation++)
+    for (u32 invert=0;invert<2;invert++) for (u32 lowp=0;lowp<2;lowp++) {
+        auto i=op(0x20c); bits(i,24,8,4); bits(i,32,8,6);
+        bits(i,68,3,lowp); bits(i,71,1,invert); bits(i,72,1,1); bits(i,73,1,sign);
+        bits(i,76,3,relation); bits(i,81,3,0); bits(i,84,3,7); bits(i,87,4,7);
+        auto r=lower(i); CHECK(bool(r)); if (!r) continue;
+        unsigned count=(relation==2 || relation==5)?1:2;
+        for (u32 ah:highs) for (u32 bh:highs) for (u32 al:lows) for (u32 bl:lows) {
+            bool p[8]={}; p[7]=true; p[lowp]=compare(al,bl,relation)^bool(invert);
+            for (unsigned n=0;n<count;n++) {
+                u64 m=r.instructions[n];
+                CHECK(((m>>8)&255)==4 && ((m>>20)&255)==6);
+                bool v=(m>>48)&1 ? compare(std::bit_cast<int32_t>(ah),std::bit_cast<int32_t>(bh),(m>>49)&7)
+                                     :compare(ah,bh,(m>>49)&7);
+                bool input=p[(m>>39)&7]^bool((m>>42)&1);
+                unsigned combine=(m>>45)&3;
+                CHECK(combine<2);
+                p[(m>>3)&7]=combine ? v||input : v&&input;
+            }
+            u64 a=(u64{ah}<<32)|al,b=(u64{bh}<<32)|bl;
+            bool expected=sign ? compare(std::bit_cast<int64_t>(a),std::bit_cast<int64_t>(b),relation)
+                               :compare(a,b,relation);
+            CHECK(p[0]==expected);
+        }
+        auto rejected=i; bits(rejected,84,3,2); CHECK(!lower(rejected));
+        rejected=i; bits(rejected,74,2,1); CHECK(!lower(rejected));
+        rejected=i; bits(rejected,12,4,0); CHECK(!lower(rejected));
+    }
+}
 static void windows() {
     uint64_t lo=0,hi=0; const uint64_t base=0x100000000, end=base+0x98010000, cap=0x80000000;
     CHECK(vk_import_window(base,end,base+0x7ffff000,0x20000,0x1000,cap,&lo,&hi));
@@ -92,7 +130,7 @@ static void windows() {
     CHECK(!vk_import_window(base,end,base,1,0x1000,0xfff,&lo,&hi));
 }
 int main() {
-    txq(); i2f(); texture_half_order(); windows();
+    txq(); i2f(); texture_half_order(); extended_compare(); windows();
     std::printf("render regressions: %u checks, %u failures\n", checks, failures);
     return failures?1:0;
 }

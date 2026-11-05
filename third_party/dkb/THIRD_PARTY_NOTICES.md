@@ -108,6 +108,13 @@ folder's `licenses/` and in each component's own folder.
 | MacNativeGames shader variant list | as in the installer release row above | MIT | `data/shader_list.tsv` |
 # OoT integration additions
 
+The gameplay continuation also backports the `ISETP.EX` extended integer compare
+block from Eglantine `src/shader_recompiler/frontend/ampere/lower_to_maxwell.h`
+at `23f383cab532bf3834ea55f3488b48841f3c727b` (GPL-3.0-or-later, Copyright 2026
+Eden Emulator Project), retaining its original file header. Decoder flush
+ownership was compared with `src/core/hle/service/nx2_gsv.h`,
+`INx2VideoSession::Flush`, at that revision; that host C correction is original.
+
 The Windows OoT integration adapts image-copy pitch recording and 64-bit address
 wait comparison from nxnative (`dm/gfx/nvn/hle_nvn.c`, `dm/gfx/nvn/nvn_obj.h`, `dm/host/hle_thread.c`),
 revision `84dea69835414b18a4351cd45054bb611e0e3185`, MIT, Copyright (c) 2026 seedds
