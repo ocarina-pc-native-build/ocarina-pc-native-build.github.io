@@ -543,6 +543,7 @@ int main(int argc, char **argv) {
     if (!strcmp(mode, "--probe-ipc-lifetime")) return probe_ipc_lifetime();
     if (!strcmp(mode, "--probe-audio-device")) return probe_audio_device();
     if (!strcmp(mode, "--probe-system-core")) return probe_system_core();
+    if (!strcmp(mode, "--probe-prepo-async")) return probe_prepo_async();
     if (!strcmp(mode, "--probe-nifm")) return probe_nifm();
     if (!strcmp(mode, "--probe-bsd")) return probe_bsd();
     if (!strcmp(mode, "--probe-ipc-domains")) return probe_ipc_domains();

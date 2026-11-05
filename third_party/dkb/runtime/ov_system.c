@@ -259,10 +259,20 @@ static void ov_aruid(Cpu *c) { ret_x(c, 1); }
 
 // nn::prepo: play reports stay local (no Nintendo servers)
 static volatile int64_t reports;
-static void ov_report_save(Cpu *c) {   // Result PlayReport::Save() and Save(const account::Uid &)
+static void ov_report_save(Cpu *c) {   // Result PlayReport::Save; offline telemetry sink
     int64_t n = plat_inc64(&reports);
-    if (n % 100 == 1) rt_log("prepo: play report kept local (not sent), %lld so far", (long long)n);
+    if (n % 100 == 1) rt_log("prepo: offline report accepted (contents not stored or transmitted), %lld so far", (long long)n);
     ret_x(c, 0);
+}
+static void ov_report_send(Cpu *c) {
+    // Send returns a nontrivial AsyncContext through AAPCS64's indirect-result
+    // register x8, not a Result in w0. A null interface plus ResultSuccess is
+    // the SDK's completed context: GetCompletionEvent creates a signalled local
+    // event, GetResult returns success, and destruction needs no service handle.
+    uint8_t *out=(uint8_t *)(uintptr_t)c->x[8];
+    need(out!=NULL,"prepo Send: missing indirect result storage");
+    memset(out,0,12); // interface pointer + result; leave ABI padding untouched
+    ov_report_save(c);
 }
 static void ov_result_ok(Cpu *c) { ret_x(c, 0); }   // RequestImmediateTransmission, AddInternetConnectionStatus
 
@@ -849,6 +859,9 @@ HOST_OVERRIDE("_ZN2nn2oe25TryPopNotificationMessageEPj", ov_try_pop);
 HOST_OVERRIDE("_ZN2nn2oe22PopNotificationMessageEv", ov_pop);
 HOST_OVERRIDE("_ZN2nn5prepo10PlayReport4SaveEv", ov_report_save);
 HOST_OVERRIDE("_ZN2nn5prepo10PlayReport4SaveERKNS_7account3UidE", ov_report_save);
+// The newer SDK exposes Send separately from Save. The application calls it
+// when the introductory movie ends; use the same offline telemetry contract.
+HOST_OVERRIDE("_ZN2nn5prepo10PlayReport4SendERKNS_7account3UidE", ov_report_send);
 HOST_OVERRIDE("_ZN2nn5prepo28RequestImmediateTransmissionEv", ov_result_ok);
 HOST_OVERRIDE("_ZN2nn5prepo27AddInternetConnectionStatusEPNS0_10PlayReportEPKcS4_S4_", ov_result_ok);
 HOST_OVERRIDE("_ZN2nn3nfp10InitializeEv", ov_nfp_initialize);
@@ -915,7 +928,7 @@ HOST_OVERRIDE("_ZN2nn2pl17GetSharedFontSizeENS0_14SharedFontTypeE", ov_font_size
 
 // Focused regression probe independent of the original TotK symbol/constructor
 // fixtures. Calls pass through the same dispatch bridge as imported SDK functions.
-static uint64_t system_probe_fn[7];
+static uint64_t system_probe_fn[10];
 static int system_probe_failures;
 static void system_probe_main(Cpu *c) {
     int64_t out[3]={-1,-1,0x12345678};
@@ -944,20 +957,75 @@ static void system_probe_main(Cpu *c) {
     rt_call(c,system_probe_fn[1],0);
     system_probe_failures += rt_call(c,system_probe_fn[2],1,ptr)!=TIME_R_INVALID;
     for (unsigned j=5;j<7;j++) system_probe_failures+=rt_call(c,system_probe_fn[j],1,ptr)!=TIME_R_INVALID;
+    uint64_t report[4]={0x1234,0x5678,0x9abc,0xdef0}, uid[2]={1,2};
+    int64_t before_reports=plat_cas64(&reports,0,0);
+    for (unsigned j=7;j<9;j++)
+        system_probe_failures+=rt_call(c,system_probe_fn[j],2,
+            (uint64_t)(uintptr_t)report,(uint64_t)(uintptr_t)uid)!=0;
+    uint64_t context[4]={0x11223344,UINT64_MAX,UINT64_MAX,0x55667788};
+    c->x[8]=(uint64_t)(uintptr_t)&context[1];
+    rt_call(c,system_probe_fn[9],2,(uint64_t)(uintptr_t)report,(uint64_t)(uintptr_t)uid);
+    system_probe_failures+=context[0]!=0x11223344 || context[1]!=0 ||
+        context[2]!=0xffffffff00000000ull || context[3]!=0x55667788;
+    system_probe_failures+=plat_cas64(&reports,0,0)!=before_reports+3 ||
+        report[0]!=0x1234 || report[1]!=0x5678 || report[2]!=0x9abc || report[3]!=0xdef0 ||
+        uid[0]!=1 || uid[1]!=2;
 }
 int probe_system_core(void) {
     const char *names[]={"_ZN2nn4time10InitializeEv","_ZN2nn4time8FinalizeEv",
         "_ZN2nn4time37GetStandardSteadyClockCurrentTimespecEP8timespec",
         "_ZN2nn3aoc10InitializeEv","_ZN2nn3aoc17CountAddOnContentEv",
         "_ZN2nn4time41GetStandardUserSystemClockCurrentTimespecEP8timespec",
-        "_ZN2nn4time43GetAdjustableUserSystemClockCurrentTimespecEP8timespec"};
-    for (unsigned i=0;i<7;i++) {
+        "_ZN2nn4time43GetAdjustableUserSystemClockCurrentTimespecEP8timespec",
+        "_ZN2nn5prepo10PlayReport4SaveEv",
+        "_ZN2nn5prepo10PlayReport4SaveERKNS_7account3UidE",
+        "_ZN2nn5prepo10PlayReport4SendERKNS_7account3UidE"};
+    for (unsigned i=0;i<10;i++) {
         GuestFn fn=hostfn_override(names[i]);
         need(fn!=NULL,"probe-system-core: missing override");
         system_probe_fn[i]=hostfn_register(names[i],fn);
     }
     kern_run_on_guest_main(system_probe_main);
-    printf("probe-system-core: %s (1000 monotonic and both real-time timespecs, bounds, initialization, empty add-on catalog)\n",
+    printf("probe-system-core: %s (1000 monotonic and both real-time timespecs, bounds, initialization, empty add-on catalog, offline Save and Send reports)\n",
            system_probe_failures ? "FAILED" : "passed");
     return !!system_probe_failures;
+}
+
+// Exercise the actual linked SDK consumer of Send's return value. The core
+// probe alone cannot detect an invalid AsyncContext/event lifecycle.
+static uint64_t prepo_probe_fn[6];
+static int prepo_probe_failures;
+static void prepo_probe_main(Cpu *c) {
+    uint64_t report[32]={0},uid[2]={1,2},context[4],event[8];
+    for (unsigned i=0;i<16;i++) {
+        memset(context,0xa5,sizeof context); memset(event,0,sizeof event);
+        c->x[8]=(uint64_t)(uintptr_t)&context[1];
+        rt_call(c,prepo_probe_fn[0],2,(uint64_t)(uintptr_t)report,(uint64_t)(uintptr_t)uid);
+        prepo_probe_failures+=context[0]!=0xa5a5a5a5a5a5a5a5ull || context[1] ||
+            context[2]!=0xa5a5a5a500000000ull || context[3]!=0xa5a5a5a5a5a5a5a5ull;
+        rt_call(c,prepo_probe_fn[1],2,(uint64_t)(uintptr_t)&context[1],(uint64_t)(uintptr_t)event);
+        // Completion must already be signalled, with manual-clear semantics.
+        for (int j=0;j<2;j++) prepo_probe_failures+=
+            !(uint8_t)rt_call(c,prepo_probe_fn[2],1,(uint64_t)(uintptr_t)event);
+        prepo_probe_failures+=rt_call(c,prepo_probe_fn[3],1,(uint64_t)(uintptr_t)&context[1])!=0;
+        rt_call(c,prepo_probe_fn[4],1,(uint64_t)(uintptr_t)event);
+        rt_call(c,prepo_probe_fn[5],1,(uint64_t)(uintptr_t)&context[1]);
+    }
+}
+int probe_prepo_async(void) {
+    ldr_load(rt_config()->exefs);
+    const char *names[]={"_ZN2nn5prepo10PlayReport4SendERKNS_7account3UidE",
+        "_ZN2nn5prepo12AsyncContext18GetCompletionEventEPNS_2os11SystemEventE",
+        "_ZN2nn2os18TryWaitSystemEventEPNS0_15SystemEventTypeE",
+        "_ZN2nn5prepo12AsyncContext9GetResultEv",
+        "_ZN2nn2os18DestroySystemEventEPNS0_15SystemEventTypeE",
+        "_ZN2nn5prepo12AsyncContextD1Ev"};
+    for (unsigned i=0;i<6;i++) {
+        prepo_probe_fn[i]=i ? ldr_symbol(names[i]) : ldr_plt_stub("main",names[i]);
+        need(prepo_probe_fn[i]!=0,"probe-prepo-async: missing linked SDK function");
+    }
+    kern_run_on_guest_main(prepo_probe_main);
+    printf("probe-prepo-async: %s (16 indirect returns, SDK completion events, waits, results and destruction)\n",
+           prepo_probe_failures ? "FAILED":"passed");
+    return !!prepo_probe_failures;
 }
