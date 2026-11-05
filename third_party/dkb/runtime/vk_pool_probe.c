@@ -40,6 +40,8 @@ OBJECT(NVNtexture, srgb_texture);
 OBJECT(NVNtexture, typed_texture);
 OBJECT(NVNtexture, array_texture);
 OBJECT(NVNtexture, unused_depth_texture);
+OBJECT(NVNtexture, alias_rgb9_texture);
+OBJECT(NVNtexture, alias_r11_texture);
 OBJECT(NVNsamplerBuilder, sampler_builder);
 OBJECT(NVNsampler, repeat_sampler);
 OBJECT(NVNsampler, clamp_sampler);
@@ -239,13 +241,22 @@ static int run_postprocess_fetches(uint8_t *memory,void *command_control,uint64_
     ctl[0x58/4]=ctl[0x5c/4]=ctl[0x60/4]=1; ((uint8_t *)ctl)[0xb2]=1; ((uint8_t *)ctl)[0xb3]=1;
     const NVNtexturePool *tp[3]={&texture_a,&texture_a,&texture_a};
     const NVNsamplerPool *sp[3]={&sampler_repeat,&sampler_repeat,&sampler_repeat};
-    for(unsigned variant=0;variant<5;variant++) {
+    for(unsigned variant=0;variant<7;variant++) {
         // PTP applies each offset to i0,j0, not to the four ordinary gather neighbors.
         // Four zero offsets therefore fetch the same red texel four times.
         uint32_t expected[3][4]={{0x3c003c00,0x3c003c00,0xabcdef01,0xabcdef02}};
         if(variant==1) {
             native[2][1]=0x00010001; native[3][1]=0x003f0000;
             expected[0][0]=0; expected[0][1]=0x00003c00; // green, green, red, green
+        } else if(variant>=5) {
+            const uint32_t amounts[]={31,32,33,0};
+            for(unsigned k=0;k<4;k++) {
+                uint32_t move[4]={0x00007802,amounts[k],0xf00,0};
+                uint32_t funnel[4]={0xff007419|((8+k)<<16),0x80000001,
+                                    variant==5?0x00010600:0x00010e00,0};
+                memcpy(native[2*k],move,sizeof move); memcpy(native[2*k+1],funnel,sizeof funnel);
+                expected[0][k]=variant==5 && amounts[k]>=32?0:UINT32_C(0x80000001)<<(amounts[k]&31);
+            }
         } else if(variant==4) {
             const uint32_t shifts[][4]={
                 {0x00017882,0x81234567,0,0}, // UMOV UR1
@@ -269,10 +280,42 @@ static int run_postprocess_fetches(uint8_t *memory,void *command_control,uint64_
         NVNshaderData shader={U(native),(const uint8_t *)ctl};
         if(!(uint8_t)CALL(nvnProgramSetShaders,U(&program),1,U(&shader)))return 0;
         const char *names[]={"half gather zero offsets","half gather signed per-texel offsets",
-                             "texel fetch positive offset","texel fetch negative offset","uniform shifts through UR17 and UR22"};
+                             "texel fetch positive offset","texel fetch negative offset","uniform shifts through UR17 and UR22",
+                             "clamped immediate funnel shifts","wrapped immediate funnel shifts"};
         if(!run_case(names[variant],memory,command_control,handle,tp,sp,expected,1,stride))return 0;
     }
     return 1;
+}
+
+static int run_descriptor_format_alias(uint8_t *memory,void *command_control,uint64_t handle,size_t stride,int ti) {
+    int live=0,ok=0;
+    CALL(nvnTextureBuilderSetDefaults,U(&texture_builder));
+    CALL(nvnTextureBuilderSetDevice,U(&texture_builder),U(&device));
+    CALL(nvnTextureBuilderSetTarget,U(&texture_builder),NVN_TEXTURE_TARGET_2D);
+    CALL(nvnTextureBuilderSetSize2D,U(&texture_builder),2,1);
+    CALL(nvnTextureBuilderSetLevels,U(&texture_builder),1);
+    CALL(nvnTextureBuilderSetStorage,U(&texture_builder),U(&memory_pool),0xf0000);
+    CALL(nvnTextureBuilderSetFormat,U(&texture_builder),NVN_FORMAT_R11G11B10F);
+    if(!(uint8_t)CALL(nvnTextureInitialize,U(&alias_r11_texture),U(&texture_builder)))goto done;
+    live=1;
+    // RGB9E5: exponent 16, mantissas 256/128/64 -> exactly 1/.5/.25.
+    // Store these raw bits in the backing image, as a shader writing an R32UI view would.
+    const uint32_t pixels[2]={0x81010100,0x81010100};
+    NVNcopyRegion region={0,0,0,2,1,1};
+    CALL(nvnTextureWriteTexels,U(&alias_r11_texture),0,U(&region),U(pixels));
+    CALL(nvnTextureBuilderSetFormat,U(&texture_builder),NVN_FORMAT_RGB9E5F);
+    if(!(uint8_t)CALL(nvnTextureInitialize,U(&alias_rgb9_texture),U(&texture_builder)))goto done;
+    CALL(nvnTexturePoolRegisterTexture,U(&texture_a),ti,U(&alias_rgb9_texture),0);
+    CALL(nvnTextureFinalize,U(&alias_rgb9_texture)); // descriptor survives its texture wrapper
+    NVNshaderData shader={U(pool_probe_code),control};
+    if(!(uint8_t)CALL(nvnProgramSetShaders,U(&program),1,U(&shader)))goto done;
+    const NVNtexturePool *tp[3]={&texture_a,&texture_a,&texture_a};
+    const NVNsamplerPool *sp[3]={&sampler_repeat,&sampler_repeat,&sampler_repeat};
+    const uint32_t expected[3][4]={{0x3f800000,0x3f000000,0x3e800000,0x3f800000}};
+    ok=run_case("RGB9E5 descriptor over live R11 backing",memory,command_control,handle,tp,sp,expected,1,stride);
+done:
+    if(live) CALL(nvnTextureFinalize,U(&alias_r11_texture));
+    return ok;
 }
 
 static int run_native_wide(uint8_t *memory,void *command_control,uint64_t handle,size_t stride) {
@@ -494,6 +537,7 @@ int probe_vkpool(void) {
     REQUIRE(make_array_texture(),"array texture"); textures_live=6;
     CALL(nvnTexturePoolRegisterTexture,U(&texture_a),ti,U(&array_texture),0);
     REQUIRE(run_array_gather(memory,command_control,handle,stride),"array gather layer and texel ordering");
+    REQUIRE(run_descriptor_format_alias(memory,command_control,handle,stride,ti),"descriptor format survives backing replacement");
     CALL(nvnTextureBuilderSetDefaults,U(&texture_builder));
     CALL(nvnTextureBuilderSetDevice,U(&texture_builder),U(&device));
     CALL(nvnTextureBuilderSetTarget,U(&texture_builder),NVN_TEXTURE_TARGET_2D);

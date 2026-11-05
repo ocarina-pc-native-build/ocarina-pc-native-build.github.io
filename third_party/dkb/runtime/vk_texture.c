@@ -1094,6 +1094,24 @@ static Tex *slot_resolve(TexSlot *s, view_t *view, int *has_view) {
         if (!e) e = any ? any : own;
     }
     if (!e) e = s->t.mem ? entry_of(&s->t) : NULL;
+    // A registered descriptor can outlive its texture wrapper and follow a live image
+    // at the same storage address. The image supplies the bytes, but the descriptor
+    // still decides their format (for example RGB9E5 in R11G11B10 backing).
+    if (e && e->key.d.format != s->t.d.format && !(s->has_view && s->v.set_format)) {
+        view->format = s->t.d.format;
+        view->set_format = 1;
+        *has_view = 1;
+        static uint32_t seen[16], count;
+        uint32_t pair = ((uint32_t)e->key.d.format << 16) | (uint32_t)s->t.d.format;
+        unsigned i = 0;
+        while (i < count && seen[i] != pair) i++;
+        if (i == count && count < 16) {
+            seen[count++] = pair;
+            rt_log("vk: retained descriptor format %#x over backing format %#x at %#llx (%ux%u)",
+                   s->t.d.format, e->key.d.format, (unsigned long long)e->key.addr,
+                   s->t.d.width, s->t.d.height);
+        }
+    }
     // A followed texture is another descriptor at the same storage: its image holds the content, but sampling takes the
     // slot descriptor's swizzle. The UI renders text into RGBA8 and samples it through a (A,A,A,A) descriptor; with the
     // render target's RGBA swizzle the text blur saw R = 1 everywhere and drew solid boxes behind tips and labels.
@@ -1104,7 +1122,6 @@ static Tex *slot_resolve(TexSlot *s, view_t *view, int *has_view) {
             sw[0] = NVN_TEXTURE_SWIZZLE_R, sw[1] = NVN_TEXTURE_SWIZZLE_G, sw[2] = NVN_TEXTURE_SWIZZLE_B,
             sw[3] = NVN_TEXTURE_SWIZZLE_A;
         if (memcmp(sw, e->pub.swz, 4)) {
-            if (!s->has_view) memset(view, 0, sizeof *view);
             memcpy(view->swz, sw, 4);
             view->set_swizzle = 1;
             *has_view = 1;
