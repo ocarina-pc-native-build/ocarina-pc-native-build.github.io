@@ -302,7 +302,8 @@ static void completion_main(void *arg) {
             VkResult r = vkWaitSemaphores(c->device, &wi, 100000000ull);   // 100 ms: stop is checked between waits
             if (r != VK_SUCCESS && r != VK_TIMEOUT) {
                 vk_device_fault_report(r);
-                rt_fatal("vk: vkWaitSemaphores failed (%d; device lost?)", (int)r);
+                rt_fatal("vk: vkWaitSemaphores failed (VkResult %d; target %llu, last completed %llu)",
+                         (int)r, (unsigned long long)want, (unsigned long long)reached);
             }
             vkGetSemaphoreCounterValue(c->device, c->timeline, &reached);
             plat_mutex_lock(&st_lock);
