@@ -1,0 +1,30 @@
+--- a/recomp/simd_c.py
++++ b/recomp/simd_c.py
+@@ -128,6 +128,27 @@
+     # ------------------------------------------------------------ top level
+ 
+     def dp(self, w, pc):
++        # OoT2026 adaptation: AdvSIMD UDOT/SDOT (vector, FEAT_DotProd).
++        # Snapshot operands before accumulating so Rd may alias Rn or Rm.
++        # Each group of four byte products accumulates modulo 2^32; Q=0
++        # clears the upper 64 bits. Indexed dot-product forms are not matched.
++        if (w & 0x9FE0FC00) == 0x0E809400:
++            Q, U = bits(w, 30, 1), bits(w, 29, 1)
++            d, n, m = bits(w, 0, 5), bits(w, 5, 5), bits(w, 16, 5)
++            T = 'uint8_t' if U else 'int8_t'
++            return (f'{{ {T} a[16], b[16]; uint32_t r[4] = {{0}}; '
++                    f'memcpy(a, &c->v[{n}], 16); memcpy(b, &c->v[{m}], 16); '
++                    f'memcpy(r, &c->v[{d}], {16 if Q else 8}); '
++                    f'for (unsigned i=0; i<{4 if Q else 2}; ++i) '
++                    'for (unsigned j=0; j<4; ++j) '
++                    'r[i] += (uint32_t)((int32_t)a[4*i+j] * (int32_t)b[4*i+j]); '
++                    f'memcpy(&c->v[{d}], r, 16); }}')
++        # FNEG .4H/.8H is a sign-bit operation, including NaNs and signed zero.
++        if (w & 0xBFFFFC00) == 0x2EF8F800:
++            Q, d, n = bits(w, 30, 1), bits(w, 0, 5), bits(w, 5, 5)
++            return (f'{{ uint16_t a[8], r[8] = {{0}}; memcpy(a, &c->v[{n}], 16); '
++                    f'for (unsigned i=0; i<{8 if Q else 4}; ++i) r[i]=a[i]^0x8000u; '
++                    f'memcpy(&c->v[{d}], r, 16); }}')
+         op0, op1, op2, op3 = bits(w, 28, 4), bits(w, 23, 2), bits(w, 19, 4), bits(w, 10, 9)
+         if op0 == 0b0100 and not (op1 & 2) and (op2 & 7) == 5 and (op3 & 0b110000011) == 0b10:
+             return self.crypto_aes(w)

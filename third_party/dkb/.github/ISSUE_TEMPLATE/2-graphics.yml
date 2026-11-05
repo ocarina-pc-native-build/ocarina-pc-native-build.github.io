@@ -1,0 +1,44 @@
+name: Graphics glitch
+description: Missing or broken objects, wrong textures or colours, flicker, black or frozen picture.
+labels: [bug, graphics]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Known glitches are tracked in the pinned [roadmap](https://github.com/Lucas-blip-png/dkb-pc-recomp/issues/10) (for example the empty colour grading LUT and the checkerboard textures).
+
+        Do not attach or link game files, keys, firmware, builds, shader caches or screenshots of the game. Describe what you see instead. Issues that break this are closed.
+  - type: checkboxes
+    id: duplicates
+    attributes:
+      label: Existing issues
+      options:
+        - label: I read the roadmap and [searched open and closed issues](https://github.com/Lucas-blip-png/dkb-pc-recomp/issues?q=is%3Aissue) for this glitch.
+          required: true
+  - type: input
+    id: version
+    attributes:
+      label: Commit
+      description: The commit you built, from `git rev-parse --short HEAD`.
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: GPU, driver and Windows version
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: What looks wrong, where and when
+      description: Which scene, what should be there, what is there instead. Does it show all the time or after some time?
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: Attach logs\totk.log from the folder of dkb.exe. Lines with "validation", "shader" or "nvn2" are the interesting ones.
+    validations:
+      required: true

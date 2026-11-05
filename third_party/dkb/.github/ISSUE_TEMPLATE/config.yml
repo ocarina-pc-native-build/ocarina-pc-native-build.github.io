@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or help with building
+    url: https://github.com/Lucas-blip-png/dkb-pc-recomp/discussions
+    about: Building, running and how the port works. Ask in Discussions.
+  - name: Roadmap and open tasks
+    url: https://github.com/Lucas-blip-png/dkb-pc-recomp/issues/10
+    about: What is done, what is open, and where a contribution helps most.

@@ -1,0 +1,7 @@
+capstone==5.0.9
+lz4==4.4.5
+numpy==2.4.2
+zstandard==0.25.0
+unicorn==2.1.4
+cmake==4.4.4
+ninja==1.13.2

@@ -1,0 +1,13 @@
+/build/
+/generated/
+/local/
+/toolchain/
+/.venv/
+__pycache__/
+*.pyc
+*.nup
+*.nsp
+*.xci
+*.nca
+*.keys
+config.local.*
