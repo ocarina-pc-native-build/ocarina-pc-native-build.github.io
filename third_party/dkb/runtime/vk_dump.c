@@ -597,6 +597,8 @@ static void describe_bindings(Str *b, const VkExec *ex, const VkPipeInfo *info) 
         }
         if (!r || (bd->kind != GFX_RES_TEX && bd->kind != GFX_RES_IMG)) continue;
         int st = nvn_stage(bd->stage), img = bd->kind == GFX_RES_IMG;
+        sp(b, "    resource binding %u raw-handle %#x cbuf %#x array %u; texture pool %u sampler pool %u\n",
+           bd->binding,r->handle,(unsigned)r->cbuf_slot,bd->count,ex->tex_pool.count,ex->samp_pool.count);
         char dt[24], fn[16];
         if (bd->type == VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER || bd->type == VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER) {
             sp(b, "    %s %s slot %d: buffer texture (zero view bound)\n", stn[st], img ? "img" : "tex", r->slot);
@@ -777,6 +779,37 @@ void vk_dump_pass_end(VkExec *ex) {
     buf_snap(ex, n);
     fflush(passes_f);
     nents = ents_over = pass_draws = 0;
+out:
+    plat_mutex_unlock(&rec_lock);
+}
+
+// Failed dispatches never reach vk_dump_dispatch. Record their position and bound handles without resolving
+// textures: resolution can create or upload an image and would change the failed command's behavior.
+void vk_dump_blocked_dispatch(VkExec *ex, const p_dispatch *d, uint64_t indirect, const char *reason) {
+    plat_mutex_lock(&rec_lock);
+    if (!active()) goto out;
+    fprintf(passes_f, "blocked dispatch before next pass %04d: %dx%dx%d indirect %#llx prog %llu caller %#llx "
+            "frame %llu reason %s; pending render draws %d\n", seq, d->x, d->y, d->z,
+            (unsigned long long)indirect, (unsigned long long)(ex->prog ? ex->prog->serial : 0),
+            (unsigned long long)d->caller, (unsigned long long)frame_now(), reason, pass_draws);
+    for (uint32_t k = 0; ex->prog && k < ex->prog->nstage && k < 6; k++) {
+        const uint8_t *ctl = ex->prog->sd[k].control;
+        const uint8_t *code = (const uint8_t *)(uintptr_t)ex->prog->sd[k].data;
+        if (!ctl || !code) continue;
+        int native = gfx_shader_is_nvn2(ctl);
+        uint64_t origin = native ? gfx_shader_nvn2_hash(ctl, code) : nvn2_origin(code);
+        fprintf(passes_f, "    native shader %016llx lowering %s\n", (unsigned long long)origin,
+                native ? "failed" : "completed or legacy");
+    }
+    fprintf(passes_f, "    texture pool %u sampler pool %u; registered handles, not resolved images:\n",
+            ex->tex_pool.count, ex->samp_pool.count);
+    for (int img = 0; img < 2; img++)
+        for (int k = 0; k < (img ? 32 : 128); k++) {
+            uint64_t h = handle_of(ex, 5, k, img);
+            if (h) fprintf(passes_f, "    cs %s slot %d handle %#llx texture %u sampler %u\n",
+                           img ? "img" : "tex", k, (unsigned long long)h, NVN_HANDLE_TEX(h), NVN_HANDLE_SAMP(h));
+        }
+    fflush(passes_f);
 out:
     plat_mutex_unlock(&rec_lock);
 }
