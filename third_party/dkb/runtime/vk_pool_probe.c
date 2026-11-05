@@ -153,6 +153,163 @@ void vk_exec_xfer_shutdown(void);
 
 // Native TEX.B and uniform-handle TEX must sample the same authored pattern as
 // the Maxwell control, including a sampler-pool change with an unchanged handle.
+static int run_warp_reductions(uint8_t *memory,void *command_control) {
+    uint32_t native[][4]={
+        {0x00007919,0,0x2100,0}, // R0 = local invocation X
+        {0x00017802,0x80000001,0xf00,0},
+        {0x00027824,0x10000000,0x078e0001,0}, // R2 = lane * 0x10000000 + R1
+        {0x020073c4,0,0x10200,0}, // REDUX to UR0
+        {0x00087c02,0,0x08000f00,0}, // R8 = UR0
+        {0x00097202,2,0xf00,0}, {0x000a7202,0,0xf00,0},
+        {0x000b7802,0xabcdef12,0xf00,0},
+        {0x00047a02,0x400,0xf00,0}, {0x00057a02,0x500,0xf00,0},
+        {0x00047825,16,0x078e0004,0}, // R4:R5 += lane * 16, disjoint stores
+        {0x04007386,8,0x0010ad00,0}, {0x0000794d,0,0x03800000,0}
+    };
+    uint32_t ctl[0xd8/4]={0};
+    ctl[0]=0x98761234; ctl[1]=0xc9; ctl[0x30/4]=sizeof ctl; ctl[0x38/4]=sizeof native;
+    ctl[0x5c/4]=ctl[0x60/4]=1; ((uint8_t *)ctl)[0xb2]=1;
+    const uint32_t modes[]={0xc000,0x10000,0x10200,0x14000,0x14200};
+    const unsigned counts[]={7,17,32};
+    const GfxBackend *backend=&gfx_vulkan_backend;
+    for(unsigned m=0;m<5;m++) for(unsigned n=0;n<3;n++) {
+        unsigned lanes=counts[n]; uint32_t mode=modes[m],operation=mode>>14;
+        int sign=(mode&0x200)!=0;
+        uint32_t want=operation==4?(sign?0x7fffffff:0xffffffff):operation==5&&sign?0x80000000:0;
+        for(unsigned l=0;l<lanes;l++) {
+            uint32_t v=l*UINT32_C(0x10000000)+UINT32_C(0x80000001);
+            if(operation==3)want+=v;
+            else if(operation==4) { if(sign?(int32_t)v<(int32_t)want:v<want)want=v; }
+            else if(sign?(int32_t)v>(int32_t)want:v>want)want=v;
+        }
+        native[3][2]=mode; ctl[0x58/4]=lanes;
+        NVNshaderData shader={U(native),(const uint8_t *)ctl};
+        if(!(uint8_t)CALL(nvnProgramSetShaders,U(&program),1,U(&shader)))return 0;
+        memset(memory+OUTPUT_OFF,0xa5,OUTPUT_BYTES);
+        CALL(nvnMemoryPoolFlushMappedRange,U(&memory_pool),OUTPUT_OFF,OUTPUT_BYTES);
+        CALL(nvnCommandBufferAddControlMemory,U(&command),U(command_control),CONTROL_BYTES);
+        CALL(nvnCommandBufferBeginRecording,U(&command));
+        CALL(nvnCommandBufferBindProgram,U(&command),U(&program),NVN_SHADER_STAGE_COMPUTE_BIT);
+        CALL(nvnCommandBufferBindStorageBuffer,U(&command),NVN_SHADER_STAGE_COMPUTE,0,U(memory+OUTPUT_OFF),lanes*16);
+        CALL(nvnCommandBufferDispatchCompute,U(&command),1,1,1);
+        uint64_t commands=CALL(nvnCommandBufferEndRecording,U(&command));
+        if(!commands)return 0;
+        uint64_t fence=backend->submit(&commands,1,rt_ticks());
+        if(!backend->fence_wait(fence,UINT64_C(10000000000)))return 0;
+        backend->cpu_synced(fence);
+        for(unsigned l=0;l<lanes;l++) {
+            const uint32_t expected[]={want,l*UINT32_C(0x10000000)+UINT32_C(0x80000001),l,0xabcdef12};
+            const uint32_t *got=(const uint32_t *)(memory+OUTPUT_OFF+l*16);
+            for(unsigned k=0;k<4;k++) { checks++; if(got[k]!=expected[k]) {
+                failures++; printf("probe-vkpool: FAIL REDUX mode %#x lanes %u lane %u word %u: %#x expected %#x\n",
+                                  mode,lanes,l,k,got[k],expected[k]);
+            } }
+        }
+        int canary=1; for(unsigned i=lanes*16;i<OUTPUT_BYTES;i++)if(memory[OUTPUT_OFF+i]!=0xa5)canary=0;
+        checks++; if(!canary) { failures++; puts("probe-vkpool: FAIL REDUX output bounds"); }
+    }
+    return 1;
+}
+
+// Concurrent integer atomics through a uniform 64-bit address and byte offset.
+// Check the atomic result and every untouched byte after a fence.
+static int run_uniform_reductions(uint8_t *memory,void *command_control) {
+    uint32_t native[][4]={
+        {0x00007919,0,0x2100,0}, // local X
+        {0x00017802,0x80000001,0xf00,0},
+        {0x00027824,0x10000000,0x078e0001,0},
+        {0x00027ab9,0x400,0xa00,0}, // ULDC.64 UR2,c0[0x10]
+        {0xff00798e,2,0x0c90e302,0}, // RED.MIN.S32 [UR2],R2
+        {0x0000794d,0,0x03800000,0}
+    };
+    uint32_t ctl[0xd8/4]={0};
+    ctl[0]=0x98761234; ctl[1]=0xc9; ctl[0x30/4]=sizeof ctl; ctl[0x38/4]=sizeof native;
+    ctl[0x58/4]=32; ctl[0x5c/4]=ctl[0x60/4]=1; ((uint8_t *)ctl)[0xb2]=1;
+    const GfxBackend *backend=&gfx_vulkan_backend;
+    for(unsigned sign=0;sign<2;sign++) for(unsigned op=0;op<3;op++) for(int offset=4;offset<=20;offset+=16) {
+        uint32_t initial=op==1?(sign?0x7fffffff:0xffffffff):op==2&&sign?0x80000000:0;
+        uint32_t expected=initial;
+        for(unsigned group=0;group<4;group++) for(unsigned l=0;l<32;l++) {
+            uint32_t v=l*UINT32_C(0x10000000)+UINT32_C(0x80000001);
+            if(op==0)expected+=v;
+            else if(op==1) { if(sign?(int32_t)v<(int32_t)expected:v<expected)expected=v; }
+            else if(sign?(int32_t)v>(int32_t)expected:v>expected)expected=v;
+        }
+        native[4][1]=2|((uint32_t)offset&0xffffff)<<8;
+        native[4][2]=0x0c10e102|(sign<<9)|(op<<23);
+        NVNshaderData shader={U(native),(const uint8_t *)ctl};
+        if(!(uint8_t)CALL(nvnProgramSetShaders,U(&program),1,U(&shader)))return 0;
+        memset(memory+OUTPUT_OFF,0xa5,OUTPUT_BYTES);
+        const unsigned target=offset;
+        memcpy(memory+OUTPUT_OFF+target,&initial,4);
+        CALL(nvnMemoryPoolFlushMappedRange,U(&memory_pool),OUTPUT_OFF,OUTPUT_BYTES);
+        CALL(nvnCommandBufferAddControlMemory,U(&command),U(command_control),CONTROL_BYTES);
+        CALL(nvnCommandBufferBeginRecording,U(&command));
+        CALL(nvnCommandBufferBindProgram,U(&command),U(&program),NVN_SHADER_STAGE_COMPUTE_BIT);
+        CALL(nvnCommandBufferBindStorageBuffer,U(&command),NVN_SHADER_STAGE_COMPUTE,0,U(memory+OUTPUT_OFF),32);
+        CALL(nvnCommandBufferDispatchCompute,U(&command),4,1,1);
+        uint64_t commands=CALL(nvnCommandBufferEndRecording,U(&command));
+        if(!commands)return 0;
+        uint64_t fence=backend->submit(&commands,1,rt_ticks());
+        if(!backend->fence_wait(fence,UINT64_C(10000000000)))return 0;
+        backend->cpu_synced(fence);
+        uint32_t actual; memcpy(&actual,memory+OUTPUT_OFF+target,4);
+        checks++; if(actual!=expected) {
+            failures++; printf("probe-vkpool: FAIL uniform RED sign %u op %u offset %d: %#x expected %#x\n",
+                              sign,op,offset,actual,expected);
+        }
+        int canary=1; for(unsigned i=0;i<OUTPUT_BYTES;i++)
+            if((i<target||i>=target+4)&&memory[OUTPUT_OFF+i]!=0xa5)canary=0;
+        checks++; if(!canary) { failures++; puts("probe-vkpool: FAIL uniform RED output bounds"); }
+    }
+    return 1;
+}
+
+static int run_feedback_views(void) {
+    if(vk_ctx()->feedback!=VK_FEEDBACK_LAYOUT) {
+        puts("probe-vkpool: feedback view cases unavailable on this device"); return 1;
+    }
+    const tex_t *textures[]={(const tex_t *)&red_texture,(const tex_t *)&srgb_texture,
+                             (const tex_t *)&unused_depth_texture};
+    const NVNcopyRegion region={0,0,0,2,1,1};
+    const float depth[]={0.25f,0.75f};
+    CALL(nvnTextureWriteTexels,U(&unused_depth_texture),0,U(&region),U(depth));
+    for(unsigned n=0;n<3;n++) {
+        uint8_t before[8],after[8];
+        if(!vk_texture_read_image(textures[n],NULL,&region,before,8,8))return 0;
+        const VkTexImage *img=vk_texture_get(textures[n]);
+        if(!img||!img->fb_usage)return 0;
+        VkImageView view=vk_exec_target_view(img,img->format,VK_IMAGE_VIEW_TYPE_2D,img->aspect,0,0,1,0);
+        VkCommandBuffer cb=vk_upload_begin();
+        VkImageMemoryBarrier2 barrier={.sType=VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+            .srcStageMask=VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,.srcAccessMask=VK_ACCESS_2_MEMORY_WRITE_BIT,
+            .dstStageMask=VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+            .dstAccessMask=VK_ACCESS_2_MEMORY_READ_BIT|VK_ACCESS_2_MEMORY_WRITE_BIT,
+            .oldLayout=VK_IMAGE_LAYOUT_GENERAL,.newLayout=VK_IMAGE_LAYOUT_ATTACHMENT_FEEDBACK_LOOP_OPTIMAL_EXT,
+            .srcQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,.dstQueueFamilyIndex=VK_QUEUE_FAMILY_IGNORED,
+            .image=img->image,.subresourceRange={img->aspect,0,1,0,1}};
+        VkDependencyInfo dependency={.sType=VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+            .imageMemoryBarrierCount=1,.pImageMemoryBarriers=&barrier};
+        vkCmdPipelineBarrier2(cb,&dependency);
+        VkRenderingAttachmentInfo attachment={.sType=VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+            .imageView=view,.imageLayout=barrier.newLayout,.loadOp=VK_ATTACHMENT_LOAD_OP_LOAD,
+            .storeOp=VK_ATTACHMENT_STORE_OP_STORE};
+        VkRenderingInfo rendering={.sType=VK_STRUCTURE_TYPE_RENDERING_INFO,
+            .renderArea={{0,0},{2,1}},.layerCount=1};
+        if(n==2)rendering.pDepthAttachment=&attachment;
+        else rendering.colorAttachmentCount=1,rendering.pColorAttachments=&attachment;
+        vkCmdBeginRendering(cb,&rendering); vkCmdEndRendering(cb);
+        barrier.oldLayout=barrier.newLayout; barrier.newLayout=VK_IMAGE_LAYOUT_GENERAL;
+        vkCmdPipelineBarrier2(cb,&dependency);
+        vk_upload_end(); vk_upload_flush(1);
+        if(!vk_texture_read_image(textures[n],NULL,&region,after,8,8))return 0;
+        checks++; if(memcmp(before,after,8)) {
+            failures++; printf("probe-vkpool: FAIL feedback attachment format %u changed pixels\n",img->format);
+        }
+    }
+    return 1;
+}
+
 static int run_native_textures(uint8_t *memory,void *command_control,uint64_t handle,size_t stride) {
     uint32_t native[][4]={
         {0x00007802,0x3fa00000,0xf00,0}, // R0 = 1.25
@@ -640,6 +797,10 @@ int probe_vkpool(void) {
     REQUIRE(run_native_wide(memory,command_control,handle,stride),"unused unsupported image does not abort an unrelated shader");
     unused_image_handle=0;
     REQUIRE(gfx_shader_failures() == shader_failures, "no shader translation failures");
+    REQUIRE(run_warp_reductions(memory,command_control),"native warp reductions completed");
+    REQUIRE(run_uniform_reductions(memory,command_control),"native uniform atomics completed");
+    REQUIRE(run_feedback_views(),"feedback attachment views preserve pixels");
+    REQUIRE(gfx_shader_failures() == shader_failures,"no warp translation failures");
 done:
     if (pool_live) backend->finish();
     if (command_live) {

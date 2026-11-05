@@ -25,6 +25,9 @@
 // before the submission (vk_exec_draw.c upd_note).
 // TOTK_DUMP_SKIP_RUNS=1: a render pass with the same targets as the render pass before it is logged but not copied
 // (the terrain decals draw one pass each into the G-buffer and would use up both caps).
+// TOTK_DUMP_RAW=1: also save tightly packed readback bytes as .raw, before any
+// display conversion. Dimensions and Vulkan format are in the filename and passes.txt.
+// The format describes the captured view; aliases may require a different interpretation.
 #include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -50,7 +53,7 @@ static uint64_t dump_frame, log_from;   // log_from: TOTK_DUMP_LOG, first frame 
 static char dir[400];
 static FILE *passes_f, *images_f;
 static int seq, finished, copied;      // copied: passes and dispatches of the dump frame whose images were copied
-static int skip_runs, dump_ubo;        // TOTK_DUMP_SKIP_RUNS, TOTK_DUMP_UBO
+static int skip_runs, dump_ubo, dump_raw;
 static uint32_t want_tex[16][2];       // TOTK_DUMP_TEX: slot id and 0, or width and height
 static int nwant_tex;
 static uint64_t last_targets;          // targets_sig of the last render pass; 0 after a dispatch
@@ -219,6 +222,17 @@ static uint8_t u8(float x) { return x > 0 ? x < 1 ? (uint8_t)(x * 255.f + .5f) :
 static void write_images(const Job *j) {
     uint32_t pw = j->w * j->d, ph = j->h;
     uint64_t n = (uint64_t)pw * ph;
+    if (dump_raw) {
+        char path[600];
+        snprintf(path, sizeof path, "%s/%s.raw", dir, j->name);
+        FILE *f = fopen(path, "wb");
+        const size_t bytes = (size_t)n * j->f->bytes;
+        if (!f) rt_log("vk_dump: cannot create raw image %s", path);
+        else {
+            if (fwrite(j->map, 1, bytes, f) != bytes) rt_log("vk_dump: incomplete raw image %s", path);
+            fclose(f);
+        }
+    }
     float *px = malloc(n * 16);
     uint8_t *out = malloc(n * 4), *nanm = calloc(n, 1);
     if (!px || !out || !nanm) rt_fatal("vk_dump: out of memory for %s", j->name);
@@ -938,6 +952,8 @@ void vk_dump_init(void) {
     skip_runs = sr && *sr && *sr != '0';
     const char *du = cfg_get("TOTK_DUMP_UBO");
     dump_ubo = du && *du && *du != '0';
+    const char *dr = cfg_get("TOTK_DUMP_RAW");
+    dump_raw = dr && *dr && *dr != '0';
     const char *wt = cfg_get("TOTK_DUMP_TEX");
     for (char *q = (char *)wt; q && *q && nwant_tex < 16; q += *q == ',') {
         uint32_t *w = want_tex[nwant_tex++];

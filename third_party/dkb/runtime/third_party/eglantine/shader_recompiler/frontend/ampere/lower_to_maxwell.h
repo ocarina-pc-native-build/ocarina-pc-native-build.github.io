@@ -972,14 +972,17 @@ inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code,
                 (u64{1} << 29) | (u64{insn.Bits(40, 13)} << 34) | (u64{insn.Bits(81, 3)} << 48));
             break;
         }
-        case 0x98e: { // RED.E.{ADD..XOR}.STRONG.GPU U32 (op in bits 87-89), register address.
-            if ((insn.words[2] & ~0x0380003fU) == 0x0c10e100 && insn.Bits(24, 8) == 255) {
-                // [URa + offset]: a uniform 64-bit address with a signed byte offset.
+        case 0x98e: { // RED.E.{ADD..XOR}.STRONG.GPU, register or uniform address.
+            if ((insn.words[2] & ~0x0380023fU) == 0x0c10e100 && insn.Bits(24, 8) == 255) {
+                // U32/S32 [URa + offset]: preserve the element signedness. Bits 90/91
+                // select address modes here, not an extended reduction opcode.
                 const u32 address = uniform_register(insn.Bits(64, 6));
                 const s32 offset = static_cast<s32>(insn.Bits(40, 24) << 8) >> 8;
-                if (address == ~0U || (address & 1) || offset < -0x80000 || offset > 0x7ffff)
+                if (address == ~0U || (address & 1) || offset < -0x80000 || offset > 0x7ffff ||
+                    (insn.Bits(32, 8) >= 250 && insn.Bits(32, 8) != 255))
                     return fail(index, "native global reduction uniform address");
                 emit(0xebf8000000000000ULL | predicate | insn.Bits(32, 8) | (u64{address} << 8) |
+                     (u64{insn.Bits(73, 1)} << 20) |
                      (u64{insn.Bits(87, 3)} << 23) | (u64{static_cast<u32>(offset) & 0xfffff} << 28) |
                      (u64{1} << 48));
                 break;
@@ -1028,27 +1031,43 @@ inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code,
             restore_predicate();
             break;
         }
-        case 0x3c4: { // REDUX.SUM (modulo 2^32) or .MAX (unsigned) over the actual active lanes.
+        case 0x3c4: { // REDUX.SUM and signed/unsigned MIN/MAX over the actual active lanes.
             const u32 source = insn.Bits(24, 8), target = uniform_register(static_cast<u32>(dest));
-            const bool maximum = insn.words[2] == 0x14000;
+            // MIN's inactive-lane identity follows Eglantine's newer lowering.
+            // Mesa NAK sm70_encode.rs OpRedux: bit 73 selects S32 for MIN/MAX.
+            // Flipping the sign bit maps signed order to unsigned order while
+            // retaining the same masked-lane reduction and its neutral values.
+            const u32 mode = insn.words[2] & ~0x200U;
+            const bool maximum = mode == 0x14000, minimum = mode == 0x10000;
+            const bool signed_order = (insn.words[2] & 0x200U) != 0;
             if (target == ~0U || target == 255 || insn.words[1] ||
-                (insn.words[2] != 0xc000 && !maximum) || native_predicate != 7)
+                (mode != 0xc000 && !maximum && !minimum) ||
+                (signed_order && !maximum && !minimum) || native_predicate != 7)
                 return fail(index, "native warp sum mode");
             emit(0x50d8000000070000ULL | 250 | (u64{7} << 39) | (u64{7} << 45) | (u64{1} << 48));
-            mov_imm(target, 0);
+            mov_imm(target, minimum ? ~0U : 0U);
             for (u32 lane = 0; lane < 32; ++lane) {
                 emit(0xef10000000070000ULL | 251 | (u64{source} << 8) | (u64{lane} << 20) |
                     (u64{1} << 28) | (u64{1} << 29) | (u64{31} << 34) | (u64{7} << 48));
+                if (signed_order)
+                    emit(0x0400000000070000ULL | 251 | (u64{251} << 8) |
+                         (u64{0x80000000U} << 20) | (u64{2} << 53));
                 emit(0x3828000000070000ULL | 252 | (u64{250} << 8) | (u64{lane} << 20));
                 emit(0x0400000000070000ULL | 252 | (u64{252} << 8) | (u64{1} << 20));
                 emit(0x5c10000000070000ULL | 252 | (u64{255} << 8) | (u64{252} << 20) | (u64{1} << 48));
-                emit(0x5c40000000070000ULL | 251 | (u64{251} << 8) | (u64{252} << 20) | (u64{7} << 48));
-                if (maximum) {
+                emit(0x5c40000000070000ULL | 251 | (u64{251} << 8) | (u64{252} << 20) | (u64{7} << 48) |
+                     (u64{minimum} << 40) | (u64{minimum} << 41));
+                if (minimum) {
+                    emit(0x5c20000000070000ULL | target | (u64{target} << 8) | (u64{251} << 20) | (u64{7} << 39));
+                } else if (maximum) {
                     emit(0x5c20000000070000ULL | target | (u64{target} << 8) | (u64{251} << 20) | (u64{15} << 39));
                 } else {
                     emit(0x5c10000000070000ULL | target | (u64{target} << 8) | (u64{251} << 20));
                 }
             }
+            if (signed_order)
+                emit(0x0400000000070000ULL | target | (u64{target} << 8) |
+                     (u64{0x80000000U} << 20) | (u64{2} << 53));
             break;
         }
         case 0xf8c: { // ATOMS.POPC.INC.32 with no returned value: one increment per active lane.
