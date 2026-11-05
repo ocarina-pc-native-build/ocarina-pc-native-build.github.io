@@ -1,0 +1,69 @@
+name: Crash
+description: The game closes, freezes, shows a FATAL message or loses the GPU.
+labels: [bug, crash]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        DKB Recomp is not playable yet, so crashes are expected. A good report still helps: it shows where the next problem is.
+        Check the pinned issues first, and see [docs/dkb-testing.md](https://github.com/Lucas-blip-png/dkb-pc-recomp/blob/bananza/docs/dkb-testing.md) for how to run and where the log is.
+
+        Do not attach or link game files, keys, firmware, builds, shader caches or screenshots of the game. Issues that do are closed.
+  - type: checkboxes
+    id: duplicates
+    attributes:
+      label: Existing issues
+      options:
+        - label: I read the pinned issues and [searched open and closed issues](https://github.com/Lucas-blip-png/dkb-pc-recomp/issues?q=is%3Aissue) for this crash.
+          required: true
+  - type: input
+    id: version
+    attributes:
+      label: Commit
+      description: The commit you built, from `git rev-parse --short HEAD`. The game must be base version 1.0.0.
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: GPU, driver and Windows version
+      description: For example "Radeon RX 7800 XT, Adrenalin 25.10.1, Windows 11 24H2".
+    validations:
+      required: true
+  - type: dropdown
+    id: when
+    attributes:
+      label: When does it crash?
+      options:
+        - At startup, before any picture
+        - Before or on the title screen
+        - Loading into the tutorial cave
+        - In the tutorial cave
+        - During or right after a guide movie
+        - Further into the game
+    validations:
+      required: true
+  - type: dropdown
+    id: repeat
+    attributes:
+      label: Does it happen every time?
+      options:
+        - "Yes, at the same point every run"
+        - "Sometimes"
+        - "Only once so far"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: What you did before the crash
+      description: Fresh profile or an existing save? Keyboard or controller? Any settings changed?
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: Attach logs\totk.log from the folder of dkb.exe. Copy it before you start the game again, because the next start renames it.
+    validations:
+      required: true

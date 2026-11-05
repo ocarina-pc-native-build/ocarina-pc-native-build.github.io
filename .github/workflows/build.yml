@@ -1,0 +1,30 @@
+name: Independent Windows runtime
+on: [push, pull_request, workflow_dispatch]
+jobs:
+  build:
+    runs-on: windows-2022
+    strategy:
+      matrix:
+        config: [Debug, Release]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11.9'
+      - run: python -m pip install -r requirements.txt
+      - run: python tools/bootstrap.py
+      - run: python tools/build.py --config ${{ matrix.config }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: independent-runtime-${{ matrix.config }}
+          path: |
+            build/**/oot-runtime.exe
+            build/**/SDL3.dll
+            build/**/*.log
+            build/**/result.json
+            LICENSE
+            licenses/*.txt
+            THIRD_PARTY_NOTICES.md
+            third_party/dkb/LICENSE-MIT
+          if-no-files-found: error

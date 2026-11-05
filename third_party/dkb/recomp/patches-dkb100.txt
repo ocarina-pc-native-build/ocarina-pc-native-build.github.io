@@ -1,0 +1,8 @@
+# Code patches for Donkey Kong Bananza 1.0.0 main (recomp/patches.py). Each original word is checked against main.
+
+set hidproxy DKB_SKIP_HID_PROXY 1
+
+# al::GameFrameworkOunce::createControllerMgr (main+0x73b300) reaches sub_71008725E0 through main+0x73be90: it makes
+# a transfer memory and talks to IHidServer itself (nn::hid::server::CreateHidServerProxy), past the nn::hid calls the
+# host takes over, and aborts on a failed Result. The host serves no "hid" IPC service, so the call reports success.
+site hidproxy main 73bea0 9404d9d0 2a1f03e0   # bl sub_71008725E0 -> mov w0, wzr
