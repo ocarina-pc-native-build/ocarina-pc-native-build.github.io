@@ -2,6 +2,8 @@
 
 **November 5, 2026 · Latest documented commit: `e6125e6`**
 
+> **New gameplay follow-up:** Actual gameplay has now been tested and runs smoothly overall in the sections tested so far. Graphical glitches remain. [Watch the full gameplay video and read the latest update](https://ocarina-pc-native-build.github.io/#gameplay). The report below records the earlier milestone.
+
 ## We’re now in-game!
 
 The build has progressed beyond the menus and now reaches an actual **3D in-game scene**, including the Deku Tree and dialogue. Basic movement appears possible, but the rendering problems need attention before we can properly assess gameplay.
