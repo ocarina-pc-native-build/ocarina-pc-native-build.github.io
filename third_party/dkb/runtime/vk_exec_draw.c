@@ -2878,7 +2878,21 @@ static void mesh_skip(VkExec *ex, const p_draw_mesh *draw, const char *why) {
 static void op_draw_mesh(VkExec *ex, const p_draw_mesh *draw) {
     if (ex->render_disabled) return;
     const uint8_t *ctl, *code; uint32_t len;
-    if (draw->kind != NVN_MESH_DIRECT && draw->kind != NVN_MESH_INDIRECT) return mesh_skip(ex, draw, "unknown mesh command kind");
+    if (draw->kind != NVN_MESH_DIRECT && draw->kind != NVN_MESH_INDIRECT) {
+        // nvn_api_cmd.c records all eight NVN 2 mesh entry points, but only the 1D direct and indirect forms have a
+        // verified argument layout. Log the kind and raw ABI registers once per kind so the forms the game uses
+        // can be identified before they are implemented.
+        static const char *const kinds[NVN_MESH_CALL_COUNT] = {"DrawMeshTasks", "DrawMeshTasks3D",
+            "DrawMeshTasks3DIndirect", "DrawMeshTasksIndirect", "MultiDrawMeshTasks3DIndirect",
+            "MultiDrawMeshTasks3DIndirectCount", "MultiDrawMeshTasksIndirect", "MultiDrawMeshTasksIndirectCount"};
+        static volatile int32_t seen[NVN_MESH_CALL_COUNT];
+        if (draw->kind < NVN_MESH_CALL_COUNT && !__atomic_exchange_n(&seen[draw->kind], 1, __ATOMIC_RELAXED))
+            rt_log("mesh: nvnCommandBuffer%s is recorded but not executed (args %#llx %#llx %#llx %#llx %#llx, caller %#llx)",
+                   kinds[draw->kind], (unsigned long long)draw->args[0], (unsigned long long)draw->args[1],
+                   (unsigned long long)draw->args[2], (unsigned long long)draw->args[3],
+                   (unsigned long long)draw->args[4], (unsigned long long)draw->caller);
+        return mesh_skip(ex, draw, "mesh command form not implemented");
+    }
     if (!ex->prog) return mesh_skip(ex, draw, "no bound program");
     if (!find_stage(ex->prog, NVN2_STAGE_MESH, &ctl, &code, &len)) return mesh_skip(ex, draw, "program has no mesh stage");
     if (gfx_shader_is_nvn2(ctl)) return mesh_skip(ex, draw, "mesh stage was not lowered (see the nvn2: lowering log)");

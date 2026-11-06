@@ -39,6 +39,13 @@ Changes in the branch (`git diff 68f5d8e..fix/mesh-foliage`):
    (`third_party/dkb/tools/build_xlate.py`) and a **new `TOTK_SHADER_CACHE` directory**. The translator id changes
    anyway. Checked here only with `git apply` against the full patch chain, with and without 0014.
 
+6. **Branch `test2` only:** translator patch `0026-small-global-store-compare-and-swap.patch`
+   (`build_xlate.py` now expects 26 patches). Patch 0023 stored 8/16-bit global fields with an `AtomicAnd` and then
+   an `AtomicOr`. Two invocations storing different values to the same field ended up ORed together, and readers
+   could see the field cleared in between. Patch 0026 uses one 32-bit compare-and-swap loop and re-reads the word
+   atomically on every try, as patch 0024 does. Affected: the vegetation-culling/sky-ambient compute programs that
+   the Lichii fallback lowers. Checked only with `git apply` against the full chain, with and without 0014.
+
 Known and not fixed: an indirect mesh draw's group count is not clamped to `maxMeshWorkGroupCount[0]`/
 `maxTaskWorkGroupCount[0]`. A GPU-side clamp would need a small compute pass.
 
