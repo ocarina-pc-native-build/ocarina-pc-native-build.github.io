@@ -891,3 +891,18 @@ Screenshot means stay at 162-171 in all three, and frames 3900 look the same:
 the light shafts and the haze do not change. This shadow array is therefore not
 what drives the outdoor brightness; step B (elements from the texture pool)
 remains the correct binding but is not expected to remove the haze.
+
+Repeated from scratch after a host crash (clean translator and runtime rebuild,
+new empty shader cache filled by two warm-up runs, render regressions 16180777
+checks with 0 failures, vkmesh/nvn/kernel probes passed). The validation run
+reached script frame 1327 with 0 `VUID-06479` and no task or mesh message before
+the layer aborted. The array is again bound in the light pass right before the
+fog composite. Fog composite at frame 3900 (median / mean):
+
+| Stand-in | before composite | after composite | screenshots |
+| --- | --- | --- | --- |
+| off | 0.047 / 0.203 | 0.262 / 0.412 | 163-169 |
+| depth 1.0 | 0.049 / 0.209 | 0.280 / 0.419 | 165-172 |
+| depth 0.0 | 0.049 / 0.207 | 0.283 / 0.424 | 164-170 |
+
+Same result: no visible change of the haze or the light shafts.
