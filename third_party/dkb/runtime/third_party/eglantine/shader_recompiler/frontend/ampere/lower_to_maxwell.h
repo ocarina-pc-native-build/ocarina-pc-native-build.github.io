@@ -296,9 +296,11 @@ inline LoweredProgram LowerToMaxwellWith(std::span<const Instruction> code, u32 
             opcode = opcode == 0x2a4 ? 0x224 : opcode == 0x4a4 ? 0x424 : opcode == 0x8a4 ? 0x824 : opcode == 0x891 ? 0x811 : opcode == 0x890 ? 0x810
                    : opcode == 0x292 || opcode == 0x092 ? 0x212 : opcode == 0x892 ? 0x812 : opcode == 0x291 ? 0x211 : 0x210;
         }
-        // DKB (as Lichii v13): USHF (0x899) lowers to one SHF/SHR/SHL, so a uniform guard is swapped in like these.
+        // DKB (as Lichii v13): USHF (0x899) and USHF.L.U32.HI with an immediate source (0x499) lower to one
+        // SHF/SHR/SHL, so a uniform guard is swapped in like these. Without 0x499 here, a @UPn guard on it was
+        // emitted as the regular predicate P(n).
         const bool uniform_predication = opcode == 0xabb || opcode == 0xab9 || opcode == 0xc82 || opcode == 0x882 ||
-                                         opcode == 0x899;
+                                         opcode == 0x899 || opcode == 0x499;
         const u32 native_predicate = insn.Bits(12, 4);
         const bool guarded_uniform = (uniform_predication || uniform_guard) && native_predicate != 7;
         // A uniform guard UPn lives in R239 bit 6-n and is swapped into P(6-n) for the op.
