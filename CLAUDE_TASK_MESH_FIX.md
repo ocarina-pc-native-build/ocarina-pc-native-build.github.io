@@ -58,12 +58,27 @@ Known and not fixed: an indirect mesh draw's group count is not clamped to `maxM
    git checkout -b fix/mesh-foliage oot-test/fix/mesh-foliage
    git diff 68f5d8e..HEAD
    ```
+   For all fixes (0025/0026 included), use branch `test2` instead: `git fetch oot-test test2` and
+   `git checkout -b test2 oot-test/test2`. The user wants `test2` built and tested.
    Check the changes against the surrounding code. Two points need extra care:
    - Are mesh output variables with an `OpVariable` initializer valid for MeshEXT?
    - Is `binding_span`/`fs_off` still correct when a task stage is present?
-2. **Incremental build** with the existing local artifacts. Do not re-extract, re-lift or regenerate anything:
-   `tools/build_full_runtime.py ...` as in `docs/FULL_RUNTIME.md`, or the existing `work/build_native.py`.
-   Fix compile errors with the smallest change and keep the intent of each fix.
+2. **Build a new executable. The user explicitly wants a fresh build of this branch**, even if earlier notes in
+   the repo say not to rebuild. Use the existing local artifacts and do not re-extract, re-lift or regenerate
+   anything:
+   - **Branch `test2` only:** rebuild the translator first, because patches 0025/0026 live there. In
+     `third_party/dkb`, run `python tools/build_xlate.py`. It must apply all 26 patches and produce
+     `build/xlate/totk_xlate.exe`. If a patch fails to apply, stop and report which one.
+   - Then do an incremental runtime build: `tools/build_full_runtime.py ...` as in `docs/FULL_RUNTIME.md`, or the
+     existing `work/build_native.py`, with `--translator` pointing at the rebuilt translator.
+   - Fix compile errors with the smallest change and keep the intent of each fix.
+   - **Use a new shader cache.** Without one, old SPIR-V from before 0025/0026 can be reused. The cache directory
+     is `TOTK_SHADER_CACHE`, defaulting to `shader-cache` next to the executable (`runtime/gfx_shader.c`).
+     Do not delete the old cache, because it is needed for comparison. Either rename it
+     (`Rename-Item shader-cache shader-cache-before-test2`) or set the variable for the run, e.g.
+     `$env:TOTK_SHADER_CACHE = "<work>\cache-test2"`, using a new empty directory. An environment variable
+     overrides `totk.ini`. The first run is slower because every shader is translated again. Afterwards, validate a
+     sample of the new `.spv` files with `spirv-val --target-env vulkan1.3`.
 3. Checks:
    - `tools/test_full_runtime.py <native>/oot2026.exe --logs <logs>/host-probes`
    - The authored mesh probe `--probe-vkmesh` and `--probe-vkexec`, with Vulkan validation enabled.
@@ -72,6 +87,9 @@ Known and not fixed: an indirect mesh draw's group count is not clamped to `maxM
    `TOTK_SHADER_CACHE` directory and `TOTK_VK_VALIDATION=1`. In `game.log`, collect:
    - `vk: enabled task/mesh features` and `requiredSubgroupSizeStages`
    - `mesh: executed native shader`, every `mesh: draw skipped:` reason, `mesh: draw not prepared`
+   - `mesh: nvnCommandBuffer... is recorded but not executed`: names a mesh command form (3D/multi/count) that
+     the game uses but the runtime does not execute yet. Report the logged name, args and caller, because that form
+     is the next thing to implement.
    - `graphics pipeline not built`, `mesh stage lacks fragment inputs`
    - `Ampere lowering failed` for foliage shaders, e.g. `60dbd7f60c759472` (leaf) and `f0212fc90ccb6d10` (forest)
    - any `Vulkan validation:` message that mentions mesh/task
