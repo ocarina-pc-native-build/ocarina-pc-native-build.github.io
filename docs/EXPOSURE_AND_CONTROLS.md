@@ -863,3 +863,31 @@ draws that now execute is not measured. Frames 3600 and 3900 show no tree
 crowns, the light shafts and haze are unchanged (screenshot mean 164-169), and
 the thin bluish streaks are present. Fog composite at frame 3900: median 0.045
 before and 0.287 after, mean 0.205 and 0.431.
+### Shadow-array stand-in (task point 8, step A, 2026-11-06)
+
+`runtime/vk_exec_draw.c` `shadow_array_element` binds a 1x1 `D32_SFLOAT` image
+for every element of a shadow (type `0x400`) texture array whose image cannot
+be depth-compared, in draws and dispatches (a dispatch keeps its depth twin
+where one applies), separate images included. `DKB_SHADOW_DUMMY` sets its depth
+(unset or 1: 1.0, 0: 0.0, off: disabled). In the forest replay it replaces the
+elements of the `type 0x403 handle 0x40000000` array, which held RGBA8, BC1,
+BC4, RGBA32F and other colour images.
+
+With validation, `VUID-vkCmdDrawIndexed-None-06479` no longer appears: before,
+all 20 reports came at script frame 1205; with the stand-in the run passed frame
+1342 without one (the MSYS2 layer then aborted again, `0xC0000005`, as before).
+
+At frame 3900 the array is bound in pass 168, the light pass that writes the HDR
+target right before the fog composite, and in pass 174. Fog composite luminance
+of that target (median / mean):
+
+| Stand-in | before composite | after composite |
+| --- | --- | --- |
+| off | 0.048 / 0.203 | 0.286 / 0.430 |
+| depth 1.0 | 0.044 / 0.201 | 0.284 / 0.417 |
+| depth 0.0 | 0.050 / 0.206 | 0.270 / 0.419 |
+
+Screenshot means stay at 162-171 in all three, and frames 3900 look the same:
+the light shafts and the haze do not change. This shadow array is therefore not
+what drives the outdoor brightness; step B (elements from the texture pool)
+remains the correct binding but is not expected to remove the haze.

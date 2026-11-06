@@ -1705,6 +1705,94 @@ static void tex_info(VkExec *ex, const GfxShaderRes *r, uint64_t h, int storage,
     if (v) out->imageView = v, out->imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 }
 
+// ---- shadow-array stand-in (CLAUDE_TASK_MESH_FIX.md point 8, step A)
+// A shadow (depth-compare) texture array whose elements come from bound slots (handle kind 4, Ryujinx
+// TextureHandleType.Direct: the light table names texture pool indices, but the replay still binds slot r->slot + k)
+// samples unrelated colour images (RGBA8, BC1, BC4, RGBA32F) under a compare sampler. Vulkan leaves that undefined
+// (VUID-vkCmdDrawIndexed-None-06479). This experiment binds a 1x1 D32_SFLOAT image cleared to a fixed depth instead,
+// in draws as well as dispatches (dispatches keep their depth twin where one applies), to measure whether these
+// shadow arrays drive the outdoor brightness. DKB_SHADOW_DUMMY: unset or 1 = depth 1.0, 0 = depth 0.0, off = disabled.
+// It is not the fix: the elements must come from the texture pool (point 8, step B).
+static struct { int state; float depth; VkImage image; VmaAllocation alloc; VkImageView view[2]; } SHD;
+
+static int shadow_dummy_on(void) {
+    if (!SHD.state) {
+        const char *e = getenv("DKB_SHADOW_DUMMY");
+        SHD.state = e && !strcmp(e, "off") ? -1 : 1;
+        SHD.depth = e && *e && strcmp(e, "off") ? (float)atof(e) : 1.0f;
+        if (SHD.state > 0) rt_log("vk_exec: shadow-array stand-in on: D32 depth %.1f (DKB_SHADOW_DUMMY)", SHD.depth);
+    }
+    return SHD.state > 0;
+}
+
+static VkImageView shadow_dummy_view(int array) {
+    if (!SHD.image) {
+        VkCtx *c = vk_ctx();
+        VkImageCreateInfo ii = {.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO, .imageType = VK_IMAGE_TYPE_2D,
+                                .format = VK_FORMAT_D32_SFLOAT, .extent = {1, 1, 1}, .mipLevels = 1, .arrayLayers = 1,
+                                .samples = VK_SAMPLE_COUNT_1_BIT, .tiling = VK_IMAGE_TILING_OPTIMAL,
+                                .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+                                .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED};
+        VmaAllocationCreateInfo ia = {.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
+        if (vmaCreateImage(c->vma, &ii, &ia, &SHD.image, &SHD.alloc, NULL) != VK_SUCCESS)
+            rt_fatal("vk: shadow-array stand-in image failed");
+        VkImageSubresourceRange range = {VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1};
+        for (int k = 0; k < 2; k++) {
+            VkImageViewCreateInfo vi = {.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO, .image = SHD.image,
+                                        .viewType = k ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D,
+                                        .format = VK_FORMAT_D32_SFLOAT, .subresourceRange = range};
+            if (vkCreateImageView(c->device, &vi, NULL, &SHD.view[k]) != VK_SUCCESS)
+                rt_fatal("vk: shadow-array stand-in view failed");
+        }
+        // Cleared in the upload batch, which reaches the queue before the submission that samples it.
+        VkImageMemoryBarrier2 bar = {.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+                                     .dstStageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT,
+                                     .dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
+                                     .oldLayout = VK_IMAGE_LAYOUT_UNDEFINED, .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                                     .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED, .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                                     .image = SHD.image, .subresourceRange = range};
+        VkDependencyInfo di = {.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &bar};
+        VkCommandBuffer cb = vk_upload_begin();
+        vkCmdPipelineBarrier2(cb, &di);
+        VkClearDepthStencilValue value = {SHD.depth, 0};
+        vkCmdClearDepthStencilImage(cb, SHD.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &value, 1, &range);
+        bar.srcStageMask = VK_PIPELINE_STAGE_2_ALL_TRANSFER_BIT, bar.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+        bar.dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, bar.dstAccessMask = VK_ACCESS_2_MEMORY_READ_BIT;
+        bar.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, bar.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+        vkCmdPipelineBarrier2(cb, &di);
+        vk_upload_end();
+    }
+    return SHD.view[array];
+}
+
+// 1 when the driver depth-compares `fmt` (SAMPLED_IMAGE_DEPTH_COMPARISON), cached per format.
+static int depth_comparable(VkFormat fmt) {
+    static struct { VkFormat fmt; int yes; } known[64];
+    static int n;
+    for (int i = 0; i < n; i++) if (known[i].fmt == fmt) return known[i].yes;
+    VkFormatProperties3 p3 = {.sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_3};
+    VkFormatProperties2 p2 = {.sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2, .pNext = &p3};
+    vkGetPhysicalDeviceFormatProperties2(vk_ctx()->phys, fmt, &p2);
+    int yes = (p3.optimalTilingFeatures & VK_FORMAT_FEATURE_2_SAMPLED_IMAGE_DEPTH_COMPARISON_BIT) != 0;
+    if (n < 64) known[n].fmt = fmt, known[n++].yes = yes;
+    return yes;
+}
+
+// Element k of a shadow array: the D32 stand-in when what tex_info chose cannot be depth-compared. Texture lock held.
+static void shadow_array_element(VkExec *ex, const GfxShaderRes *r, uint64_t h, VkDescriptorImageInfo *out) {
+    VkImageViewType vt = res_view_type(r->type);
+    if ((vt != VK_IMAGE_VIEW_TYPE_2D && vt != VK_IMAGE_VIEW_TYPE_2D_ARRAY) || (r->type & 0x200) || !shadow_dummy_on()) return;
+    const VkTexImage *img = h ? vk_texture_by_id_locked(&ex->tex_pool, (int)(h & 0xfffff), NULL, NULL) : NULL;
+    if (img && twin_dispatch && twin_format(img) != VK_FORMAT_UNDEFINED) return;   // the depth twin is comparable
+    if (img && depth_comparable(img->format)) return;
+    static unsigned logged;
+    if (logged++ < 8)
+        rt_log("vk_exec: shadow array type %#x handle %#x element %#llx (%s format %d): D32 stand-in at depth %.1f",
+               r->type, r->handle, (unsigned long long)h, img ? "image" : "no image", img ? (int)img->format : 0, SHD.depth);
+    out->imageView = shadow_dummy_view(vt == VK_IMAGE_VIEW_TYPE_2D_ARRAY);
+    out->imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+}
+
 static VkDescriptorSet alloc_set(VkExec *ex, VkDescriptorSetLayout layout) {
     CbRes *r = cb_res(ex);
     VkCtx *c = vk_ctx();
@@ -2067,6 +2155,9 @@ static void bind_resources(VkExec *ex, const VkPipeInfo *info) {
                     if (img) h = slot >= 0 && slot < 32 ? ex->img[st][slot] : 0;
                     else h = slot >= 0 && slot < 128 ? ex->tex[st][slot] : 0;
                     tex_info(ex, r, h, img, r->separate, &o[k].image);
+                    // Separate images too: the game's shadow array (binding 23) takes its compare samplers from a
+                    // separate sampler array (binding 55).
+                    if (!img && cnt > 1 && (r->type & 0x400)) shadow_array_element(ex, r, h, &o[k].image);
                     o[k].w[2] = (uint32_t)o[k].image.imageLayout;   // zero the tail padding
                 }
                 vk_texture_unlock();
