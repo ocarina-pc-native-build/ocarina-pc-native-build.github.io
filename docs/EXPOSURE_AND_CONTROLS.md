@@ -745,3 +745,67 @@ continuation workspace. The script reads the existing asset image, validates
 container bounds, compares full code, and links matches to the completed manual
 log. It neither builds nor launches the game. The existing diagnostic run has
 ended; no game is left running.
+
+### Branch `test2` build and outdoor verification (2026-11-06)
+
+The translator was rebuilt from `third_party/dkb/tools/build_xlate.py` with all
+26 patches present; 0001-0013 and 0015-0026 applied (0014 stays optional), giving
+translator identity `f4c6681855057144`. The runtime was linked incrementally
+from the existing game objects into a separate `oot2026-test2.exe`, so the
+regular executable and translator stay untouched. The build had no errors.
+
+Checks of that build:
+
+| Check | Result |
+| --- | --- |
+| `test_full_runtime.py` default modes | 14 of 15 passed; `probe-kernel` failed once with `plat_cond_wait_ns timeout` and then passed 3 of 3 repeats, as the previous executable did |
+| `--probe-vkmesh`, validation on | passed, 16419 checks, 0 validation errors |
+| `--probe-vkexec`, validation on | failed: `no build/v0/shaders/jobs.json above the exe`; the previous executable fails identically, so the fixture is missing here |
+| `render_regressions.cpp` | 16180778 checks, 0 failures |
+
+The outdoor replay ran with a copied profile and a new, empty shader cache.
+With `TOTK_VK_VALIDATION=1` the run aborted near frame 1800 on an uncaught
+`std::system_error` (`Invalid argument`). The terminate message is libstdc++'s,
+while the runtime uses libc++; the only libstdc++ component in the process is
+the MSYS2 validation layer, so the abort is attributed to the layer, not to the
+fix. Up to that point the layer reported no task or mesh message. It reported 10
+`VUID-vkCmdDrawIndexed-None-06479` errors (depth comparison on RGBA8, BC and
+RGBA16F views in fragment shaders), so 0025 does not remove that VUID. The same
+replay without validation ran to completion.
+
+Log lines without validation: `vk: enabled task/mesh features: task 1 mesh 1`;
+`requiredSubgroupSizeStages 0xf0, pinning 32 on 0xf0`; no `is recorded but not
+executed`, no `graphics pipeline not built`, no `mesh stage lacks fragment
+inputs`, no task/mesh subgroup-pin message. `mesh: draw skipped: mesh stage
+was not lowered` reached its 32-line limit, with 8 `mesh: draw not prepared`.
+
+The white image seen earlier the same day with patches 0023 and 0024 does not
+occur with `test2` (mean 8-bit screenshot brightness 159-165 against 155-172
+for the previous executable). 0023's AND-then-OR small stores are the likely
+cause, with 0024 only making the affected compute programs translatable; 0026
+replaces those stores.
+
+Fog composite at frame 3900, linear Rec. 709 luminance of target
+`0x80003c0200` from raw R11G11B10F dumps:
+
+| Build | Before composite, median / mean | After composite, median / mean |
+| --- | --- | --- |
+| previous executable and translator | 0.059 / 0.198 | 0.298 / 0.419 |
+| `test2` | 0.025 / 0.167 | 0.274 / 0.383 |
+| `test2` with the lowering forms below | 0.048 / 0.205 | 0.303 / 0.444 |
+
+The composite still multiplies the median several times. The haze remains, and
+no tree crowns are visible in the frames 3200-4000.
+
+Following the skip reason, the Eglantine lowering gained Lichii v13's forms for
+SHF.R.U64 with an immediate or register amount, USHF.R.U64, USHF.HI with an
+immediate source, UPOPC, and UMOV, UFLO and UBREV from any mapped uniform
+register. On the 8382 dumped stages, 35 more lower, none is lost and no
+previously lowered stage changes. The `uniform shift` and `funnel-shift`
+rejections in the game log fall from about 75 to 2, the task stages that now
+lower run without the former `synthetic c0` abort, and vegetation mesh shader
+`5cb142ded77487e9` executes. The next rejection for 21 vegetation mesh stages
+is `native uniform arithmetic register`: they write UR28 and above, which
+Lichii maps through its dynamic high-uniform register range. Thin bluish
+streaks appear in frame 3900 only in the runs with these extra lowerings; they
+may be a new artifact of the newly executed mesh shaders and are not resolved.
