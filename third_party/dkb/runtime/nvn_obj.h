@@ -147,7 +147,7 @@ enum {
     OP_BIND_PROGRAM, OP_BIND_STATE, OP_BIND_VATTR, OP_BIND_VSTREAM, OP_BIND_VBUF,
     OP_BIND_UBO, OP_BIND_SSBO, OP_BIND_TEX, OP_BIND_SAMP,
     OP_STENCIL, OP_POLY_OFFSET, OP_DRAW, OP_DRAW_IDX, OP_DISPATCH, OP_BARRIER,
-    OP_SET_TEX_POOL, OP_SET_SAMP_POOL, OP_COPY_B2T, OP_COPY_STRIDE, OP_BLEND_COLOR, OP_COPY_T2B, OP_BIND_IMG, OP_COPY_T2T, OP_RESET_COUNTER, OP_CLEAR_TEX, OP_DEPTH_CLAMP, OP_RENDER_ENABLE, OP_RASTER_DISCARD, OP_RENDER_COND, OP_PRIM_RESTART, OP_DRAW_IDX_IND, OP_DISPATCH_IND, OP_CLEAR_BUF, OP_PUSH_CONST, OP_WAIT_SYNC, OP_WORKLOAD_PRIORITY, OP_COUNT_
+    OP_SET_TEX_POOL, OP_SET_SAMP_POOL, OP_COPY_B2T, OP_COPY_STRIDE, OP_BLEND_COLOR, OP_COPY_T2B, OP_BIND_IMG, OP_COPY_T2T, OP_RESET_COUNTER, OP_CLEAR_TEX, OP_DEPTH_CLAMP, OP_RENDER_ENABLE, OP_RASTER_DISCARD, OP_RENDER_COND, OP_PRIM_RESTART, OP_DRAW_IDX_IND, OP_DISPATCH_IND, OP_CLEAR_BUF, OP_PUSH_CONST, OP_WAIT_SYNC, OP_WORKLOAD_PRIORITY, OP_DRAW_MESH, OP_GEOMETRY_MODE, OP_COUNT_
 };
 // Payload (immediately follows op_hdr)
 typedef struct { int32_t n; const tex_t *color[8]; view_t cview[8]; uint8_t has_cview[8]; const tex_t *depth; view_t dview; uint8_t has_dview; } p_set_rt;
@@ -170,6 +170,15 @@ typedef struct { int32_t stage, first, n, pad_; uint64_t src; uint64_t h[32]; } 
 typedef struct { int32_t face, value_mask, mask, ref, which; } p_stencil;  // which: 0 value mask 1 write mask 2 reference value
 typedef struct { float factor, units, clamp; } p_poly_offset;
 typedef struct { int32_t prim, first, count, base_instance, instances; } p_draw;   // TOTK: instances 0 = one instance (DrawArrays)
+enum {
+    NVN_MESH_DIRECT, NVN_MESH_DIRECT_3D, NVN_MESH_INDIRECT_3D, NVN_MESH_INDIRECT,
+    NVN_MESH_MULTI_3D, NVN_MESH_MULTI_3D_COUNT, NVN_MESH_MULTI, NVN_MESH_MULTI_COUNT,
+    NVN_MESH_CALL_COUNT
+};
+// Preserve the ABI registers until each mesh entry point's argument layout is
+// verified. In particular, do not read GPU-written indirect data at recording.
+typedef struct { uint32_t kind, reserved; uint64_t args[7], caller; } p_draw_mesh;
+typedef struct { uint32_t mode, reserved; } p_geometry_mode;
 typedef struct { int32_t prim, itype, count, base_vertex, base_instance, instances; uint64_t ibuf; } p_draw_idx;
 typedef struct { int32_t x, y, z; uint64_t caller; } p_dispatch;   // caller: return address of the game call site (to locate the dispatcher)
 typedef struct { dpool_ref pool; } p_set_pool;

@@ -845,7 +845,51 @@ static int test_mirror(const GfxBackend *b, uint8_t *guest, int *bytes) {
     return 0;
 }
 
+// Replay must preserve all native stages independently, including task and mesh.
+// Only recorded values are inspected; these synthetic GPU addresses are not mapped.
+static int test_native_stage_bindings(void) {
+    VkExec *ex = calloc(1, sizeof *ex);
+    CHECK(ex, "allocate native-stage binding test state");
+    for (int st = 0; st < NVN2_STAGE_COUNT; st++) {
+        p_bind_buf b = {st, 17, 0x8003000000ull + (unsigned)st * 0x1000, 0x400};
+        vk_exec_op_draw(ex, OP_BIND_UBO, &b);
+        b.index = 15; b.addr += 0x500;
+        vk_exec_op_draw(ex, OP_BIND_SSBO, &b);
+        p_bind_handles h = {.stage = st, .first = 127, .n = 1, .h = {0x300000ull + (unsigned)st}};
+        vk_exec_op_draw(ex, OP_BIND_TEX, &h);
+        h.h[0] += 0x100000;
+        vk_exec_op_draw(ex, OP_BIND_SAMP, &h);
+        h.first = 31; h.h[0] = 100 + (unsigned)st;
+        vk_exec_op_draw(ex, OP_BIND_IMG, &h);
+    }
+    // Rejected stages must not overwrite either end of the native stage tables.
+    const int invalid[] = {-1, NVN2_STAGE_COUNT};
+    for (unsigned k = 0; k < sizeof invalid / sizeof *invalid; k++) {
+        p_bind_buf b = {invalid[k], 17, 0xdead, 0x10};
+        vk_exec_op_draw(ex, OP_BIND_UBO, &b);
+        b.index = 15;
+        vk_exec_op_draw(ex, OP_BIND_SSBO, &b);
+        p_bind_handles h = {.stage = invalid[k], .first = 127, .n = 1, .h = {0xdead}};
+        vk_exec_op_draw(ex, OP_BIND_TEX, &h);
+        vk_exec_op_draw(ex, OP_BIND_SAMP, &h);
+        h.first = 31;
+        vk_exec_op_draw(ex, OP_BIND_IMG, &h);
+    }
+    for (int st = 0; st < NVN2_STAGE_COUNT; st++) {
+        uint64_t address = 0x8003000000ull + (unsigned)st * 0x1000;
+        CHECK(ex->ubo[st][17].addr == address && ex->ubo[st][17].size == 0x400 &&
+              ex->ssbo[st][15].addr == address + 0x500 && ex->ssbo[st][15].size == 0x400,
+              "native stage %d buffer bindings lost or aliased", st);
+        CHECK(ex->tex[st][127] == 0x300000ull + (unsigned)st &&
+              ex->samp[st][127] == 0x400000ull + (unsigned)st && ex->img[st][31] == 100 + (unsigned)st,
+              "native stage %d handles lost or aliased", st);
+    }
+    free(ex);
+    return 0;
+}
+
 int probe_vkexec(void) {
+    if (test_native_stage_bindings()) return 1;
     layouts_equal = 0;
     main_tid = plat_thread_id();
     const GfxBackend *b = &gfx_vulkan_backend;

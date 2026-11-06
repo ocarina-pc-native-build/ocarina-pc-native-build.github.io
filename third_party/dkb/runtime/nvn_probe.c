@@ -29,6 +29,15 @@
 #undef NVN_PROC
 void nvnp_nvnCommandBufferPushGraphicsConstants(Cpu *c);   // NVN 2 procs the command checks record
 void nvnp_nvnCommandBufferPushComputeConstants(Cpu *c);
+void nvnp_nvnCommandBufferDrawMeshTasks(Cpu *c);
+void nvnp_nvnCommandBufferDrawMeshTasks3D(Cpu *c);
+void nvnp_nvnCommandBufferDrawMeshTasks3DIndirect(Cpu *c);
+void nvnp_nvnCommandBufferDrawMeshTasksIndirect(Cpu *c);
+void nvnp_nvnCommandBufferMultiDrawMeshTasks3DIndirect(Cpu *c);
+void nvnp_nvnCommandBufferMultiDrawMeshTasks3DIndirectCount(Cpu *c);
+void nvnp_nvnCommandBufferMultiDrawMeshTasksIndirect(Cpu *c);
+void nvnp_nvnCommandBufferMultiDrawMeshTasksIndirectCount(Cpu *c);
+void nvnp_nvnCommandBufferSetGeometryProcessingMode(Cpu *c);
 
 typedef struct { const char *name; void (*fn)(Cpu *); } ProcRow;
 static const ProcRow procs[] = {
@@ -461,6 +470,22 @@ static uint64_t record_all(void) {
     REC(OP_DRAW_IDX_IND, CALL(nvnCommandBufferDrawElementsIndirect, U(c), NVN_DRAW_PRIMITIVE_TRIANGLES, NVN_INDEX_TYPE_UNSIGNED_INT,
                               0x8000, 0xc000));
     REC(OP_DISPATCH_IND, CALL(nvnCommandBufferDispatchComputeIndirect, U(c), 0xc100));
+    REC(OP_GEOMETRY_MODE, CALL(nvnCommandBufferSetGeometryProcessingMode, U(c), 0x12345678));
+    void (*const mesh_calls[])(Cpu *) = {
+        nvnp_nvnCommandBufferDrawMeshTasks, nvnp_nvnCommandBufferDrawMeshTasks3D,
+        nvnp_nvnCommandBufferDrawMeshTasks3DIndirect, nvnp_nvnCommandBufferDrawMeshTasksIndirect,
+        nvnp_nvnCommandBufferMultiDrawMeshTasks3DIndirect, nvnp_nvnCommandBufferMultiDrawMeshTasks3DIndirectCount,
+        nvnp_nvnCommandBufferMultiDrawMeshTasksIndirect, nvnp_nvnCommandBufferMultiDrawMeshTasksIndirectCount
+    };
+    uint64_t saved_caller = cpu.x[30];
+    cpu.x[30] = 0x7000123450ull;
+    for (unsigned i = 0; i < sizeof mesh_calls / sizeof *mesh_calls; i++) {
+        // An unmapped GPU-only address must be retained without dereferencing it.
+        const uint64_t args[8] = {U(c), 0x8002000000ull + i * 16, 13, 0x100000003ull,
+                                 0x200000004ull, 0x300000005ull, 0x400000006ull, 0x500000007ull};
+        REC(OP_DRAW_MESH, call(mesh_calls[i], args));
+    }
+    cpu.x[30] = saved_caller;
     REC(OP_CLEAR_BUF, CALL(nvnCommandBufferClearBuffer, U(c), 0xc200, 0x40, 0xdeadbeef));
     REC(OP_CLEAR_BUF, CALL(nvnCommandBufferReportValue, U(c), 0x1234, 0xc300));
     static const uint32_t pushed[4] = {0x39b60b61, 0x3a21d13a, 0x45340000, 0x44ca8000};   // 1/2880, 1/1620, 2880, 1620
@@ -484,7 +509,7 @@ static void parse_all(uint64_t h) {
     const op_hdr *o = nvn_op_first(h);
     CHECK(o->op == OP_BEGIN, "a recording starts with OP_BEGIN");
     uint64_t bytes = 0;
-    int idx = 0, seen_state = 0, seen_tex = 0;
+    int idx = 0, seen_state = 0, seen_tex = 0, seen_mesh = 0;
     uint8_t kinds[OP_COUNT_] = {0};
     const tex_t *t1 = (const tex_t *)(const void *)&tex1, *t2 = (const tex_t *)(const void *)&tex2;
     for (; o->op != OP_END; o = nvn_op_next(o)) {
@@ -698,6 +723,21 @@ static void parse_all(uint64_t h) {
             break;
         }
         case OP_DISPATCH_IND: CHECK(((const p_dispatch_ind *)a)->ind == 0xc100, "DISPATCH_IND payload"); break;
+        case OP_GEOMETRY_MODE:
+            CHECK(((const p_geometry_mode *)a)->mode == 0x12345678 && !((const p_geometry_mode *)a)->reserved,
+                  "GEOMETRY_MODE retains the unmodified mode");
+            break;
+        case OP_DRAW_MESH: {
+            const p_draw_mesh *p = a;
+            CHECK(p->kind == (unsigned)seen_mesh && !p->reserved && p->caller == 0x7000123450ull,
+                  "mesh entry point order and caller survive recording/copy");
+            CHECK(p->args[0] == 0x8002000000ull + (unsigned)seen_mesh * 16 && p->args[1] == 13 &&
+                  p->args[2] == 0x100000003ull && p->args[3] == 0x200000004ull &&
+                  p->args[4] == 0x300000005ull && p->args[5] == 0x400000006ull && p->args[6] == 0x500000007ull,
+                  "all seven mesh ABI words retain their full width without indirect reads");
+            seen_mesh++;
+            break;
+        }
         case OP_CLEAR_BUF: {
             const p_clear_buf *p = a;
             CHECK((p->addr == 0xc200 && p->size == 0x40 && p->value == 0xdeadbeef) ||
@@ -717,6 +757,7 @@ static void parse_all(uint64_t h) {
     }
     bytes += o->size;   // OP_END
     CHECK(idx == nexpect, "%d of %d ops parsed", idx, nexpect);
+    CHECK(seen_mesh == 8, "all eight mesh entry points were retained");
     CHECK(bytes == nvn_handle_bytes(h), "the copy holds %llu bytes, the walk %llu", (unsigned long long)nvn_handle_bytes(h),
           (unsigned long long)bytes);
     int missing = 0;

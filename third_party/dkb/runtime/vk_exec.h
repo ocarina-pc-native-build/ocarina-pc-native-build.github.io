@@ -9,6 +9,7 @@
 #include <stdint.h>
 
 #include "nvn_api.h"
+#include "nvn2_control.h"
 #include "vk.h"
 
 // Dynamic state the next draw must record (VkExec.dirty). vk_exec_record sets them all at the start of each command
@@ -81,9 +82,12 @@ typedef struct VkExec {
     // ---- vk_exec_draw.c slots (draws, binds, dispatch): left empty by vk_exec.c
     const prog_t *prog;                  // OP_BIND_PROGRAM
     int32_t prog_stages;
+    uint32_t geometry_mode;               // NVN2 geometry mode, retained without guessing its numeric meanings
     NVNbufferRange vbuf[16];             // OP_BIND_VBUF
-    p_bind_buf ubo[6][18], ssbo[6][16];  // OP_BIND_UBO / OP_BIND_SSBO per stage and index
-    uint64_t tex[6][128], samp[6][128], img[6][32];   // OP_BIND_TEX / OP_BIND_SAMP / OP_BIND_IMG handles per stage
+    // Keep task/mesh bindings in their native slots, separate from tessellation.
+    // Existing pipelines consume stages 0..5; the future mesh path consumes 6/7.
+    p_bind_buf ubo[NVN2_STAGE_COUNT][18], ssbo[NVN2_STAGE_COUNT][16];
+    uint64_t tex[NVN2_STAGE_COUNT][128], samp[NVN2_STAGE_COUNT][128], img[NVN2_STAGE_COUNT][32];
     uint32_t push[2][NVN2_ROOT_TABLES][NVN2_ROOT_WORDS];   // graphics root 0 (bank 24), compute roots in packed c0
     uint64_t push_set[2][NVN2_ROOT_TABLES];                // words written; used by the graphics blit fallback
 
@@ -172,6 +176,7 @@ void vk_dump_draw(VkExec *ex, const VkPipeState *s, VkPipeline p, const VkPipeIn
 void vk_dump_dispatch(VkExec *ex, const GfxShader *cs, VkPipeline p, const VkPipeInfo *info, const p_dispatch *d);
 void vk_dump_blocked_dispatch(VkExec *ex, const p_dispatch *d, uint64_t indirect, const char *reason);
 void vk_dump_blocked_draw(VkExec *ex, int prim, int32_t count, unsigned missing_stages);
+void vk_dump_blocked_mesh(VkExec *ex, const p_draw_mesh *draw);
 void vk_dump_copy_image(VkExec *ex, VkImage image, VkBuffer buffer, const VkBufferImageCopy *region);
 void vk_dump_copy(VkExec *ex, uint32_t op, const void *payload);   // before a copy or texture clear is replayed
 void vk_dump_present(uint64_t frame);    // vk_be_present: waits for the dump frame's copies and closes the logs
