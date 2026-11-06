@@ -1,0 +1,15 @@
+diff --git a/src/Ryujinx.Graphics.Shader/Translation/ResourceManager.cs b/src/Ryujinx.Graphics.Shader/Translation/ResourceManager.cs
+--- a/src/Ryujinx.Graphics.Shader/Translation/ResourceManager.cs
++++ b/src/Ryujinx.Graphics.Shader/Translation/ResourceManager.cs
+@@ -245,7 +245,10 @@ namespace Ryujinx.Graphics.Shader.Translation
+             {
+                 // A known sampled handle also needs a numeric component class.
+                 // Dynamic descriptor arrays can contain unrelated formats.
+-                format = arrayLength == 1 && type != SamplerType.None && (handle >>> 28) != 4
++                // Depth-compare (shadow) samples always read a floating-point depth image: Vulkan requires a float
++                // sampled type for Dref sampling, and a descriptor that reports an integer format here (an aliased or
++                // stale slot) would otherwise make the module invalid; AMD then returns wrong shadow/fog terms.
++                format = arrayLength == 1 && type != SamplerType.None && !type.HasFlag(SamplerType.Shadow) && (handle >>> 28) != 4
+                     ? _gpuAccessor.QueryTextureFormat(handle, cbufSlot) : TextureFormat.Unknown;
+             }
+ 

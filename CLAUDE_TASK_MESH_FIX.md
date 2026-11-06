@@ -29,6 +29,16 @@ Changes in the branch (`git diff 68f5d8e..fix/mesh-foliage`):
    `mesh: draw not prepared ...`.
 4. `runtime/vk_pipeline.c`: a log line when a task/mesh stage uses subgroup operations but cannot be pinned to 32 lanes.
 
+5. **Branch `test2` only:** translator patch `tools/xlate/patches/0025-shadow-samples-stay-float.patch`
+   (`build_xlate.py` now expects 25 patches). Patch 0019 typed every sampled image by the descriptor's format,
+   depth-compare (shadow) samplers included. A shadow slot whose descriptor reports an integer format (the
+   open `VUID-vkCmdDrawIndexed-None-06479` case, RGBA8 sampled with depth comparison) then produced an integer Dref image
+   type, which is invalid SPIR-V. Shadow samples now always stay FP32, as before 0019. Behavioural reference: Lichii PR
+   #273 ("keep depth-compare images floating-point even when a texture descriptor reports an integer format"); the
+   code is written independently, nothing copied. Requires rebuilding the translator
+   (`third_party/dkb/tools/build_xlate.py`) and a **new `TOTK_SHADER_CACHE` directory**. The translator id changes
+   anyway. Checked here only with `git apply` against the full patch chain, with and without 0014.
+
 Known and not fixed: an indirect mesh draw's group count is not clamped to `maxMeshWorkGroupCount[0]`/
 `maxTaskWorkGroupCount[0]`. A GPU-side clamp would need a small compute pass.
 
