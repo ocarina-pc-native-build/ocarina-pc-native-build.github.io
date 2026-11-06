@@ -809,3 +809,30 @@ is `native uniform arithmetic register`: they write UR28 and above, which
 Lichii maps through its dynamic high-uniform register range. Thin bluish
 streaks appear in frame 3900 only in the runs with these extra lowerings; they
 may be a new artifact of the newly executed mesh shaders and are not resolved.
+### Uniform registers above UR27 (task point 7, 2026-11-06)
+
+With `f27f05e` the Eglantine lowering maps UR28 and up below R216. `lower_probe`
+over the 8382 dumped stages: 8269 lower, as with `e792787`; 0 gained, 0 lost,
+0 changed. The 31 stages rejected before with `native uniform arithmetic
+register` (16) and `native register-to-uniform mode` (15) now pass those
+instructions and stop at the next one, `native uniform immediate move mode`
+(31): UMOV with an immediate into UR16 and up, which this lowering still limits
+to UR0-UR15. A local trial with Lichii's form for it (any mapped uniform
+register) again gained 0 stages: the same stages then stop at USEL under a
+uniform predicate (29), SEL and LEA with a uniform operand (0xc07, 0xc11) and
+UIMAD (0x4a4).
+
+The rebuilt runtime (translator identity unchanged, `f4c6681855057144`) ran the
+Kokiri Forest replay with a new shader cache. The first, cold run stayed in
+the load menu because the timed inputs ran ahead of the slower boot; the warm
+run reached the forest. Its rejection counts: 41 `uniform immediate move
+mode` (mesh), 20 `register spill operand shape` (mesh) and 14 (other stages),
+12 `unsupported native opcode` and 5 more in mesh stages, 11 `call linkage
+mode` (mesh), 6 `uniform select mode` (mesh), 2 `global reduction mode`, 1
+`LEA carry/high mode`; 71 translation failures as before. Mesh draws are still
+skipped only for unlowered mesh stages, and `5cb142ded77487e9` is still the
+only newly executed vegetation mesh shader.
+
+Frames 3600 and 3900 show no tree crowns, and the light shafts and haze are
+unchanged (8-bit screenshot mean 159-163). Fog composite at frame 3900:
+median 0.022 before and 0.283 after, mean 0.179 and 0.397.
