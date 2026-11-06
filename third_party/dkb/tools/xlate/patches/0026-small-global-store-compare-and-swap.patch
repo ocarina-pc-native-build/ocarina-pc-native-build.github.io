@@ -1,0 +1,34 @@
+diff --git a/src/Ryujinx.Graphics.Shader/Instructions/InstEmitMemory.cs b/src/Ryujinx.Graphics.Shader/Instructions/InstEmitMemory.cs
+--- a/src/Ryujinx.Graphics.Shader/Instructions/InstEmitMemory.cs
++++ b/src/Ryujinx.Graphics.Shader/Instructions/InstEmitMemory.cs
+@@ -598,9 +598,11 @@ namespace Ryujinx.Graphics.Shader.Instructions
+             context.Copy(Register(dest), value);
+         }
+ 
+-        // Stores clear the field, then set it, with two 32-bit atomics on the containing word. Bytes
+-        // of the same word written by other invocations stay intact; a plain read-modify-write would
+-        // lose them. Atomic AND/OR on 32-bit words are within the candidate-mode contract.
++        // Stores replace the field with a 32-bit compare-and-swap loop on the containing word. Bytes of the
++        // same word written by other invocations stay intact (a plain read-modify-write would lose them), and
++        // two invocations storing different values to the same field leave one of them, as the hardware does.
++        // Separate AtomicAnd/AtomicOr steps would OR both values together and expose a transient zero.
++        // The word is re-read atomically on every try, as patch 0024 does, so a stale cache line cannot spin.
+         private static void EmitGuardedSmallStg(
+             EmitterContext context,
+             LsSize2 size,
+@@ -620,8 +622,13 @@ namespace Ryujinx.Graphics.Shader.Instructions
+             Operand mask = context.ShiftLeft(Const(fieldMask), bitOffset);
+             Operand bits = context.ShiftLeft(context.BitwiseAnd(value, Const(fieldMask)), bitOffset);
+ 
+-            context.AtomicAnd(StorageKind.GlobalMemory, wordLow, addrHigh, context.BitwiseNot(mask));
+-            context.AtomicOr(StorageKind.GlobalMemory, wordLow, addrHigh, bits);
++            Operand keep = context.BitwiseNot(mask);
++            Operand retry = Label();
++            context.MarkLabel(retry);
++            Operand observed = context.AtomicOr(StorageKind.GlobalMemory, wordLow, addrHigh, Const(0));
++            Operand updated = context.BitwiseOr(context.BitwiseAnd(observed, keep), bits);
++            Operand previous = context.AtomicCompareAndSwap(StorageKind.GlobalMemory, wordLow, addrHigh, observed, updated);
++            context.BranchIfTrue(retry, context.ICompareNotEqual(previous, observed));
+         }
+ 
+         private static StorageKind GetStorageKind(LsSize size)
