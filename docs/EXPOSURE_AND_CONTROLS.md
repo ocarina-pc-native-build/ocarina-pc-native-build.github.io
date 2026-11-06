@@ -836,3 +836,30 @@ only newly executed vegetation mesh shader.
 Frames 3600 and 3900 show no tree crowns, and the light shafts and haze are
 unchanged (8-bit screenshot mean 159-163). Fog composite at frame 3900:
 median 0.022 before and 0.283 after, mean 0.179 and 0.397.
+### Uniform forms under UPn guards and from high registers (2026-11-06)
+
+After `f27f05e` the Eglantine lowering also takes, as Lichii v13 does: UMOV
+with an immediate into any mapped uniform register; SEL (0xc07) and LEA
+(0xc11, low word) with a uniform operand; UIMAD with an immediate (0x4a4, as
+IMAD 0x424); USEL and UISETP under a UPn guard, with the guard loaded from R239
+together with the condition (and, for UISETP, the old output so a false guard
+keeps it); and USHF under a UPn guard through the existing guard swap.
+`lower_probe`: the 8382 dumped stages go from 8269 to 8322 lowered (53 gained,
+0 lost, 0 changed), the 4573 stages of the forest run from 4505 to 4534 (29
+gained, 0 lost, 0 changed). Eight of the gained stages are tensor programs; the
+50 tensor programs Eglantine lowered before keep running too, and the warm
+forest run stayed at 57.7 fps mean.
+
+`render_regressions.cpp` had 225 failures already at `f27f05e`: two checks
+still required UR28 to be rejected (a bindless texture handle in UR28 and a
+USHF into UR28). They now use UR62, which needs more than the 34 registers the
+high-uniform lowering reserves; 16180777 checks, 0 failures.
+
+In the forest replay the lowering rejections fall from 112 to 59: 24 register
+spill operand shape (mesh) and 14 (other stages), 11 call linkage (mesh), 4 LEA
+carry/high, 3 uniform move (mesh), 2 global reduction, 1 unsupported opcode.
+The skipped-mesh log still reaches its 32-line limit, so the number of mesh
+draws that now execute is not measured. Frames 3600 and 3900 show no tree
+crowns, the light shafts and haze are unchanged (screenshot mean 164-169), and
+the thin bluish streaks are present. Fog composite at frame 3900: median 0.045
+before and 0.287 after, mean 0.205 and 0.431.
