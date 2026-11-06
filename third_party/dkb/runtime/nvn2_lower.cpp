@@ -169,6 +169,9 @@ Lowered *lower(const uint8_t *control, const uint8_t *code) {
                        (int)eglantine_error.size(), eglantine_error.data(), eglantine_error_offset);
             lowered_code = std::move(alt.instructions);
             lowered_offsets = std::move(alt.source_instruction_offsets);
+        } else if (alt && banked) {
+            rt_log("nvn2: shader %016llx Lichii fallback lowered it with banked registers past R255: rejected",
+                   (unsigned long long)gfx_shader_nvn2_hash(control, code));
         } else if (!alt && !lnative.empty()) {
             rt_log("nvn2: shader %016llx Lichii fallback also failed at +%#x: %.*s",
                    (unsigned long long)gfx_shader_nvn2_hash(control, code), alt.error_offset,
@@ -176,9 +179,15 @@ Lowered *lower(const uint8_t *control, const uint8_t *code) {
         }
     }
     if (lowered_code.empty()) {
-        rt_log("nvn2: shader %016llx stage %u Ampere lowering failed at +%#x: %.*s",
+        // The rejected native instruction itself (four 32-bit words, opcode in bits 0-11), so the missing lowering
+        // form can be read from the log without a shader dump.
+        uint32_t words[4]{};
+        if (eglantine_error_offset / 16 < native.size())
+            std::memcpy(words, native[eglantine_error_offset / 16].words.data(), sizeof words);
+        rt_log("nvn2: shader %016llx stage %u%s Ampere lowering failed at +%#x: %.*s (insn %08x %08x %08x %08x)",
                (unsigned long long)gfx_shader_nvn2_hash(control, code), gfx ? (w0 >> 10) & 15 : 0,
-               eglantine_error_offset, (int)eglantine_error.size(), eglantine_error.data());
+               mesh ? (task ? " task" : " mesh") : "", eglantine_error_offset, (int)eglantine_error.size(),
+               eglantine_error.data(), words[0], words[1], words[2], words[3]);
         return nullptr;
     }
 
