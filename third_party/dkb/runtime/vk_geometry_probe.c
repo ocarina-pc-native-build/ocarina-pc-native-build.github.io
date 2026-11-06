@@ -83,6 +83,20 @@ static uint32_t gp_program(unsigned stage, uint8_t control[GP_CONTROL], uint8_t 
         ops[n++] = gp_attr(0, 0x70, 255, 1, 4);
         ops[n++] = gp_movi(8, 0x3f800000u);
         ops[n++] = gp_attr(8, 0x6c, 255, 1, 1);  // valid PointSize in the GS-disabled points control
+        if (getenv("DKB_PROBE_LOCAL_ORDER")) {
+            // The loaded color must survive a later overwrite of its local-memory slot.
+            // Expression propagation may move arithmetic, but cannot defer this load.
+            gp_u32(code + GP_SKIP + 4, 16);
+            ops[n++] = UINT64_C(0xef50000000000000) | UINT64_C(4) << 48 |
+                       UINT64_C(7) << 16 | UINT64_C(255) << 8 | 4;
+            ops[n++] = UINT64_C(0xef40000000000000) | UINT64_C(4) << 48 |
+                       UINT64_C(7) << 16 | UINT64_C(255) << 8 | 9;
+            ops[n++] = gp_movi(10, 0x3f000000u);
+            ops[n++] = UINT64_C(0xef50000000000000) | UINT64_C(4) << 48 |
+                       UINT64_C(7) << 16 | UINT64_C(255) << 8 | 10;
+            ops[n++] = UINT64_C(0x5c98000000000000) | UINT64_C(15) << 39 |
+                       UINT64_C(9) << 20 | UINT64_C(7) << 16 | 4;
+        }
         ops[n++] = gp_attr(4, 0x80, 255, 1, 4);
     } else if (stage == 1) {
         gp_u32(code + GP_SKIP + 6 * 4, 0xff);    // Location0 screen-linear RGBA interpolation
@@ -300,6 +314,240 @@ done:
     return ok;
 }
 
+// Reports sample a running counter; they must not stop it. Exercise consecutive
+// reports, a pass boundary, a submission boundary, resets and genuinely empty draws.
+static int gp_occlusion_reports(uint8_t *memory, void *control) {
+    int ok = 0;
+    enum { offset = 0x42000, guard_size = 512, reports = 10 };
+    uint8_t *guard = memory + offset;
+    NVNcounterData *result = (NVNcounterData *)(guard + 64);
+    VkPhysicalDeviceFeatures features;
+    vkGetPhysicalDeviceFeatures(vk_ctx()->phys, &features);
+    GP_REQUIRE(features.occlusionQueryPrecise, "precise occlusion counts for exact coverage checks");
+    memset(guard, 0xa5, guard_size);
+    GP_CALL(nvnMemoryPoolFlushMappedRange, GP_U(&gp_memory_pool), offset, guard_size);
+    unsigned coverage = 0;
+    for (unsigned y = 0; y < GP_HEIGHT; y++) for (unsigned x = 0; x < GP_WIDTH; x++)
+        coverage += gp_inside(x, y, 0);
+
+#define GP_REPORT(i) GP_CALL(nvnCommandBufferReportCounter, GP_U(&gp_command), \
+    NVN_COUNTER_TYPE_SAMPLES_PASSED, GP_U(&result[i]))
+#define GP_TRIANGLE() GP_CALL(nvnCommandBufferDrawArrays, GP_U(&gp_command), NVN_DRAW_PRIMITIVE_TRIANGLES, 0, 3)
+#define GP_RESET_COUNT() GP_CALL(nvnCommandBufferResetCounter, GP_U(&gp_command), NVN_COUNTER_TYPE_SAMPLES_PASSED)
+    gp_prefix(memory, control, 1);
+    GP_RESET_COUNT();
+    GP_TRIANGLE(); GP_REPORT(0);
+    GP_TRIANGLE(); GP_REPORT(1);
+    GP_CALL(nvnCommandBufferBarrier, GP_U(&gp_command), NVN_BARRIER_ORDER_PRIMITIVES_BIT);
+    GP_TRIANGLE(); GP_REPORT(2);
+    GP_REQUIRE(gp_submit(), "consecutive occlusion reports complete");
+    gp_prefix(memory, control, 1);
+    GP_TRIANGLE(); GP_REPORT(3);
+    GP_REQUIRE(gp_submit(), "occlusion count survives a submission boundary");
+    gp_prefix(memory, control, 1);
+    GP_RESET_COUNT(); GP_REPORT(4);
+    GP_CALL(nvnCommandBufferSetScissor, GP_U(&gp_command), 0, 0, 0, 0);
+    GP_TRIANGLE(); GP_REPORT(5);
+    GP_CALL(nvnCommandBufferSetScissor, GP_U(&gp_command), 0, 0, GP_WIDTH, GP_HEIGHT);
+    GP_TRIANGLE(); GP_REPORT(6); GP_REPORT(7);
+    GP_RESET_COUNT(); GP_REPORT(8);
+    GP_TRIANGLE(); GP_REPORT(9);
+    GP_REQUIRE(gp_submit(), "empty, repeated and reset occlusion reports complete");
+#undef GP_REPORT
+#undef GP_TRIANGLE
+#undef GP_RESET_COUNT
+    static const unsigned multiples[reports] = {1, 2, 3, 4, 0, 0, 1, 1, 0, 1};
+    unsigned failures_before = gp_failures;
+    for (unsigned i = 0; i < reports; i++) {
+        uint64_t expected = (uint64_t)coverage * multiples[i];
+        gp_checks++;
+        if (result[i].counter != expected || !result[i].timestamp) {
+            printf("probe-vkgeometry: FAIL occlusion report %u: %llu samples, expected %llu, timestamp %llu\n",
+                i, (unsigned long long)result[i].counter, (unsigned long long)expected,
+                (unsigned long long)result[i].timestamp);
+            gp_failures++;
+        }
+    }
+    for (unsigned i = 0; i < guard_size; i++) if (i < 64 || i >= 64 + reports * sizeof *result) {
+        gp_checks++;
+        if (guard[i] != 0xa5) gp_failures++;
+    }
+    ok = gp_failures == failures_before;
+    printf("probe-vkgeometry: cumulative occlusion reports %s, exact triangle coverage %u\n", ok ? "passed" : "FAILED", coverage);
+done:
+    return ok;
+}
+
+// A condition must not read stale host counters merely because many other
+// reports were recorded later in the same, still unsubmitted command buffer.
+static int gp_pending_condition(uint8_t *memory, void *control) {
+    int ok = 0, orientation;
+    enum { offset = 0x60000, reports = 1025 };
+    NVNcounterData *result = (NVNcounterData *)(memory + offset);
+    uint32_t pixels[GP_WIDTH * GP_HEIGHT];
+    memset(result, 0, (reports + 2) * sizeof *result);
+    GP_CALL(nvnMemoryPoolFlushMappedRange, GP_U(&gp_memory_pool), offset, (reports + 2) * sizeof *result);
+    gp_prefix(memory, control, 1);
+    GP_CALL(nvnCommandBufferResetCounter, GP_U(&gp_command), NVN_COUNTER_TYPE_SAMPLES_PASSED);
+    GP_CALL(nvnCommandBufferDrawArrays, GP_U(&gp_command), NVN_DRAW_PRIMITIVE_TRIANGLES, 0, 3);
+    GP_CALL(nvnCommandBufferReportCounter, GP_U(&gp_command), NVN_COUNTER_TYPE_SAMPLES_PASSED, GP_U(&result[0]));
+    for (unsigned i = 2; i < reports + 2; i++)
+        GP_CALL(nvnCommandBufferReportCounter, GP_U(&gp_command), NVN_COUNTER_TYPE_TIMESTAMP, GP_U(&result[i]));
+    static const float blue[4] = {0, 0, 1, 1};
+    GP_CALL(nvnCommandBufferClearColor, GP_U(&gp_command), 0, GP_U(blue), 15);
+    GP_CALL(nvnCommandBufferSetRenderEnableConditional, GP_U(&gp_command), 1, GP_U(result));
+    GP_CALL(nvnCommandBufferDrawArrays, GP_U(&gp_command), NVN_DRAW_PRIMITIVE_TRIANGLES, 0, 3);
+    GP_CALL(nvnCommandBufferSetRenderEnable, GP_U(&gp_command), 1);
+    GP_REQUIRE(gp_submit(), "many pending counter reports complete");
+    GP_REQUIRE(result[0].counter > 0 && result[1].counter == 0, "visibility producer counter completed");
+    GP_REQUIRE(gp_pixels(pixels, 0xff00ff00u, &orientation), "pending visibility report survives later reports");
+    gp_prefix(memory, control, 1);
+    GP_CALL(nvnCommandBufferSetRenderEnableConditional, GP_U(&gp_command), 1, GP_U(result));
+    GP_CALL(nvnCommandBufferDrawArrays, GP_U(&gp_command), NVN_DRAW_PRIMITIVE_TRIANGLES, 0, 3);
+    GP_CALL(nvnCommandBufferSetRenderEnable, GP_U(&gp_command), 1);
+    GP_REQUIRE(gp_submit(), "completed counter condition completes");
+    GP_REQUIRE(gp_pixels(pixels, 0xff00ff00u, &orientation), "completed visibility report is readable");
+    gp_prefix(memory, control, 1);
+    GP_CALL(nvnCommandBufferSetRenderEnableConditional, GP_U(&gp_command), 0, GP_U(result));
+    GP_CALL(nvnCommandBufferDrawArrays, GP_U(&gp_command), NVN_DRAW_PRIMITIVE_TRIANGLES, 0, 3);
+    GP_CALL(nvnCommandBufferSetRenderEnable, GP_U(&gp_command), 1);
+    GP_REQUIRE(gp_submit(), "completed false condition completes");
+    GP_REQUIRE(gp_pixels(pixels, 0xffff0000u, &orientation), "completed unequal values still suppress equality draw");
+    gp_prefix(memory, control, 1);
+    GP_CALL(nvnCommandBufferReportCounter, GP_U(&gp_command), NVN_COUNTER_TYPE_SAMPLES_PASSED, GP_U(result));
+    GP_CALL(nvnCommandBufferReportCounter, GP_U(&gp_command), NVN_COUNTER_TYPE_TIMESTAMP, GP_U(result));
+    GP_CALL(nvnCommandBufferSetRenderEnableConditional, GP_U(&gp_command), 1, GP_U(result));
+    GP_CALL(nvnCommandBufferDrawArrays, GP_U(&gp_command), NVN_DRAW_PRIMITIVE_TRIANGLES, 0, 3);
+    GP_CALL(nvnCommandBufferSetRenderEnable, GP_U(&gp_command), 1);
+    GP_REQUIRE(gp_submit(), "overwritten pending counter completes");
+    GP_REQUIRE(result[0].counter == 0 && result[0].timestamp, "latest report overwrites the sample count");
+    GP_REQUIRE(gp_pixels(pixels, 0xffff0000u, &orientation), "latest timestamp report controls the condition");
+    gp_prefix(memory, control, 1);
+    GP_CALL(nvnCommandBufferResetCounter, GP_U(&gp_command), NVN_COUNTER_TYPE_SAMPLES_PASSED);
+    GP_CALL(nvnCommandBufferReportCounter, GP_U(&gp_command), NVN_COUNTER_TYPE_SAMPLES_PASSED, GP_U(result));
+    GP_CALL(nvnCommandBufferSetRenderEnableConditional, GP_U(&gp_command), 1, GP_U(result));
+    static const float red[4] = {1, 0, 0, 1};
+    GP_CALL(nvnCommandBufferClearColor, GP_U(&gp_command), 0, GP_U(red), 15);
+    GP_CALL(nvnCommandBufferDrawArrays, GP_U(&gp_command), NVN_DRAW_PRIMITIVE_TRIANGLES, 0, 3);
+    GP_CALL(nvnCommandBufferSetRenderEnable, GP_U(&gp_command), 1);
+    GP_REQUIRE(gp_submit(), "pending zero-count condition completes");
+    GP_REQUIRE(result[0].counter == 0, "zero-count report has no covered samples");
+    GP_REQUIRE(gp_pixels(pixels, 0xffff0000u, &orientation), "pending false condition suppresses clears and draws");
+    gp_prefix(memory, control, 1);
+    GP_CALL(nvnCommandBufferResetCounter, GP_U(&gp_command), NVN_COUNTER_TYPE_SAMPLES_PASSED);
+    for (unsigned i = 0; i < 3; i++) {
+        GP_CALL(nvnCommandBufferDrawArrays, GP_U(&gp_command), NVN_DRAW_PRIMITIVE_TRIANGLES, 0, 3);
+        GP_CALL(nvnCommandBufferReportCounter, GP_U(&gp_command), NVN_COUNTER_TYPE_SAMPLES_PASSED, GP_U(result));
+        GP_CALL(nvnCommandBufferSetRenderEnableConditional, GP_U(&gp_command), 1, GP_U(result));
+        GP_CALL(nvnCommandBufferSetRenderEnable, GP_U(&gp_command), 1);
+        if (i == 1) {
+            GP_CALL(nvnCommandBufferReportCounter, GP_U(&gp_command), NVN_COUNTER_TYPE_TIMESTAMP, GP_U(result));
+            GP_CALL(nvnCommandBufferSetRenderEnableConditional, GP_U(&gp_command), 0, GP_U(result));
+            GP_CALL(nvnCommandBufferClearColor, GP_U(&gp_command), 0, GP_U(blue), 15);
+            GP_CALL(nvnCommandBufferSetRenderEnable, GP_U(&gp_command), 1);
+        }
+    }
+    GP_CALL(nvnCommandBufferResetCounter, GP_U(&gp_command), NVN_COUNTER_TYPE_SAMPLES_PASSED);
+    GP_CALL(nvnCommandBufferReportCounter, GP_U(&gp_command), NVN_COUNTER_TYPE_SAMPLES_PASSED, GP_U(&result[2]));
+    GP_CALL(nvnCommandBufferSetRenderEnableConditional, GP_U(&gp_command), 1, GP_U(&result[2]));
+    GP_CALL(nvnCommandBufferClearColor, GP_U(&gp_command), 0, GP_U(red), 15);
+    GP_CALL(nvnCommandBufferSetRenderEnable, GP_U(&gp_command), 1);
+    GP_REQUIRE(gp_submit(), "multiple conditional prefixes and reset complete");
+    unsigned coverage = 0;
+    for (unsigned y = 0; y < GP_HEIGHT; y++) for (unsigned x = 0; x < GP_WIDTH; x++)
+        coverage += gp_inside(x, y, 0);
+    GP_REQUIRE(result[0].counter == 3 * coverage && result[2].counter == 0,
+        "prefix snapshots preserve overwrite order and count samples exactly once");
+    GP_REQUIRE(gp_pixels(pixels, 0xff00ff00u, &orientation), "reset after resolved prefixes suppresses destructive clear");
+    puts("probe-vkgeometry: pending condition survives 1025 later reports and completion");
+    ok = 1;
+done:
+    return ok;
+}
+
+// Original depth-export fixture: partial color masks still reserve four GPRs
+// per active target. Distinct filler values expose a component-count mistake.
+static int gp_fragment_depth(uint8_t *memory, void *control) {
+    int ok = 0, depth_live = 0, program_live = 0;
+    static _Alignas(16) NVNtexture depth;
+    static _Alignas(16) NVNprogram program;
+    static _Alignas(16) uint8_t fs_control[GP_CONTROL], fs_code[GP_CODE];
+    GP_CALL(nvnTextureBuilderSetFormat, GP_U(&gp_texture_builder), NVN_FORMAT_DEPTH32F);
+    GP_CALL(nvnTextureBuilderSetStorage, GP_U(&gp_texture_builder), GP_U(&gp_memory_pool), 0x80000);
+    GP_REQUIRE(GP_CALL(nvnTextureBuilderGetStorageSize, GP_U(&gp_texture_builder)) <= 0x10000,
+        "bounded fragment-depth storage");
+    GP_REQUIRE((uint8_t)GP_CALL(nvnTextureInitialize, GP_U(&depth), GP_U(&gp_texture_builder)),
+        "fragment-depth texture initialization");
+    depth_live = 1;
+    static const uint32_t masks[] = {0, 15, 1, 0x10f, 0x80000001u, 0xffffffffu};
+    for (unsigned test = 0; test < sizeof masks / sizeof *masks; test++) {
+        uint32_t mask = masks[test];
+        unsigned targets = 0;
+        for (unsigned i = 0; i < 8; i++) targets += !!((mask >> (4 * i)) & 15);
+        unsigned depth_register = 4 * targets + 1;
+        memset(fs_control, 0, sizeof fs_control), memset(fs_code, 0, sizeof fs_code);
+        gp_u32(fs_code + GP_SKIP, 1u | 3u << 5 | 5u << 10);
+        gp_u32(fs_code + GP_SKIP + 18 * 4, mask);
+        gp_u32(fs_code + GP_SKIP + 19 * 4, 2); // depth export
+        uint64_t ops[35];
+        for (unsigned i = 0; i < 34; i++)
+            ops[i] = gp_movi(i, i == depth_register ? 0x3e800000u : 0x3f400000u);
+        ops[34] = UINT64_C(0xe30000000007000f);
+        for (unsigned g = 0; g < 12; g++) {
+            uint64_t words[4] = {UINT64_C(0x001f8000fc0007e0), 0, 0, 0};
+            for (unsigned lane = 0; lane < 3; lane++)
+                if (3 * g + lane < 35) words[lane + 1] = ops[3 * g + lane];
+            memcpy(fs_code + GP_SKIP + 0x50 + g * 32, words, sizeof words);
+        }
+        gp_u32(fs_control + 0x700, GP_SKIP + 0x50 + 12 * 32);
+        gp_u32(fs_control + 0x704, GP_SKIP + 0x50 + 12 * 32);
+        gp_u32(fs_control + 0x714, 1);
+        NVNshaderData stages[2] = {{GP_U(gp_code[0]), gp_control[0]}, {GP_U(fs_code), fs_control}};
+        GP_REQUIRE((uint8_t)GP_CALL(nvnProgramInitialize, GP_U(&program), GP_U(&gp_device)),
+            "fragment-depth program initialization");
+        program_live = 1;
+        GP_REQUIRE((uint8_t)GP_CALL(nvnProgramSetShaders, GP_U(&program), 2, GP_U(stages)),
+            "original fragment-depth program");
+        gp_prefix(memory, control, 1);
+        const NVNtexture *color = &gp_color;
+        GP_CALL(nvnCommandBufferSetRenderTargets, GP_U(&gp_command), 1, GP_U(&color), 0, GP_U(&depth), 0);
+        gp_cpu.v[0] = 0x3f800000u;
+        GP_CALL(nvnCommandBufferClearDepthStencil, GP_U(&gp_command), 1, 0, 0);
+        NVNdepthStencilState ds;
+        GP_CALL(nvnDepthStencilStateSetDefaults, GP_U(&ds));
+        GP_CALL(nvnDepthStencilStateSetDepthTestEnable, GP_U(&ds), 1);
+        GP_CALL(nvnDepthStencilStateSetDepthWriteEnable, GP_U(&ds), 1);
+        GP_CALL(nvnDepthStencilStateSetDepthFunc, GP_U(&ds), NVN_DEPTH_FUNC_ALWAYS);
+        GP_CALL(nvnCommandBufferBindDepthStencilState, GP_U(&gp_command), GP_U(&ds));
+        GP_CALL(nvnCommandBufferBindProgram, GP_U(&gp_command), GP_U(&program),
+            NVN_SHADER_STAGE_VERTEX_BIT | NVN_SHADER_STAGE_FRAGMENT_BIT);
+        GP_CALL(nvnCommandBufferDrawArrays, GP_U(&gp_command), NVN_DRAW_PRIMITIVE_TRIANGLES, 0, 3);
+        GP_REQUIRE(gp_submit(), "fragment-depth submission completion");
+        float pixels[GP_WIDTH * GP_HEIGHT];
+        memset(pixels, 0xa5, sizeof pixels);
+        NVNcopyRegion region = {0, 0, 0, GP_WIDTH, GP_HEIGHT, 1};
+        GP_CALL(nvnTextureReadTexels, GP_U(&depth), 0, GP_U(&region), GP_U(pixels));
+        unsigned bad[2] = {0, 0};
+        for (unsigned y = 0; y < GP_HEIGHT; y++) for (unsigned x = 0; x < GP_WIDTH; x++)
+            for (int flip = 0; flip < 2; flip++)
+                bad[flip] += pixels[y * GP_WIDTH + x] != (gp_inside(x, y, flip) ? 0.25f : 1.0f);
+        gp_checks += GP_WIDTH * GP_HEIGHT;
+        if (bad[0] && bad[1]) {
+            printf("probe-vkgeometry: FAIL fragment-depth mask %#x register %u (%u/%u mismatches)\n",
+                mask, depth_register, bad[0], bad[1]);
+            gp_failures++;
+        }
+        GP_CALL(nvnProgramFinalize, GP_U(&program));
+        program_live = 0;
+    }
+    ok = 1;
+done:
+    gfx_vulkan_backend.finish();
+    if (program_live) GP_CALL(nvnProgramFinalize, GP_U(&program));
+    if (depth_live) GP_CALL(nvnTextureFinalize, GP_U(&depth));
+    return ok;
+}
+
 static int gp_run(int passthrough, int ordered) {
     gp_passthrough = passthrough;
     const GfxBackend *backend = &gfx_vulkan_backend;
@@ -408,6 +656,9 @@ static int gp_run(int passthrough, int ordered) {
         GP_REQUIRE(!memcmp(guard, after, sizeof guard), "indirect consumption preserves argument record/canaries");
         if (ordered) GP_REQUIRE(gp_ordered(memory, control, record_address, guard, first_orientation), "same-submission ordering round");
     } else printf("probe-vkgeometry: indexed-indirect SKIPPED: exact bounded argument preflight failed\n");
+    GP_REQUIRE(gp_occlusion_reports(memory, control), "cumulative visibility counter semantics");
+    GP_REQUIRE(gp_pending_condition(memory, control), "pending visibility condition retention");
+    GP_REQUIRE(gp_fragment_depth(memory, control), "fragment-depth register groups");
     GP_REQUIRE(gfx_shader_failures() == shader_failures, "no translation failures");
     if (gp_passthrough) {
         GfxShaderAnswers answers = {0};

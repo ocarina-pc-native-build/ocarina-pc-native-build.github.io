@@ -89,7 +89,7 @@ typedef struct VkExec {
 
     // ---- vk_exec_xfer.c slots (render enable, conditional rendering): left empty by vk_exec.c
     int render_disabled;                 // OP_RENDER_ENABLE false or a failed OP_RENDER_COND: clears and draws skip
-    p_render_cond render_cond;           // last OP_RENDER_COND
+    p_render_cond render_cond;           // active OP_RENDER_COND, until OP_RENDER_ENABLE
     int has_render_cond;
 
     // ---- internal to vk_exec.c
@@ -190,6 +190,9 @@ void vk_exec_op_draw(VkExec *ex, uint32_t op, const void *payload);
 VkImageAspectFlags vk_exec_view_aspect(const VkTexImage *img, const view_t *v, int hv);
 VkImageView vk_exec_target_view(const VkTexImage *img, VkFormat format, VkImageViewType type, uint32_t aspect,
                                 uint32_t level, uint32_t base, uint32_t layers, int blocks);   // kept for the image's life
+void vk_exec_trace_clear(VkExec *ex, int color_index);
+void vk_exec_wait_prefix(VkExec *ex);
+
 // vk_exec_xfer.c: OP_COPY_B2B, OP_COPY_B2T, OP_COPY_T2B, OP_COPY_T2T, OP_CLEAR_TEX, OP_SIGNAL_EVENT, OP_REPORT_COUNTER,
 // OP_RESET_COUNTER, OP_RENDER_ENABLE, OP_RENDER_COND, OP_CLEAR_BUF.
 void vk_exec_op_xfer(VkExec *ex, uint32_t op, const void *payload);

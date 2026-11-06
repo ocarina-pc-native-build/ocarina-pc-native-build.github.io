@@ -159,6 +159,9 @@ was checked against Eglantine's `frontend/maxwell/translate/impl/texture_gather.
 at that revision and Ryujinx's MIT `InstEmitTexture.EmitTld4`; the existing
 native scalar texture argument layout is retained. No upstream code was copied
 into the depth-gather CPU/GPU fixtures.
+Signed 20-bit IMNMX immediate encoding is selectively adapted from Eglantine
+`lower_to_maxwell.h` at `23f383cab532bf3834ea55f3488b48841f3c727b`, retaining
+the GPL header. Boundary and GPU arithmetic fixtures are original.
 
 The Windows OoT integration adapts image-copy pitch recording and 64-bit address
 wait comparison from nxnative (`dm/gfx/nvn/hle_nvn.c`, `dm/gfx/nvn/nvn_obj.h`, `dm/host/hle_thread.c`),

@@ -298,6 +298,36 @@ static void array_gather() {
     }
 }
 static void high_native_registers() {
+    // Constant/immediate comparisons contain encoded predicates and constants,
+    // not GPRs in their wide operand fields. Preserve those bits while spilling
+    // source/result registers, including a disabled write and an aliased result.
+    for(u32 opcode:{0xa0au,0x80bu}) for(u32 src:{215u,216u,239u,254u})
+    for(u32 dst:{4u,216u,239u,254u}) for(bool enabled:{false,true}) {
+        Instruction original{{(src<<24)|((opcode==0xa0a?dst:0)<<16)|0x7000|opcode,
+                              opcode==0xa0a?0x800000u:0x3f800000u,
+                              opcode==0xa0a?0x03801000u:0x03901000u,0}};
+        auto rewritten=original;NativeRegisterSpill plan;CHECK(plan.Prepare(rewritten));
+        CHECK(rewritten.words[1]==original.words[1] && rewritten.words[2]==original.words[2]);
+        if(opcode==0x80b)CHECK(rewritten.Bits(16,8)==0); // predicate fields are not spilled
+        std::array<u32,256> physical{},local{},expected{};
+        for(u32 r=0;r<255;r++){physical[r]=1000+r;expected[r]=r<216?1000+r:2000+r;}
+        for(u32 r=216;r<255;r++)local[r-216]=expected[r];
+        auto execute=[&](bool after) {
+            std::vector<u64> instructions;plan.Emit(instructions,after);
+            for(u64 m:instructions){const u32 reg=m&255,offset=(m>>20)&0xffffff;
+                CHECK(offset%4==0 && offset<NativeRegisterSpill::bytes);
+                if((m&0xfff0000000000000ull)==0xef50000000000000ull)local[offset/4]=physical[reg];
+                else physical[reg]=local[offset/4];
+            }
+        };
+        execute(false);CHECK(physical[rewritten.Bits(24,8)]==expected[src]);
+        if(enabled && opcode==0xa0a)physical[rewritten.Bits(16,8)]=expected[dst]=0x3f800000;
+        execute(true);
+        for(u32 r=0;r<255;r++)CHECK(physical[r]==(r<216?expected[r]:1000+r));
+        for(u32 r=216;r<255;r++)CHECK(local[r-216]==expected[r]);
+        Instruction end{{0x794d,0,0x03800000,0}};
+        CHECK(bool(LowerToMaxwell(std::array{original,end},"full",true)));
+    }
     // Every low register is live, and all uniform/scratch mirrors have distinct
     // values. Spilling a vector or an aliased scalar op must preserve both.
     for(u32 dst=216;dst<255;dst++) for(u32 src:{0u,4u,215u,216u,239u,248u,254u})

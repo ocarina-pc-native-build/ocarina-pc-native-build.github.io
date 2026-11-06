@@ -736,7 +736,10 @@ void vk_dump_draw(VkExec *ex, const VkPipeState *s, VkPipeline p, const VkPipeIn
         uint64_t o = nvn2_origin((const uint8_t *)(uintptr_t)ex->prog->sd[k].data);
         if (o) sp(&b, " nvn2 %016llx", (unsigned long long)o);
     }
-    sp(&b, "\n");
+    sp(&b, "\n    state depth-test=%u write=%u compare=%u stencil=%u cull=%u front=%u depth-range=%g,%g bias=%u alpha-to-coverage=%u discard=%u color-mask=%#x alpha-func=%u alpha-ref=%g\n",
+       s->ds.dt, s->ds.dw, s->ds.df, s->ds.st, s->poly.cull, s->poly.front,
+       ex->depth_range[0], ex->depth_range[1], s->poly.offset_en, s->ms.a2c,
+       s->raster_discard, s->chmask.mask, s->color.alpha_func, s->alpha_ref);
     describe_bindings(&b, ex, info);
     ents[nents++] = (Ent){p, th, 1, b.s};
 out:

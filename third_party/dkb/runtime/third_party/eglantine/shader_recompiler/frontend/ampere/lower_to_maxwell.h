@@ -73,13 +73,13 @@ struct NativeRegisterSpill {
         case 0x202: case 0x245: case 0x305: case 0x307: case 0x308: add(16); add(32); break;
         case 0x220: case 0x820: case 0xa20:
         case 0x209: case 0x809: case 0xa09: case 0x208: case 0x808:
-        case 0x20a: case 0x80a: case 0x217:
+        case 0x20a: case 0x80a: case 0xa0a: case 0x217:
             add(16); operand(0); operand(1); break;
         case 0x221: case 0x421: case 0x621:
             add(16); operand(0); operand(form == 2 || form == 3 ? 2 : 1); break;
         case 0x223: case 0x423: case 0x623: case 0x823: case 0xa23:
             add(16); operand(0); operand(1); operand(2); break;
-        case 0x20b: case 0x20c: operand(0); operand(1); break;
+        case 0x20b: case 0x80b: case 0x20c: operand(0); operand(1); break;
         case 0x210: case 0x810: case 0x224: case 0x824:
             add(16); add(24); if (form == 1) add(32); add(64); break;
         case 0x225: case 0x825:
@@ -584,8 +584,10 @@ inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code,
                 break;
             }
             if (insn.Bits(24, 8) == 255 && insn.words[1] == 255 && insn.Bits(74, 1) &&
-                (insn.words[2] & ~0x038004ffU) == 0x000e0000 && insn.Bits(64, 8) < 250) {
+                (insn.words[2] & ~0x038006ffU) == 0x000e0000 && insn.Bits(64, 8) < 250) {
                 // IMAD.X RZ * RZ + c + carry: the high half of a 64-bit add with a zero addend.
+                // Signed and unsigned multiplication both produce zero here; bit 73
+                // must not reject the signed form of the same low-word addition.
                 // UIMAD.X carries in UPn, swapped in from R239 bit 6-n as IADD3.X does.
                 const u32 carry_in = insn.Bits(87, 3);
                 const bool uniform_carry = rewritten_uniform && carry_in != 7;
@@ -2431,15 +2433,19 @@ inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code,
         }
         case 0x217: case 0x817: case 0xa17: case 0xc17: { // IMNMX register, immediate, cbuf or uniform operand.
             if ((insn.words[2] & ~(0x04000200U | (opcode == 0xc17 ? 0x08000000U : 0U))) != 0x03800000 ||
-                (opcode != 0xa17 && insn.words[1] > (opcode == 0x817 ? 0x7ffffU : 255U)) ||
+                (opcode == 0x817 && insn.words[1] > 0x7ffffU && insn.words[1] < 0xfff80000U) ||
+                (opcode != 0xa17 && opcode != 0x817 && insn.words[1] > 255U) ||
                 (opcode == 0xa17 && (!valid_cbuf() || insn.Bits(62, 2))))
                 return fail(index, "native integer min/max mode");
+            // Maxwell's 20-bit immediate has 19 payload bits and a separate sign bit.
             const u32 source = opcode == 0xc17   ? uniform_register(insn.words[1])
                                : opcode == 0xa17 ? operand(1, false)
+                               : opcode == 0x817 ? insn.words[1] & 0x7ffffU
                                                  : insn.words[1];
             if (source == ~0U) return fail(index, "native uniform min/max operand");
             emit(base(opcode == 0x817 ? 0x3820000000000000ULL : 0x5c20000000000000ULL) |
                  (u64{insn.Bits(24, 8)} << 8) | (u64{source} << 20) |
+                 (u64{opcode == 0x817 ? insn.words[1] >> 31 : 0U} << 56) |
                  (u64{insn.Bits(87, 4)} << 39) | (u64{insn.Bits(73, 1)} << 48));
             break;
         }

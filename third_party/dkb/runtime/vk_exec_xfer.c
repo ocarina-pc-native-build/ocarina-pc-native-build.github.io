@@ -19,11 +19,11 @@
 //
 // Conditional rendering is a CPU-side skip, not VK_EXT_conditional_rendering: the extension compares one 32-bit word
 // with zero, NVN compares the counter words at addr and addr + 16. The condition is evaluated when the op is recorded
-// from guest memory; a counter reported by an earlier submission that is not done yet counts as 0 if it is a timestamp,
-// as unknown if it is samples passed. An unknown count renders: the report usually sits in the command buffer being
-// recorded, so its value cannot be waited for, and the word in memory still holds an older query's count. Rendering
-// costs at most the work the condition would have saved (MacNativeGames nvn_mtl.m decides the same); in the field
-// TOTK conditions only on timestamp reports. The condition sets VkExec.render_disabled, which vk_exec.c honours for
+// from guest memory; an unfinished timestamp report has a known counter word of 0. An unfinished sample report
+// requires its actual query results: rendering speculatively can run destructive clears and additive draws. For a
+// report in the current submission, replay submits and waits only the recorded prefix, then resolves its segments
+// in order. The final fence remains pending, and completion callbacks later reapply the resolved snapshots without
+// counting their samples twice. The condition sets VkExec.render_disabled, which vk_exec.c honours for
 // clears and vk_exec_draw.c for draws and dispatches. A condition that cannot be read (address outside every pool)
 // renders.
 // Copies and CLEAR_TEX are not conditional (as in MacNativeGames, nvn_mtl.m).
@@ -116,18 +116,40 @@ static void counter_cb(void *arg) {
 
 // Reports queued by the replay that the GPU has not finished. The condition of RENDER_COND reads a timestamp one as 0
 // and a samples-passed one as unknown.
-#define PENDING 256
-static struct { uint64_t addr, fence; int unknown; } pending[PENDING];
-static unsigned pending_head;
+// Keep every unfinished report. A fixed ring can evict a still-pending sample
+// count before its conditional draw and expose the previous frame's host value.
+// Entries are in submission order, so only a completed prefix may be discarded.
+typedef struct { uint64_t addr, fence, value; int unknown; } PendingCounter;
+static PendingCounter *pending;
+static size_t pending_count, pending_capacity;
+
+static void pending_counter(uint64_t addr, uint64_t fence, int unknown) {
+    if (pending_count == pending_capacity) {
+        uint64_t done = vk_sync_fence_done();
+        size_t first = 0;
+        while (first < pending_count && pending[first].fence <= done) first++;
+        if (first) {
+            pending_count -= first;
+            memmove(pending, pending + first, pending_count * sizeof *pending);
+        } else {
+            size_t capacity = pending_capacity ? pending_capacity * 2 : 256;
+            if (capacity < pending_capacity || capacity > SIZE_MAX / sizeof *pending)
+                rt_fatal("vk: too many pending counters");
+            PendingCounter *p = realloc(pending, capacity * sizeof *pending);
+            if (!p) rt_fatal("vk: out of memory (pending counters)");
+            pending = p, pending_capacity = capacity;
+        }
+    }
+    pending[pending_count++] = (PendingCounter){.addr = addr, .fence = fence, .unknown = unknown};
+}
 
 // ---- occlusion counts (samples passed)
 //
 // After a SAMPLES_PASSED reset, the first draw of a pass begins an occlusion query (precise when the device has
 // occlusionQueryPrecise); the query ends with the pass, or at the next report or reset of the counter, and the next
-// draw begins another. A Vulkan query begun inside a render pass must end inside it. TOTK always resets, draws the
-// tested proxies, reports, so counting stops at a report and restarts at the next reset: queries cover only the draws
-// between the two, not every pass of the frame. Once the game reports twice without a reset in between, counting stays
-// on for good (cumulative NVN semantics; that one report misses the draws since the previous one). The queries closed since the last
+// draw begins another. A Vulkan query begun inside a render pass must end inside it. Reports sample the cumulative
+// counter without disabling it: draws after a report belong to the next segment even when there is no intervening
+// reset. Stopping at a report loses those draws and can make visibility tests permanently report zero. Queries closed since the last
 // report or reset form a segment, handed to the completion thread with that report or reset: in submit order it sums
 // the segment's results into the running count (a reset drops the sum and zeroes the count) and writes the count of a
 // report into guest memory. Slots come from one ring; the completion thread reads and host-resets them
@@ -140,16 +162,40 @@ static int oq_state;                     // 0 not set up, 1 counting available, 
 static VkQueryControlFlags oq_flags;
 static volatile uint8_t oq_busy[OQ_N];   // from begin until the completion thread read and reset the slot
 static uint32_t oq_next;                 // replay: next ring slot
-static int oq_counting;                  // replay: draws are counted (a reset since the last report, or oq_keep)
-static int oq_reported;                  // replay: a samples-passed report since the last reset
-static int oq_keep;                      // replay: the game reported twice without a reset: count every draw
+static int oq_counting;                  // replay: a samples-passed reset/report has activated counting
 static int oq_open = -1;                 // replay: the slot whose query is active in the open pass
 static uint32_t *oq_seg;                 // replay: slots closed since the last report or reset
 static uint32_t oq_nseg, oq_capseg;
 static int oq_lost;                      // replay: the segment missed a draw (ring full)
-static uint64_t oq_count;                // completion thread: samples since the last reset
+static uint64_t oq_count;                // completion, or replay after predecessor completion: running samples
 
-typedef struct { uint64_t addr; int reset, lost; uint32_t n; uint32_t q[]; } OqSegment;
+typedef struct {
+    uint64_t addr, trace_frame, value, ticks;
+    int reset, lost, resolved;
+    uint32_t n;
+    uint32_t q[];
+} OqSegment;
+// Only pointers from the submission currently being recorded are inspected by
+// replay. Its final fence cannot complete until replay returns; callbacks own
+// and free the segments afterwards. Earlier submissions retain no replay refs.
+static OqSegment **oq_current;
+static size_t oq_current_count, oq_current_capacity;
+static uint64_t oq_current_fence;
+
+// Opt-in visibility diagnostics. Frames refer to guest presentation requests,
+// matching TOTK_DUMP; callbacks keep the recording frame rather than the later completion frame.
+static uint64_t oq_trace_frame(void) {
+    static int parsed;
+    static unsigned long long lo, hi;
+    if (!parsed) {
+        const char *s = getenv("TOTK_QUERY_TRACE");
+        parsed = 1;
+        if (s && sscanf(s, "%llu-%llu", &lo, &hi) == 1) hi = lo;
+    }
+    if (!lo) return 0;
+    uint64_t frame = __atomic_load_n(&gfx_counters.frames, __ATOMIC_RELAXED) + 1;
+    return lo && frame >= lo && frame <= hi ? frame : 0;
+}
 
 static int oq_ready(void) {
     if (oq_state) return oq_state > 0;
@@ -190,6 +236,10 @@ static void oq_close(VkExec *ex) {
 }
 
 void vk_exec_oq_draw(VkExec *ex) {
+    uint64_t trace = oq_trace_frame();
+    if (trace) rt_log("query-trace draw frame %llu counting %d slot %d prog %llu depth %u/%u/%u cull %u mask %#x",
+        (unsigned long long)trace, oq_counting, oq_open, (unsigned long long)(ex->prog ? ex->prog->serial : 0),
+        ex->pipe.ds.dt, ex->pipe.ds.dw, ex->pipe.ds.df, ex->pipe.poly.cull, ex->pipe.chmask.mask);
     if (!oq_counting || oq_open >= 0) return;
     uint32_t q = oq_next % OQ_N;
     if (__atomic_load_n(&oq_busy[q], __ATOMIC_ACQUIRE)) {
@@ -208,13 +258,17 @@ void vk_exec_oq_pass_end(VkExec *ex) { oq_close(ex); }
 
 void vk_exec_xfer_shutdown(void) {
     if (oq_state > 0) vkDestroyQueryPool(vk_ctx()->device, oq_pool, NULL);
-    oq_pool = VK_NULL_HANDLE, oq_state = 0, oq_next = 0, oq_counting = oq_reported = oq_keep = 0, oq_open = -1;
+    oq_pool = VK_NULL_HANDLE, oq_state = 0, oq_next = 0, oq_counting = 0, oq_open = -1;
     oq_nseg = 0, oq_lost = 0, oq_count = 0;
     memset((void *)oq_busy, 0, sizeof oq_busy);
+    free(pending);
+    pending = NULL, pending_count = pending_capacity = 0;
+    free(oq_current);
+    oq_current = NULL, oq_current_count = oq_current_capacity = 0, oq_current_fence = 0;
 }
 
-static void oq_cb(void *arg) {
-    OqSegment *s = arg;
+static void oq_resolve(OqSegment *s) {
+    if (s->resolved) return;
     VkDevice dev = vk_ctx()->device;
     uint64_t sum = 0, v[64 * 2];
     for (uint32_t i = 0; i < s->n;) {
@@ -243,8 +297,21 @@ static void oq_cb(void *arg) {
     else {
         oq_count += sum;
         if (s->lost && !oq_count) oq_count = 1;
-        if (s->addr) write_counter(s->addr, oq_count);
     }
+    s->value = oq_count;
+    s->ticks = rt_ns_to_ticks(kern_now_ns());
+    s->resolved = 1;
+    if (s->trace_frame) rt_log("query-trace result frame %llu addr %#llx reset %d queries %u lost %d sum %llu total %llu",
+        (unsigned long long)s->trace_frame, (unsigned long long)s->addr, s->reset, s->n, s->lost,
+        (unsigned long long)sum, (unsigned long long)oq_count);
+}
+
+static void oq_cb(void *arg) {
+    OqSegment *s = arg;
+    oq_resolve(s);
+    // Reapply the snapshot in callback order even if replay already consumed it:
+    // a timestamp or another report may overwrite the same address between them.
+    if (s->addr) write_counter_at(s->addr, s->value, s->ticks);
     free(s);
 }
 
@@ -254,27 +321,37 @@ static void oq_segment(VkExec *ex, uint64_t addr, int reset) {
     OqSegment *s = malloc(sizeof *s + sizeof *s->q * oq_nseg);
     if (!s) rt_fatal("vk: out of memory");
     s->addr = addr, s->reset = reset, s->lost = oq_lost, s->n = oq_nseg;
+    s->resolved = 0, s->value = s->ticks = 0;
+    s->trace_frame = oq_trace_frame();
+    if (s->trace_frame) rt_log("query-trace record frame %llu fence %llu addr %#llx reset %d queries %u prog %llu",
+        (unsigned long long)s->trace_frame, (unsigned long long)ex->fence, (unsigned long long)addr, reset, oq_nseg,
+        (unsigned long long)(ex->prog ? ex->prog->serial : 0));
     memcpy(s->q, oq_seg, sizeof *s->q * oq_nseg);
     oq_nseg = 0, oq_lost = 0;
+    if (oq_current_fence != ex->fence) oq_current_count = 0, oq_current_fence = ex->fence;
+    if (oq_current_count == oq_current_capacity) {
+        size_t capacity = oq_current_capacity ? oq_current_capacity * 2 : 256;
+        if (capacity < oq_current_capacity || capacity > SIZE_MAX / sizeof *oq_current)
+            rt_fatal("vk: too many query segments");
+        OqSegment **segments = realloc(oq_current, capacity * sizeof *segments);
+        if (!segments) rt_fatal("vk: out of memory (query segments)");
+        oq_current = segments, oq_current_capacity = capacity;
+    }
+    oq_current[oq_current_count++] = s;
     vk_completion_add(ex->fence, oq_cb, s);
 }
 
 static void reset_counter(VkExec *ex, const p_reset_counter *p) {
     if (p->type != NVN_COUNTER_TYPE_SAMPLES_PASSED || !oq_ready()) return;
     oq_segment(ex, 0, 1);
-    oq_counting = 1, oq_reported = 0;
+    oq_counting = 1;
 }
 
-// A samples-passed report: the segment goes with it (addr 0: no CPU-visible memory) and counting stops until the next
-// reset, unless reports came without resets before.
+// A samples-passed report snapshots the current segment (addr 0: no CPU-visible memory).
+// It neither resets the cumulative value nor stops subsequent draws from contributing.
 static void oq_report(VkExec *ex, uint64_t addr) {
     oq_segment(ex, addr, 0);
-    if (oq_reported && !oq_keep) {
-        oq_keep = 1;
-        rt_log("vk: samples passed reported twice without a reset: counting every draw from now on");
-    }
-    oq_reported = 1;
-    if (!oq_keep) oq_counting = 0;
+    oq_counting = 1;
 }
 
 static void signal_event(VkExec *ex, const p_signal_event *p) {
@@ -301,7 +378,7 @@ static void report_counter(VkExec *ex, const p_report_counter *p) {
         *a = (CounterWrite){p->addr, ex->submitted_ticks};
         vk_completion_add(ex->fence, counter_cb, a);
     }
-    pending[pending_head++ % PENDING] = (typeof(pending[0])){p->addr, ex->fence, samples};
+    pending_counter(p->addr, ex->fence, samples);
 }
 
 // ---- conditional rendering
@@ -309,9 +386,9 @@ static void report_counter(VkExec *ex, const p_report_counter *p) {
 // 1: *v read, 0: not readable, 2: a samples-passed report not done yet (unknown)
 static int counter_word(uint64_t addr, uint64_t *v) {
     uint64_t done = vk_sync_fence_done();
-    for (unsigned k = 1; k <= PENDING; k++) {   // newest first: the last report to addr decides
-        unsigned i = (pending_head - k) % PENDING;
-        if (pending[i].addr == addr && pending[i].fence > done) return *v = 0, pending[i].unknown ? 2 : 1;
+    for (size_t i = pending_count; i-- > 0;) {   // newest first: the last report to addr decides
+        if (pending[i].fence <= done) break;
+        if (pending[i].addr == addr) return *v = pending[i].value, pending[i].unknown ? 2 : 1;
     }
     VkMemSpan m;
     if (nvn_gpu_only(addr) || !vk_mem_resolve(addr, sizeof *v, &m)) return 0;
@@ -320,15 +397,77 @@ static int counter_word(uint64_t addr, uint64_t *v) {
     return 1;
 }
 
-static int cond_enabled(const p_render_cond *c) {
-    uint64_t x, y;
+static uint64_t counter_pending_fence(uint64_t addr) {
+    uint64_t done = vk_sync_fence_done();
+    for (size_t i = pending_count; i-- > 0;) {
+        if (pending[i].fence <= done) break;
+        if (pending[i].addr == addr) return pending[i].unknown ? pending[i].fence : 0;
+    }
+    return 0;
+}
+
+static void resolve_pending_condition(VkExec *ex, const p_render_cond *c) {
+    uint64_t a = counter_pending_fence(c->addr), b = counter_pending_fence(c->addr + 16);
+    uint64_t fence = a > b ? a : b;
+    if (!fence) return;
+    if (fence < ex->fence) {
+        if (!vk_sync_fence_wait(fence, UINT64_MAX)) rt_fatal("vk: conditional counter wait failed");
+        return;
+    }
+    if (fence != ex->fence || oq_current_fence != fence)
+        rt_fatal("vk: conditional counter belongs to an unrecorded submission");
+    // Complete earlier callbacks before touching the running counter. The current
+    // submission is not signalled: only its recorded prefix is sent and waited.
+    if (fence > 1 && !vk_sync_fence_wait(fence - 1, UINT64_MAX))
+        rt_fatal("vk: conditional counter predecessor wait failed");
+    vk_exec_wait_prefix(ex);
+    for (size_t i = 0; i < oq_current_count; i++) {
+        OqSegment *s = oq_current[i];
+        oq_resolve(s);
+        if (s->addr) write_counter_at(s->addr, s->value, s->ticks);
+    }
+    // The newest report at each address wins. Timestamp entries keep their known
+    // zero; the latest sample entry gets the last sample snapshot at that address.
+    for (size_t i = pending_count; i-- > 0 && pending[i].fence == fence;) {
+        if (!pending[i].unknown) continue;
+        memcpy(&pending[i].value, (const void *)(uintptr_t)pending[i].addr, sizeof pending[i].value);
+        pending[i].unknown = 0;
+    }
+}
+
+static int cond_enabled(VkExec *ex, const p_render_cond *c) {
+    uint64_t x = 0, y = 0;
     int rx = counter_word(c->addr, &x), ry = counter_word(c->addr + 16, &y);
+    uint64_t trace = oq_trace_frame();
+    if (trace) rt_log("query-trace condition frame %llu addr %#llx mode %u status %d/%d values %llu/%llu done %llu",
+        (unsigned long long)trace, (unsigned long long)c->addr, c->mode, rx, ry,
+        (unsigned long long)x, (unsigned long long)y, (unsigned long long)vk_sync_fence_done());
     if (!rx || !ry) {
         warn_once(W_BUFFER, "conditional render counters at %#llx are not readable: rendering", (unsigned long long)c->addr);
         return 1;
     }
-    if (rx == 2 || ry == 2) return 1;   // a samples-passed count not done yet
+    if (rx == 2 || ry == 2) {
+        resolve_pending_condition(ex, c);
+        rx = counter_word(c->addr, &x), ry = counter_word(c->addr + 16, &y);
+        if (rx != 1 || ry != 1) rt_fatal("vk: conditional counter unresolved after wait");
+        if (trace) rt_log("query-trace resolved frame %llu addr %#llx values %llu/%llu",
+            (unsigned long long)trace, (unsigned long long)c->addr, (unsigned long long)x, (unsigned long long)y);
+    }
     return c->mode == 0 ? x == y : x != y;
+}
+
+void vk_exec_trace_clear(VkExec *ex, int color_index) {
+    uint64_t frame = oq_trace_frame();
+    if (!frame) return;
+    const tex_t *t = color_index < 0 ? ex->rt.depth : color_index < ex->rt.n ? ex->rt.color[color_index] : NULL;
+    uint64_t x = 0, y = 0;
+    int rx = ex->has_render_cond ? counter_word(ex->render_cond.addr, &x) : 0;
+    int ry = ex->has_render_cond ? counter_word(ex->render_cond.addr + 16, &y) : 0;
+    rt_log("query-trace clear frame %llu index %d target %#llx %ux%u disabled %d conditional %d addr %#llx mode %d status %d/%d values %llu/%llu",
+        (unsigned long long)frame, color_index, (unsigned long long)(t ? (uintptr_t)t->mem : 0),
+        t ? t->d.width : 0, t ? t->d.height : 0, ex->render_disabled, ex->has_render_cond,
+        (unsigned long long)ex->render_cond.addr, ex->render_cond.mode, rx, ry,
+        (unsigned long long)x, (unsigned long long)y);
 }
 
 // ---- textures
@@ -757,11 +896,14 @@ void vk_exec_op_xfer(VkExec *ex, uint32_t op, const void *payload) {
     case OP_REPORT_COUNTER: report_counter(ex, payload); break;
     case OP_RESET_COUNTER: reset_counter(ex, payload); break;
     case OP_CLEAR_BUF: clear_buf(ex, payload); break;
-    case OP_RENDER_ENABLE: ex->render_disabled = !((const p_flag *)payload)->value; break;
+    case OP_RENDER_ENABLE:
+        ex->render_disabled = !((const p_flag *)payload)->value;
+        ex->has_render_cond = 0;
+        break;
     case OP_RENDER_COND:
         ex->render_cond = *(const p_render_cond *)payload;
         ex->has_render_cond = 1;
-        ex->render_disabled = !cond_enabled(payload);
+        ex->render_disabled = !cond_enabled(ex, payload);
         break;
     default: rt_fatal("vk: op %s is not a transfer", nvn_op_name(op));
     }
