@@ -91,6 +91,38 @@ Changes in the branch (`git diff 68f5d8e..fix/mesh-foliage`):
      matched: F2I to S32/U32 with NaN or out-of-range input (raw `OpConvertFToS`), `.FTZ` is ignored, and no float
      controls are declared. These have lower priority.
 
+9. **Next task: the tree crowns are blocked by CALL lowering (from the frame-3900 pass dump of
+   `run-r2-shdoff-230911`).** Point 8 step A ruled the shadow arrays out as the brightness cause. In the dump, the
+   only mesh draws blocked in the forest are `blocked mesh ... reason task/mesh pipeline missing`, 10 of them:
+   - **Where they are blocked:**
+     - pass 112, the 1280x720 scene: progs 4095 and 4070
+     - passes 130 and 135, the **1600x1600 shadow cascades**: progs 4094 and 4090
+     - plus passes 141, 164 and 167
+   - **Their untranslated mesh stage (native-control-stage 7):** `907e1e206a9b2c8d` (4x), `10eff7e5af4f0329`,
+     `be221d3fcf0326ab` (2x), `c049e63027bf4000` (2x), `d5f3434dcddac7cf`. The first three are rejected with
+     `native call linkage mode` (e.g. `907e1e206a9b2c8d` at +0x7e0, insn `00007944 000011d0 03c00000 000fea00`).
+   - **Why this matters:** these indirect multi-draws are the canopy, in the scene pass **and in the shadow maps**.
+     Missing canopy in the shadow cascades also explains why the sun shafts and the lit haze go everywhere. This is
+     now the main suspect for both symptoms.
+   - **Cause:** Eglantine's `case 0x944` (`lower_to_maxwell.h`) accepts CALL.REL.NOINC only when the return-PC MOV
+     (`MOV Rlink, (index+1)*16`) is directly before the CALL (only local stores 0x387 may come between) and the CALL
+     comes before the main EXIT. These stages set the link earlier or call from a callee.
+   - **Lichii v13 lowers these:** `lichii/lower_to_maxwell.h`, the `bounded_control` pre-pass before the main loop
+     (`write_count`, `control_entries`, `bounded_links`, `checked_returns`, `dead_instructions`) and its `case 0x944`.
+     It walks back to the return-PC MOV through instructions that do not overwrite the link, checks that no
+     control-flow entry lies between, and checks that every callee returns through the link. Port that pre-pass
+     into the Eglantine lowering. Mesh stages never take the Lichii fallback, so it has to live there. Adapt it to
+     Eglantine's `high_uniform_base`.
+   - **Already in this commit:** `c049e63027bf4000` failed with `native register spill operand shape` on R2UR
+     (`000873c2 ...`): `NativeRegisterSpill::Prepare` did not list opcode 0x3c2. It now reads Ra at bit 24, like 0x3c4.
+     Its destination is a uniform register, so there is no GPR to spill. Check it with `lower_probe` too.
+     `d5f3434dcddac7cf` fails the mesh metadata check in `nvn2_lower.cpp` (threads/vertices/primitives). Log its
+     values to see which limit it breaks.
+   - **Then:** `lower_probe` (gained, 0 lost, 0 changed), and print the next rejection of `907e1e206a9b2c8d`,
+     `10eff7e5af4f0329`, `be221d3fcf0326ab`, `c049e63027bf4000` and `d5f3434dcddac7cf`. Rebuild, run the forest
+     again and dump the passes. Are pass 112/130/135 mesh draws still blocked? Are crowns visible? What is the fog
+     luminance now?
+
 Known and not fixed: an indirect mesh draw's group count is not clamped to `maxMeshWorkGroupCount[0]`/
 `maxTaskWorkGroupCount[0]`. A GPU-side clamp would need a small compute pass.
 

@@ -103,7 +103,8 @@ struct NativeRegisterSpill {
             add(16);add(24);if(form==1)add(32);add(64);break;
         case 0xc20: add(16);add(24);break;
         case 0x424: case 0x624: add(16);add(24);add(64);break;
-        case 0xc0c: case 0x3c4: case 0x804: add(24);break;
+        // DKB: R2UR (0x3c2) reads GPR Ra (bits 24-31); its destination is a uniform register, not a GPR.
+        case 0xc0c: case 0x3c4: case 0x3c2: case 0x804: add(24);break;
         case 0xc12: add(16);add(24);add(64);break;
         case 0x589: add(16);add(24);add(32);break;
         case 0x98e:
