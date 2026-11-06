@@ -52,6 +52,7 @@ struct NativeRegisterSpill {
     std::array<u32, 255> mapped{};
     std::array<bool, 255> used{};
     bool active = false;
+    u32 local_base = 0;
 
     bool Prepare(Instruction& insn) {
         const u32 op = insn.Bits(0, 12), form = insn.Bits(9, 3);
@@ -70,16 +71,17 @@ struct NativeRegisterSpill {
         };
         switch (op) {
         case 0x802: case 0xa02: case 0xc02: add(16); break;
-        case 0x202: case 0x245: case 0x305: case 0x307: case 0x308: add(16); add(32); break;
+        case 0x202: case 0x245: case 0x305: case 0x306: case 0x307: case 0x308: case 0x309: case 0x300: add(16); add(32); break;
+        case 0x207: case 0x807: case 0xa07:
         case 0x220: case 0x820: case 0xa20:
         case 0x209: case 0x809: case 0xa09: case 0x208: case 0x808:
-        case 0x20a: case 0x80a: case 0xa0a: case 0x217:
+        case 0x20a: case 0x80a: case 0xa0a: case 0x217: case 0x817: case 0xa17:
             add(16); operand(0); operand(1); break;
         case 0x221: case 0x421: case 0x621:
             add(16); operand(0); operand(form == 2 || form == 3 ? 2 : 1); break;
         case 0x223: case 0x423: case 0x623: case 0x823: case 0xa23:
             add(16); operand(0); operand(1); operand(2); break;
-        case 0x20b: case 0x80b: case 0x20c: operand(0); operand(1); break;
+        case 0x20b: case 0x80b: case 0x20c: case 0x80c: operand(0); operand(1); break;
         case 0x210: case 0x810: case 0x224: case 0x824:
             add(16); add(24); if (form == 1) add(32); add(64); break;
         case 0x225: case 0x825:
@@ -93,6 +95,28 @@ struct NativeRegisterSpill {
             add(16, size > 4 ? 1U << (size - 4) : 1);
             add(24, op == 0x381 || insn.Bits(90, 1) ? 2 : 1); break;
         }
+        case 0x211: case 0x811: case 0x212: case 0x812: case 0x219:
+            add(16);add(24);if(form==1)add(32);add(64);break;
+        case 0xc20: add(16);add(24);break;
+        case 0x424: case 0x624: add(16);add(24);add(64);break;
+        case 0xc0c: case 0x3c4: case 0x804: add(24);break;
+        case 0xc12: add(16);add(24);add(64);break;
+        case 0x589: add(16);add(24);add(32);break;
+        case 0x98e:
+            add(32);if(!insn.Bits(91,1))add(24,insn.Bits(72,1)?2:1);break;
+        case 0x983: case 0x387:
+            // Only immediate scalar guest locals, entirely below our private spill area.
+            if(insn.Bits(24,8)!=255 || insn.Bits(40,24)+4>local_base) return false;
+            add(op==0x983 ? 16 : 32);break;
+        case 0x950:
+            if(insn.Bits(24,8)>=first && insn.Bits(24,8)!=255)return false;break;
+        case 0x81c: case 0x944: case 0x941: case 0x945: case 0x2bd: case 0x2be:
+        case 0x290: case 0x890: case 0x886: break;
+        case 0x923: add(16); add(24); break;
+        case 0x927: add(24); add(32); break;
+        case 0x243: add(16); add(24); add(32); break;
+        case 0x919: case 0x806: add(16); break;
+        case 0x805: add(16,2);break;
         case 0x321: add(16, insn.Bits(74, 2) + 1); add(24); add(32); break;
         case 0x322: add(32, insn.Bits(74, 2) + 1); add(24); add(64); break;
         case 0xb60:
@@ -134,7 +158,7 @@ struct NativeRegisterSpill {
     }
     void Emit(std::vector<u64>& out, bool after) const {
         for (u32 reg = first; reg < 255; reg++) if (used[reg]) {
-            const u32 temp = mapped[reg], high_slot = (reg-first)*4, saved_low = (39+temp)*4;
+            const u32 temp = mapped[reg], high_slot = local_base+(reg-first)*4, saved_low = local_base+(39+temp)*4;
             out.push_back(Local(true, temp, after ? high_slot : saved_low));
             out.push_back(Local(false, temp, after ? saved_low : high_slot));
         }
@@ -145,7 +169,7 @@ struct NativeRegisterSpill {
 // Maxwell frontend. These are new instructions, not reinterpretations of the
 // native bytes. Scheduling/control words are added by the environment adapter.
 inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code,
-                                     std::string_view tensor_mode = {}, bool spill_native = false) {
+                                     std::string_view tensor_mode = {}, bool spill_native = false, const u32* stage_memory = nullptr, u32 spill_base = 0) {
     LoweredProgram result;
     struct Relocation { u32 output_index; s64 target; };
     std::vector<Relocation> relocations;
@@ -185,10 +209,10 @@ inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code,
         result.source_instruction_offsets.push_back(static_cast<u32>(result.instructions.size()));
         u32 opcode = insn.Bits(0, 12);
         if (insn.Bits(12, 4) == 15) continue; // @!PT: never executes (compiler padding)
-        NativeRegisterSpill spill;
+        NativeRegisterSpill spill;spill.local_base=spill_base;
         if (spill_native) {
             if (!spill.Prepare(insn)) return fail(index, "native register spill operand shape");
-            if (spill.active) result.local_spill_bytes = NativeRegisterSpill::bytes;
+            if (spill.active) result.local_spill_bytes = spill_base+NativeRegisterSpill::bytes;
             spill.Emit(result.instructions, false);
         }
         std::optional<u32> active_link;
@@ -1550,6 +1574,41 @@ inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code,
                 return fail(index, "native fragment discard mode");
             emit(0xe33000000000000fULL | predicate);
             break;
+        case 0x243:
+            // F2IP.U8.F32 Rd, Ra, Rb, RZ: Rb's byte in bits 0-7 and Ra's in bits 8-15. The default
+            // rounding (bits 78-79 clear) packs unorm values already scaled by 255.
+            if ((insn.words[1] & ~0xffU) ||
+                (insn.words[2] != 0x0000c4ffU && insn.words[2] != 0x000004ffU))
+                return fail(index, "native packed float-to-byte mode");
+            if (insn.Bits(24, 8) != 255 || insn.words[2] == 0x000004ffU) {
+                const auto to_byte = [&](u32 source, u32 target) {
+                    emit(0x5800000000000000ULL | predicate | target | (u64{source} << 8) |
+                         (u64{source} << 20) | (u64{7} << 39) | (u64{7} << 48));
+                    emit(0x5c40000000000000ULL | predicate | target | (u64{source} << 8) |
+                         (u64{target} << 20) | (u64{7} << 48));
+                    mov_imm(252, 0);
+                    emit(0x5c60000000000000ULL | predicate | target | (u64{target} << 8) |
+                         (u64{252} << 20) | (u64{15} << 39));
+                    mov_imm(252, 0x437f0000U);
+                    emit(0x5c60000000000000ULL | predicate | target | (u64{target} << 8) |
+                         (u64{252} << 20) | (u64{7} << 39));
+                    emit(0x5cb0000000000000ULL | predicate | target | (u64{2} << 8) | (u64{2} << 10) |
+                         (u64{target} << 20) | (u64{insn.Bits(78, 2)} << 39));
+                };
+                to_byte(insn.Bits(32, 8), 250);
+                if (insn.Bits(24, 8) == 255) {
+                    emit(base(0x5c98000000000000ULL) | (u64{15} << 39) | (u64{250} << 20));
+                    break;
+                }
+                to_byte(insn.Bits(24, 8), 251);
+                emit(base(0x5c18000000000000ULL) | (u64{251} << 8) | (u64{250} << 20) | (u64{8} << 39));
+                break;
+            }
+            insn.words[0] &= 0x00ffffffU;
+            insn.words[2] = 0x0021e000U;
+            opcode = 0x305;
+            [[fallthrough]];
+
         case 0x305: case 0xb05: case 0xd05: { // F2I NTZ, register/constant-buffer/uniform source
             const u32 mode = insn.words[2] & ~(opcode == 0xd05 ? 0x08000000U : 0U);
             const bool half = opcode == 0x305 && mode == 0x0010f000;
@@ -2043,8 +2102,31 @@ inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code,
             }
             break;
         }
+        case 0x927: { // Native mesh output -> the workgroup stage-memory IR.
+            if (!stage_memory) return fail(index, "mesh output outside a mesh program");
+            const u32 mode = insn.Bits(72, 8);
+            if (mode != 0xf8 && mode != 0xb8 && mode != 0x88 && mode != 0x80)
+                return fail(index, "unsupported mesh output mode");
+            const s64 offset = (static_cast<int32_t>(insn.Bits(40, 24) << 8) >> 8) +
+                               s64{stage_memory[(mode == 0xf8 || mode == 0xb8) ? 2 : 3]};
+            if (offset < -0x800000 || offset > 0x7fffff) return fail(index, "mesh output offset overflow");
+            emit(0xef58000000000000ULL | predicate | insn.Bits(32, 8) |
+                 (u64{insn.Bits(24, 8)} << 8) | (u64{static_cast<u32>(offset) & 0xffffff} << 20) |
+                 (u64{(mode == 0xf8 || mode == 0xb8) ? 4U : 0U} << 48));
+            break;
+        }
         case 0x923: // ISBERD map read: geometry vertex index to attribute handle. ALD takes the index
                     // itself (Maxwell ISBERD in this mode is a copy), so this is a move.
+            if (stage_memory) {
+                const u32 mode = insn.Bits(72, 8);
+                if (mode != 0x78 && mode != 0x38) return fail(index, "unsupported task/mesh input mode");
+                const s64 offset = (static_cast<int32_t>(insn.Bits(40,24)<<8)>>8) +
+                                   s64{stage_memory[mode == 0x78 ? 0 : 1]};
+                if (offset < -0x800000 || offset > 0x7fffff) return fail(index, "task/mesh input offset overflow");
+                emit(0xef48000000000000ULL | predicate | dest | (u64{insn.Bits(24,8)} << 8) |
+                     (u64{static_cast<u32>(offset)&0xffffff} << 20) | (u64{4} << 48));
+                break;
+            }
             if (insn.Bits(32, 32) || insn.words[2] || insn.Bits(24, 8) == 255)
                 return fail(index, "native stage buffer read mode");
             emit(base(0x5c98000000000000ULL) | (u64{15} << 39) | (u64{insn.Bits(24, 8)} << 20));
@@ -2094,7 +2176,7 @@ inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code,
             const u32 data = insn.Bits(32, 8), offset = insn.Bits(40, 24);
             if (insn.Bits(24, 8) != 255 || (store && (insn.Bits(16, 8) || data > 247)) ||
                 (!store && (data || dest >= 248)) || (offset & 3) || offset > 0x7fffff ||
-                insn.words[2] != (store ? 0x00100800U : 0x00300800U))
+                (insn.words[2] != (store ? 0x00100800U : 0x00300800U) && (store || insn.words[2] != 0x00100800U)))
                 return fail(index, "native local scalar spill mode");
             emit((store ? 0xef50000000000000ULL : 0xef40000000000000ULL) | predicate |
                  (store ? data : dest) | (u64{255} << 8) | (u64{offset} << 20) | (u64{4} << 48));
@@ -2650,18 +2732,21 @@ inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code,
                 emit(0xe24000000000000fULL | predicate);
                 break;
             }
-            if (main_exited || index == 0 || insn.words[0] != 0x7944 ||
+            // Native local argument stores may separate the return-PC setup from CALL.
+            u32 setup=index;
+            while(setup && index-setup<8 && code[setup-1].Bits(0,12)==0x387) --setup;
+            if (main_exited || setup == 0 || insn.words[0] != 0x7944 ||
                 (insn.words[2] & ~0x3ffffU) != 0x03c00000 ||
-                (code[index - 1].words[0] & ~0x00ff0000U) != 0x00007802 ||
-                code[index - 1].Bits(16, 8) >= 250 ||
-                code[index - 1].words[1] != (index + 1) * 16 ||
-                code[index - 1].words[2] != 0xf00)
+                (code[setup - 1].words[0] & ~0x00ff0000U) != 0x00007802 ||
+                code[setup - 1].Bits(16, 8) >= 250 ||
+                code[setup - 1].words[1] != (index + 1) * 16 ||
+                code[setup - 1].words[2] != 0xf00)
                 return fail(index, "native call linkage mode");
             const u64 raw = insn.words[1] | (u64{insn.words[2] & 0x3ffff} << 32);
             const s64 relative = static_cast<s64>(raw << 14) >> 14;
             const s64 target = s64{index} * 16 + 16 + relative;
             if (target < 0 || target % 16) return fail(index, "native call destination alignment");
-            const u32 link = code[index - 1].Bits(16, 8);
+            const u32 link = code[setup - 1].Bits(16, 8);
             for (size_t call = 0; call < call_targets.size(); ++call) {
                 if (call_targets[call] == target / 16 && call_links[call] != link)
                     return fail(index, "native inconsistent call linkage");
@@ -2687,7 +2772,7 @@ inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code,
             bool linked = active_link && return_reg == *active_link;
             for (u32 prior = index; active_link && !linked && prior-- > active_entry;) {
                 if (copies_link(code[prior])) linked = true;
-                else if (code[prior].Bits(16, 8) == return_reg) break;
+                else if (code[prior].Bits(0,12) != 0x387 && code[prior].Bits(16, 8) == return_reg) break;
             }
             if (!main_exited || !linked ||
                 (insn.words[0] & 0x00ffffffU) != 0x00007950 || return_reg >= 249 ||

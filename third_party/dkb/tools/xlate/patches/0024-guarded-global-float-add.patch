@@ -1,0 +1,35 @@
+diff --git a/src/Ryujinx.Graphics.Shader/Instructions/InstEmitMemory.cs b/src/Ryujinx.Graphics.Shader/Instructions/InstEmitMemory.cs
+index c6e4a9d..a016b9e 100644
+--- a/src/Ryujinx.Graphics.Shader/Instructions/InstEmitMemory.cs
++++ b/src/Ryujinx.Graphics.Shader/Instructions/InstEmitMemory.cs
+@@ -234,6 +234,30 @@ namespace Ryujinx.Graphics.Shader.Instructions
+             Operand e1,
+             Operand value)
+         {
++            if (storageKind == StorageKind.GlobalMemory && type == AtomSize.F32FtzRn && op == AtomOp.Add &&
++                context.TranslatorContext.GpuAccessor.QueryStorageBufferRuntimeCandidates())
++            {
++                // RED/ATOM.ADD.F32.FTZ.RN on global memory (Ocarina's sky ambient and light accumulation compute,
++                // lowered by the Lichii fallback). A 32-bit integer CAS loop keeps it atomic without the optional
++                // float atomic extension. The word is re-read with an atomic (AtomicOr 0) on every try: a plain
++                // load can be served from a stale non-coherent cache line on AMD and the loop would never end
++                // (Lichii v13 62d18eabf). Denormal operands and results flush to signed zero, as FTZ asks.
++                Operand Flush(Operand bits)
++                {
++                    Operand exponent = context.BitwiseAnd(bits, Const(0x7f800000));
++                    return context.ConditionalSelect(context.ICompareEqual(exponent, Const(0)),
++                        context.BitwiseAnd(bits, Const(unchecked((int)0x80000000))), bits);
++                }
++
++                Operand addend = Flush(value);
++                Operand retry = Label();
++                context.MarkLabel(retry);
++                Operand observed = context.AtomicOr(storageKind, e0, e1, Const(0));
++                Operand updated = Flush(context.FPAdd(Flush(observed), addend));
++                Operand previous = context.AtomicCompareAndSwap(storageKind, e0, e1, observed, updated);
++                context.BranchIfTrue(retry, context.ICompareNotEqual(previous, observed));
++                return observed;
++            }
+             if (storageKind == StorageKind.GlobalMemory &&
+                 context.TranslatorContext.GpuAccessor.QueryStorageBufferRuntimeCandidates() &&
+                 (type is not (AtomSize.S32 or AtomSize.U32) ||

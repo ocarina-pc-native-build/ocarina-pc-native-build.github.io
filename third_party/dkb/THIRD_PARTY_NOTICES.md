@@ -173,3 +173,5 @@ compared with that revision's `hle_net.c` and `hle_hid.c`.
 The new domain IPC implementation follows libnx's published CMIF wire layout;
 its source is original C. Audio, network and SDK thread protocol checks used
 read-only Eglantine revision `23f383cab532bf3834ea55f3488b48841f3c727b`.
+
+Lichii F2IP packed float-to-byte lowering: `zortos293/Lichii` commit `27226d2568c99c70cf78aa37adaf98b60457b2e5`, `src/shader_recompiler/frontend/ampere/lower_to_maxwell.h`, Copyright 2026 Eden Emulator Project, GPL-3.0-or-later. The opcode 0x243 implementation is retained in the GPL Ampere lowering header only.

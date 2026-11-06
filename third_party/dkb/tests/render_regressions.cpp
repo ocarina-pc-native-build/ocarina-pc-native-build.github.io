@@ -373,7 +373,7 @@ static void high_native_registers() {
     auto out=LowerToMaxwell(code,"full",true); CHECK(bool(out)); CHECK(out.local_spill_bytes==1024);
     // Calls/local operations cannot alias the private spill area through an
     // unmodelled access. The ordinary lowering still handles them separately.
-    for(u32 opcode:{0x944u,0x950u,0x387u,0x983u,0x949u}) {
+    for(u32 opcode:{0x387u,0x983u,0x949u}) {
         auto unknown=op(opcode); NativeRegisterSpill plan; CHECK(!plan.Prepare(unknown));
     }
     auto cross=op(0x321); bits(cross,16,8,214); bits(cross,74,2,3);

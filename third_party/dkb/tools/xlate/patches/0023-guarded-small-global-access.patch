@@ -1,0 +1,95 @@
+diff --git a/src/Ryujinx.Graphics.Shader/Instructions/InstEmitMemory.cs b/src/Ryujinx.Graphics.Shader/Instructions/InstEmitMemory.cs
+index 3835113..c6e4a9d 100644
+--- a/src/Ryujinx.Graphics.Shader/Instructions/InstEmitMemory.cs
++++ b/src/Ryujinx.Graphics.Shader/Instructions/InstEmitMemory.cs
+@@ -400,7 +400,13 @@ namespace Ryujinx.Graphics.Shader.Instructions
+             if (context.TranslatorContext.GpuAccessor.QueryStorageBufferRuntimeCandidates() &&
+                 size is not (LsSize.B32 or LsSize.B64 or LsSize.B128))
+             {
+-                throw new System.NotSupportedException("Storage candidates v1 supports naturally aligned B32/B64/B128 global loads only.");
++                if (size is not (LsSize.U8 or LsSize.S8 or LsSize.U16 or LsSize.S16))
++                {
++                    throw new System.NotSupportedException("Storage candidates v1 supports naturally aligned B32/B64/B128 global loads only.");
++                }
++
++                EmitGuardedSmallLdg(context, size, ra, rd, offset, extended);
++                return;
+             }
+             // Naturally aligned 8/16-byte accesses cannot carry between their
+             // scalar words. Get40BitsAddress handles the initial offset carry;
+@@ -507,7 +513,13 @@ namespace Ryujinx.Graphics.Shader.Instructions
+             if (context.TranslatorContext.GpuAccessor.QueryStorageBufferRuntimeCandidates() &&
+                 size is not (LsSize2.B32 or LsSize2.B64 or LsSize2.B128))
+             {
+-                throw new System.NotSupportedException("Storage candidates v1 supports naturally aligned B32/B64/B128 global stores only.");
++                if (size is not (LsSize2.U8 or LsSize2.S8 or LsSize2.U16 or LsSize2.S16))
++                {
++                    throw new System.NotSupportedException("Storage candidates v1 supports naturally aligned B32/B64/B128 global stores only.");
++                }
++
++                EmitGuardedSmallStg(context, size, ra, rd, offset, extended);
++                return;
+             }
+             if (size > LsSize2.B128)
+             {
+@@ -534,6 +546,60 @@ namespace Ryujinx.Graphics.Shader.Instructions
+             }
+         }
+ 
++        // Candidate mode (patch 0015) resolves only 32-bit GlobalMemory words. A naturally aligned
++        // 8/16-bit access never straddles a word, so read the containing word and extract the field,
++        // as Lichii/yuzu do for byte-addressed global memory without 8/16-bit storage access.
++        // Clearing the two low address bits cannot borrow from the high word.
++        private static void EmitGuardedSmallLdg(
++            EmitterContext context,
++            LsSize size,
++            int ra,
++            int rd,
++            int offset,
++            bool extended)
++        {
++            Register dest = new(rd, RegisterType.Gpr);
++
++            if (dest.IsRZ)
++            {
++                return;
++            }
++
++            (Operand addrLow, Operand addrHigh) = Get40BitsAddress(context, new Register(ra, RegisterType.Gpr), extended, offset);
++
++            Operand wordLow = context.BitwiseAnd(addrLow, Const(~3));
++            Operand word = context.Load(StorageKind.GlobalMemory, wordLow, addrHigh);
++            Operand value = ExtractSmallInt(context, size, GetBitOffset(context, addrLow), word);
++
++            context.Copy(Register(dest), value);
++        }
++
++        // Stores clear the field, then set it, with two 32-bit atomics on the containing word. Bytes
++        // of the same word written by other invocations stay intact; a plain read-modify-write would
++        // lose them. Atomic AND/OR on 32-bit words are within the candidate-mode contract.
++        private static void EmitGuardedSmallStg(
++            EmitterContext context,
++            LsSize2 size,
++            int ra,
++            int rd,
++            int offset,
++            bool extended)
++        {
++            (Operand addrLow, Operand addrHigh) = Get40BitsAddress(context, new Register(ra, RegisterType.Gpr), extended, offset);
++
++            bool isRz = rd >= RegisterConsts.RegisterZeroIndex;
++            Operand value = isRz ? Const(0) : Register(rd, RegisterType.Gpr);
++            int fieldMask = size is LsSize2.U8 or LsSize2.S8 ? 0xff : 0xffff;
++
++            Operand wordLow = context.BitwiseAnd(addrLow, Const(~3));
++            Operand bitOffset = GetBitOffset(context, addrLow);
++            Operand mask = context.ShiftLeft(Const(fieldMask), bitOffset);
++            Operand bits = context.ShiftLeft(context.BitwiseAnd(value, Const(fieldMask)), bitOffset);
++
++            context.AtomicAnd(StorageKind.GlobalMemory, wordLow, addrHigh, context.BitwiseNot(mask));
++            context.AtomicOr(StorageKind.GlobalMemory, wordLow, addrHigh, bits);
++        }
++
+         private static StorageKind GetStorageKind(LsSize size)
+         {
+             return size switch

@@ -42,6 +42,7 @@
 
 #include "cfg.h"
 #include "gfx.h"
+#include "nvn_mesh.h"
 #include "host.h"
 #include "nvn_geometry_control.h"
 #include "platform/platform.h"
@@ -54,6 +55,8 @@
 
 // Shared memory bytes of a lowered NVN 2 compute stage (nvn2_lower.cpp, after the bank counts), 0 otherwise.
 static uint32_t nvn2_shared(const uint8_t *control) {
+    const NvnMeshInfo *mesh = nvn_mesh_info(control);
+    if (mesh) return mesh->shared_bytes;
     uint32_t n = 0;
     if (!memcmp(control + NVN2_C0_LAYOUT, "DKC1", 4)) memcpy(&n, control + NVN2_C0_LAYOUT + 8, 4);
     return n;
@@ -580,7 +583,7 @@ static int reflection_valid(const char *res, uint64_t size) {
     if (!st) return 0;
     st = strchr(st + 7, '"');
     return st && (!strncmp(st, "\"vs\"", 4) || !strncmp(st, "\"ps\"", 4) || !strncmp(st, "\"cs\"", 4) ||
-                  !strncmp(st, "\"gs\"", 4));
+                  !strncmp(st, "\"gs\"", 4) || !strncmp(st, "\"ms\"", 4) || !strncmp(st, "\"ts\"", 4));
 }
 
 // Every instruction after the header has a word count and the last one ends at the module's end: a module with
@@ -1067,7 +1070,7 @@ static void reflect_spirv(GfxShader *s) {
                     ((sc == SC_INPUT ? s->in_mask : s->out_mask) >> l & 1))) s->geometry_position |= 4;
                 // A GS input's outer fixed array indexes vertices, not Locations. Keep its element span rather
                 // than divide the saturated total: inner arrays still consume Locations. Unsupported arrays stay so.
-                if (sc == SC_INPUT && s->stage == GFX_STAGE_GS && slots && array_element_span[t])
+                if (((sc == SC_INPUT && s->stage == GFX_STAGE_GS) || (sc == SC_OUTPUT && s->stage == GFX_STAGE_MS)) && slots && array_element_span[t])
                     slots = array_element_span[t];
                 for (uint32_t j = 0; j < slots && l + j < 32; j++) {
                     if (sc == SC_INPUT) s->in_mask |= 1u << (l + j), s->in[l + j] = io;
@@ -1097,7 +1100,7 @@ static int reflect(GfxShader *s, int require_c0) {
     const char *whole = json_token_end(js, end, 0), *stage = json_member(js, end, "stage");
     if (!whole || json_space(whole, end) != end) return 0;
     s->stage = json_string_is(stage, end, "vs") ? GFX_STAGE_VS : json_string_is(stage, end, "ps") ? GFX_STAGE_FS :
-               json_string_is(stage, end, "cs") ? GFX_STAGE_CS : json_string_is(stage, end, "gs") ? GFX_STAGE_GS : -1;
+               json_string_is(stage, end, "cs") ? GFX_STAGE_CS : json_string_is(stage, end, "gs") ? GFX_STAGE_GS : json_string_is(stage, end, "ms") ? GFX_STAGE_MS : json_string_is(stage, end, "ts") ? GFX_STAGE_TS : -1;
     if (s->stage < 0) return 0;
     if (s->stage == GFX_STAGE_GS) {
         if (!host_gs_sg || !geometry_json(js, end, &s->geometry, s->geometry_skip, &s->geometry_source_passthrough)) return 0;
@@ -1533,6 +1536,17 @@ static size_t build_request(char *o0, const char *hex, const char *stage, const 
         o += sprintf(o, "},\"shared\":%u", a->shared_bytes > nvn2_shared(control) ? a->shared_bytes : nvn2_shared(control));
     }
     if (!a && nvn2_shared(control)) o += sprintf(o, ",\"shared\":%u", nvn2_shared(control));
+    if (!strcmp(stage, "ms") || !strcmp(stage, "ts")) {
+        const NvnMeshInfo *m=nvn_mesh_info(control);
+        if (!m) rt_fatal("mesh translation lacks its control metadata");
+        uint32_t spill; memcpy(&spill, control+0x754, 4);
+        o += sprintf(o, ",\"local_memory\":%u", spill);
+        o += sprintf(o, ",\"local\":[%u,1,1],\"mesh\":{\"version\":1,\"threads\":%u,"
+            "\"payload\":%u,\"uses_task\":%u,\"vertices\":%u,\"primitives\":%u,\"output\":%u,\"primitive\":%u,\"shared\":%u,\"attributes\":[",
+            m->threads,m->threads,m->payload,m->uses_task,m->vertices,m->primitives,m->output_base,m->primitive_base,m->shared_bytes);
+        for (unsigned i=0;i<m->components;i++) o+=sprintf(o,"%s%u",i?",":"",m->attribute[i]);
+        o+=sprintf(o,"]}");
+    }
     if (!strcmp(stage, "cs")) {
         uint32_t l[3] = {1, 1, 1};
         if (a && (a->local[0] | a->local[1] | a->local[2])) l[0] = a->local[0], l[1] = a->local[1], l[2] = a->local[2];
@@ -1551,7 +1565,7 @@ static size_t build_request(char *o0, const char *hex, const char *stage, const 
        after the depth prepass fails along contour lines. Already part of the code hash (the whole control section). */
     if (!strcmp(stage, "ps") && (control[0x718] & 1)) o += sprintf(o, ",\"early_fragment_tests\":true");
     int si = !strcmp(stage, "vs") ? 0 : !strcmp(stage, "cs") ? 2 : 1;   // legacy gfx_shader_set_host answers
-    uint32_t subgroup = !strcmp(stage, "gs") ? host_gs_sg : host_sg[si];
+    uint32_t subgroup = (!strcmp(stage, "ms") || !strcmp(stage, "ts")) ? 32 : !strcmp(stage, "gs") ? host_gs_sg : host_sg[si];
     if (!host_f64) o += sprintf(o, ",\"softfloat64\":true");
     if (host_sbuf) o += sprintf(o, ",\"sbuf_align\":%u", host_sbuf);
     if (subgroup != 32) o += sprintf(o, ",\"subgroup\":%u", subgroup);
@@ -1690,11 +1704,11 @@ static int req_init(Req *r, int stage, const uint8_t *control, const uint8_t *co
     r->stage = stage;
     r->geometry_input = a ? a->geometry_input : 0;
     r->stage_name = stage == GFX_STAGE_VS ? "vs" : stage == GFX_STAGE_FS ? "ps" : stage == GFX_STAGE_CS ? "cs" :
-                    stage == GFX_STAGE_GS ? "gs" : NULL;
+                    stage == GFX_STAGE_GS ? "gs" : stage == GFX_STAGE_MS ? "ms" : stage == GFX_STAGE_TS ? "ts" : NULL;
     if (!r->stage_name) return fail("stage is not translated", NULL), 0;
     uint32_t c1_off;
     memcpy(&c1_off, control + 0x700, 4), memcpy(&r->length, control + 0x704, 4);
-    uint64_t skip = stage == GFX_STAGE_CS ? 0 : CODE_SKIP;
+    uint64_t skip = (stage == GFX_STAGE_CS || stage == GFX_STAGE_MS || stage == GFX_STAGE_TS) ? 0 : CODE_SKIP;
     if (!code || r->length > code_size || c1_off > r->length || skip >= r->length) return fail("bad control section", NULL), 0;
     if (stage == GFX_STAGE_GS) {
         uint32_t sph[5];
@@ -1843,7 +1857,7 @@ static int in_load_from(const uint8_t iid[32], Inputs *in, int packed) {
     int gs = h.stage == GFX_STAGE_GS;
     if (h.magic != IN_MAGIC || (gs ? h.version != GS_IN_VERSION || h.answers_size != GS_ANS_PACKED
                                  : h.version != IN_VERSION || h.answers_size != LEGACY_ANS_SIZE) ||
-        (h.stage != GFX_STAGE_VS && h.stage != GFX_STAGE_FS && h.stage != GFX_STAGE_CS && !gs) ||
+        (h.stage != GFX_STAGE_VS && h.stage != GFX_STAGE_FS && h.stage != GFX_STAGE_CS && h.stage != GFX_STAGE_MS && h.stage != GFX_STAGE_TS && !gs) ||
         h.c1_len > h.length || n != sizeof h + h.answers_size + CONTROL_SIZE + (uint64_t)h.length + h.c1_len)
         return free(f), 0;
     const uint8_t *o = f + sizeof h;
@@ -1960,7 +1974,7 @@ static const GfxShader *translate_one(const Req *r, int stage, const uint8_t *co
         return shader_matches_request(s, r) ? (plat_inc64(&n_hits), s) : fail("cached stage contract differs from request", NULL);
     if (look && (s = request_disk_load(r, look, look_iid))) return plat_inc64(&n_hits), mem_insert(s);
 
-    uint64_t skip = stage == GFX_STAGE_CS ? 0 : CODE_SKIP;
+    uint64_t skip = (stage == GFX_STAGE_CS || stage == GFX_STAGE_MS || stage == GFX_STAGE_TS) ? 0 : CODE_SKIP;
     char hex[65], code_path[PATH_CAP + 80], spv_path[PATH_CAP + 80], res_path[PATH_CAP + 80];
     key_hex(key, hex);
     mkdir_p(cache_dir);
@@ -2767,7 +2781,7 @@ int gfx_shader_prepare_seed(const char *dir, int threads, int procs) {
     if (n < 0) return 1;
     uint8_t *recs = calloc((size_t)n + 1, PRP_REC);
     static const uint8_t zero[32];
-    size_t u = 0, by[3] = {0}, stages[6] = {0};
+    size_t u = 0, by[3] = {0}, stages[8] = {0};
     Set64 seen = {0};
     for (long long i = 0; recs && i < n; i++) {           // seed records come in priority order: the first id wins
         if (!memcmp(iid[i], zero, 32) || !set_add(&seen, hash8(iid[i]))) continue;

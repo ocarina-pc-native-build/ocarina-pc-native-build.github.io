@@ -97,8 +97,8 @@ def verify_vendor() -> None:
 
 def selected_patches(*, defined_float_minmax: bool = False) -> list[Path]:
     patches = sorted((XLATE / "patches").glob("*.patch"))
-    if len(patches) != 22:
-        sys.exit(f"expected 22 patches, found {len(patches)}")
+    if len(patches) != 24:
+        sys.exit(f"expected 24 patches, found {len(patches)}")
     optional = XLATE / "patches" / DEFINED_FLOAT_MINMAX_PATCH
     if optional not in patches:
         sys.exit(f"missing optional patch: {DEFINED_FLOAT_MINMAX_PATCH}")
@@ -128,7 +128,7 @@ def prepare_sources(*, defined_float_minmax: bool = False) -> Path:
 def identity(*, defined_float_minmax: bool = False) -> str:
     """sha256 over the translator's inputs, in a fixed order: path and content hash of each file."""
     h = hashlib.sha256()
-    files = [Path(__file__).resolve(), XLATE / "Program.cs", XLATE / "totk_xlate.csproj",
+    files = [Path(__file__).resolve(), XLATE / "Program.cs", XLATE / "MeshExport.cs", XLATE / "totk_xlate.csproj",
              *selected_patches(defined_float_minmax=defined_float_minmax)]
     for f in files:
         h.update(f"{f.name}\0{hashlib.sha256(f.read_bytes()).hexdigest()}\n".encode())
@@ -174,13 +174,14 @@ def main() -> None:
     work = BUILD / "xlate"
     shutil.rmtree(work, ignore_errors=True)
     work.mkdir(parents=True)
-    for name in ("Program.cs", "totk_xlate.csproj"):
+    for name in ("Program.cs", "MeshExport.cs", "totk_xlate.csproj"):
         shutil.copy2(XLATE / name, work / name)
     out = BUILD / "publish"
     shutil.rmtree(out, ignore_errors=True)
     cmd = [
         dotnet, "publish", str(work / "totk_xlate.csproj"), "-c", "Release", "-r", "win-x64" if WIN else "linux-x64",
         "-p:PublishAot=true", "-p:InvariantGlobalization=true", f"-p:RyuSrc={src}", "-o", str(out),
+        "-m:1", "-p:BuildInParallel=false",
     ]
     if a.llvm:
         env["PATH"] = str(a.llvm.resolve() / "bin") + os.pathsep + env["PATH"]

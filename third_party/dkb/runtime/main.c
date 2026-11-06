@@ -558,6 +558,7 @@ int main(int argc, char **argv) {
     if (!strcmp(mode, "--probe-shader-geometry")) return probe_geometry_shader();
     if (!strcmp(mode, "--probe-vkmem")) return probe_vkmem();
     if (!strcmp(mode, "--probe-vkexec")) return probe_vkexec();
+    if (!strcmp(mode, "--probe-vkmesh")) return probe_vkmesh();
     if (!strcmp(mode, "--probe-vkgeometry")) return probe_vkgeometry();
     if (!strcmp(mode, "--probe-vkgeometry-passthrough")) return probe_vkgeometry_passthrough();
     if (!strcmp(mode, "--probe-vkgeometry-passthrough-ordering")) return probe_vkgeometry_ordering();
