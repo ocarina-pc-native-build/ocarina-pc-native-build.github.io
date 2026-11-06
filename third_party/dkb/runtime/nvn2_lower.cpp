@@ -39,6 +39,18 @@ std::unordered_map<const uint8_t *, uint64_t> origins;
 void put32(std::vector<uint8_t> &c, size_t at, uint32_t v) { std::memcpy(c.data() + at, &v, 4); }
 
 Lowered *lower(const uint8_t *control, const uint8_t *code) {
+    uint32_t control_bytes;
+    std::memcpy(&control_bytes, control + 0x30, sizeof control_bytes);
+    if (!control_bytes) control_bytes = 0xd8;
+    const unsigned native_stage = nvn2_control_stage(control, control_bytes);
+    if (native_stage == NVN2_STAGE_TASK || native_stage == NVN2_STAGE_MESH) {
+        // Their ISBERD/ISBEWR instructions access payload and output memory,
+        // not ordinary vertex attributes. Keep the raw stage for mesh replay.
+        rt_log("nvn2: shader %016llx %s stage retained: task/mesh translator is not implemented",
+               (unsigned long long)gfx_shader_nvn2_hash(control, code),
+               native_stage == NVN2_STAGE_TASK ? "task" : "mesh");
+        return nullptr;
+    }
     uint32_t code_len, w0;
     std::memcpy(&code_len, control + 0x38, 4), std::memcpy(&w0, code, 4);
     const bool gfx = nvn2_sph_type(w0) != 0;

@@ -811,6 +811,26 @@ NVN_API(nvnCommandBufferDrawElementsInstanced) {
 NVN_API(nvnCommandBufferDrawElementsIndirect) {
     *REC(cmd_of(c), OP_DRAW_IDX_IND, p_draw_idx_ind) = (p_draw_idx_ind){(int)arg_x(c, 1), (int)arg_x(c, 2), arg_x(c, 3), arg_x(c, 4)};
 }
+// Keep mesh calls in command order, even while Vulkan lacks their pipeline.
+static void record_mesh(Cpu *c, uint32_t kind) {
+    p_draw_mesh *p = REC(cmd_of(c), OP_DRAW_MESH, p_draw_mesh);
+    *p = (p_draw_mesh){.kind = kind, .caller = c->x[30]};
+    for (unsigned i = 0; i < 7; i++) p->args[i] = arg_x(c, i + 1);
+}
+NVN_API(nvnCommandBufferDrawMeshTasks) { record_mesh(c, NVN_MESH_DIRECT); }
+NVN_API(nvnCommandBufferDrawMeshTasks3D) { record_mesh(c, NVN_MESH_DIRECT_3D); }
+NVN_API(nvnCommandBufferDrawMeshTasks3DIndirect) { record_mesh(c, NVN_MESH_INDIRECT_3D); }
+NVN_API(nvnCommandBufferDrawMeshTasksIndirect) { record_mesh(c, NVN_MESH_INDIRECT); }
+NVN_API(nvnCommandBufferMultiDrawMeshTasks3DIndirect) { record_mesh(c, NVN_MESH_MULTI_3D); }
+NVN_API(nvnCommandBufferMultiDrawMeshTasks3DIndirectCount) { record_mesh(c, NVN_MESH_MULTI_3D_COUNT); }
+NVN_API(nvnCommandBufferMultiDrawMeshTasksIndirect) { record_mesh(c, NVN_MESH_MULTI); }
+NVN_API(nvnCommandBufferMultiDrawMeshTasksIndirectCount) { record_mesh(c, NVN_MESH_MULTI_COUNT); }
+NVN_API(nvnCommandBufferSetGeometryProcessingMode) {
+    uint32_t mode = (uint32_t)arg_x(c, 1);
+    *REC(cmd_of(c), OP_GEOMETRY_MODE, p_geometry_mode) = (p_geometry_mode){mode, 0};
+    nvn_mode_trace(NVN_MODE_GEOMETRY, arg_x(c, 0), 0, mode, 0);
+}
+
 // void nvnCommandBufferDispatchCompute(NVNcommandBuffer *cmd, int x, int y, int z): caller = the game's return address
 NVN_API(nvnCommandBufferDispatchCompute) {
     *REC(cmd_of(c), OP_DISPATCH, p_dispatch) = (p_dispatch){(int)arg_x(c, 1), (int)arg_x(c, 2), (int)arg_x(c, 3), c->x[30]};
@@ -1116,7 +1136,7 @@ const char *nvn_op_name(uint32_t op) {
         "BIND_VSTREAM", "BIND_VBUF", "BIND_UBO", "BIND_SSBO", "BIND_TEX", "BIND_SAMP", "STENCIL", "POLY_OFFSET", "DRAW",
         "DRAW_IDX", "DISPATCH", "BARRIER", "SET_TEX_POOL", "SET_SAMP_POOL", "COPY_B2T", "COPY_STRIDE", "BLEND_COLOR",
         "COPY_T2B", "BIND_IMG", "COPY_T2T", "RESET_COUNTER", "CLEAR_TEX", "DEPTH_CLAMP", "RENDER_ENABLE",
-        "RASTER_DISCARD", "RENDER_COND", "PRIM_RESTART", "DRAW_IDX_IND", "DISPATCH_IND", "CLEAR_BUF", "PUSH_CONST", "WAIT_SYNC", "WORKLOAD_PRIORITY",
+        "RASTER_DISCARD", "RENDER_COND", "PRIM_RESTART", "DRAW_IDX_IND", "DISPATCH_IND", "CLEAR_BUF", "PUSH_CONST", "WAIT_SYNC", "WORKLOAD_PRIORITY", "DRAW_MESH", "GEOMETRY_MODE",
     };
     _Static_assert(sizeof names / sizeof *names == OP_COUNT_, "one name per op");
     return op < OP_COUNT_ ? names[op] : "?";

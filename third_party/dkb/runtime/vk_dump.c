@@ -37,6 +37,7 @@
 #include "cfg.h"
 #include "host.h"
 #include "nvn_api.h"
+#include "nvn2_control.h"
 #include "vk.h"
 #include "vk_exec.h"
 #include "platform/platform.h"
@@ -844,6 +845,64 @@ void vk_dump_blocked_dispatch(VkExec *ex, const p_dispatch *d, uint64_t indirect
             if (h) fprintf(passes_f, "    cs %s slot %d handle %#llx texture %u sampler %u\n",
                            img ? "img" : "tex", k, (unsigned long long)h, NVN_HANDLE_TEX(h), NVN_HANDLE_SAMP(h));
         }
+    fflush(passes_f);
+out:
+    plat_mutex_unlock(&rec_lock);
+}
+
+// Mesh commands were previously discarded before replay and absent from dumps.
+// Record ABI words and stage identity without reading indirect or texture data.
+void vk_dump_blocked_mesh(VkExec *ex, const p_draw_mesh *draw) {
+    plat_mutex_lock(&rec_lock);
+    if (!active()) goto out;
+    fprintf(passes_f, "blocked mesh before next pass %04d: kind %u prog %llu geometry-mode %#x "
+            "stage-mask %#x caller %#llx frame %llu reason task/mesh pipeline missing; ABI words",
+            seq, draw->kind, (unsigned long long)(ex->prog ? ex->prog->serial : 0),
+            ex->geometry_mode, (unsigned)ex->prog_stages, (unsigned long long)draw->caller,
+            (unsigned long long)frame_now());
+    for (unsigned i = 0; i < 7; i++) fprintf(passes_f, " x%u=%#llx", i + 1, (unsigned long long)draw->args[i]);
+    fputc('\n', passes_f);
+    for (unsigned i = 0; ex->prog && i < ex->prog->nstage && i < 6; i++) {
+        const uint8_t *ctl = ex->prog->sd[i].control;
+        const uint8_t *code = (const uint8_t *)(uintptr_t)ex->prog->sd[i].data;
+        if (!ctl || !code) continue;
+        int native = gfx_shader_is_nvn2(ctl);
+        unsigned stage = NVN2_STAGE_INVALID;
+        if (native) {
+            uint32_t bytes = nvn2_control_u32(ctl + 0x30);
+            stage = nvn2_control_stage(ctl, bytes ? bytes : 0xd8);
+        }
+        uint64_t origin = native ? gfx_shader_nvn2_hash(ctl, code) : nvn2_origin(code);
+        fprintf(passes_f, "    shader %016llx native-control-stage %u %s\n",
+                (unsigned long long)origin, stage, native ? "untranslated" : "lowered or legacy");
+    }
+    // These are recorded ranges and handles only, not GPU memory snapshots.
+    for (unsigned st = NVN2_STAGE_TASK; st <= NVN2_STAGE_MESH; st++) {
+        for (unsigned k = 0; k < 18; k++) {
+            const p_bind_buf *b = &ex->ubo[st][k];
+            if (b->addr || b->size) fprintf(passes_f, "    native-stage %u ubo%u addr %#llx size %#llx\n",
+                st, k, (unsigned long long)b->addr, (unsigned long long)b->size);
+        }
+        for (unsigned k = 0; k < 16; k++) {
+            const p_bind_buf *b = &ex->ssbo[st][k];
+            if (b->addr || b->size) fprintf(passes_f, "    native-stage %u ssbo%u addr %#llx size %#llx\n",
+                st, k, (unsigned long long)b->addr, (unsigned long long)b->size);
+        }
+        for (unsigned k = 0; k < 128; k++) {
+            if (ex->tex[st][k]) fprintf(passes_f, "    native-stage %u tex%u handle %#llx\n", st, k,
+                                      (unsigned long long)ex->tex[st][k]);
+            if (ex->samp[st][k]) fprintf(passes_f, "    native-stage %u samp%u handle %#llx\n", st, k,
+                                       (unsigned long long)ex->samp[st][k]);
+            if (k < 32 && ex->img[st][k]) fprintf(passes_f, "    native-stage %u img%u handle %#llx\n", st, k,
+                                                (unsigned long long)ex->img[st][k]);
+        }
+    }
+    for (unsigned i = 0; i < 9; i++) {
+        const VkExecTarget *t = i == 8 ? &ex->depth : &ex->color[i];
+        if (t->tex) fprintf(passes_f, "    target %s%u %ux%u layer %u+%u addr %#llx\n",
+                           i == 8 ? "depth" : "color", i == 8 ? 0 : i, t->width, t->height,
+                           t->base_layer, t->layers, (unsigned long long)(uintptr_t)t->tex->mem);
+    }
     fflush(passes_f);
 out:
     plat_mutex_unlock(&rec_lock);

@@ -54,7 +54,7 @@ static void c0_lay_set(VkExec *ex, const GfxShader *cs) {
     c0_push = ex->push[1];
 }
 
-enum { W_PROGRAM, W_SHADER, W_PIPELINE, W_NO_VS, W_INDEX, W_UB, W_BIND, W_SSBO_ALIGN, W_SSBO_SLOT, W_RESTART, W_INDIRECT, W_FAULT_SKIP, W_FAULT_SKIP2, W_RESET, W_GEOMETRY, W_COUNT };
+enum { W_PROGRAM, W_SHADER, W_PIPELINE, W_NO_VS, W_INDEX, W_UB, W_BIND, W_SSBO_ALIGN, W_SSBO_SLOT, W_RESTART, W_INDIRECT, W_FAULT_SKIP, W_FAULT_SKIP2, W_RESET, W_GEOMETRY, W_MESH, W_COUNT };
 
 static void warn_once(int key, const char *fmt, ...) {
     static volatile int32_t seen[W_COUNT];
@@ -2849,6 +2849,28 @@ static void op_dispatch_ind(VkExec *ex, const p_dispatch_ind *d) {
     if (vk_dump_armed) vk_dump_dispatch(ex, cs, p, info, &(p_dispatch){0, 0, 0, d->caller});
 }
 
+// This is an ingress handler, not mesh GPU execution. It preserves visibility
+// decisions, records the missing work and never interprets indirect CPU memory.
+// A later task/mesh pipeline must consume these records at this stream position.
+static void op_draw_mesh(VkExec *ex, const p_draw_mesh *draw) {
+    if (ex->render_disabled) return;
+    if (draw->kind == NVN_MESH_DIRECT && (int32_t)draw->args[1] == 0) return;
+    __atomic_fetch_add(&gfx_counters.draws_skipped, 1, __ATOMIC_RELAXED);
+    warn_once(W_MESH, "mesh draw retained in the command stream but not executed: task/mesh pipeline missing");
+    uint64_t frame = __atomic_load_n(&gfx_counters.frames, __ATOMIC_RELAXED) + 1;
+    for (unsigned i = 0; ex->prog && i < ex->prog->nstage && i < 6; i++) {
+        const uint8_t *ctl = ex->prog->sd[i].control;
+        const uint8_t *code = (const uint8_t *)(uintptr_t)ex->prog->sd[i].data;
+        if (!ctl || !code || !gfx_shader_is_nvn2(ctl)) continue;
+        uint32_t bytes = nvn2_control_u32(ctl + 0x30);
+        if (!bytes) bytes = 0xd8;
+        unsigned stage = nvn2_control_stage(ctl, bytes);
+        if (stage != NVN2_STAGE_INVALID)
+            nvn2_note_failed_use(ctl, code, ex->prog->serial, stage, frame);
+    }
+    if (vk_dump_armed) vk_dump_blocked_mesh(ex, draw);
+}
+
 static void op_update_ub(VkExec *ex, const p_update_ub *u) {
     if (!u->size) return;
     VkMemSpan sp;
@@ -2988,7 +3010,7 @@ static void geometry_context_log(const VkExec *ex, uint32_t op, const void *payl
 }
 
 static void bind_handles(uint64_t *dst, int cap, const p_bind_handles *b) {
-    if (b->stage < 0 || b->stage >= 6 || b->first < 0 || b->n < 0 || b->n > 32 || b->first + b->n > cap) {
+    if (b->stage < 0 || b->stage >= NVN2_STAGE_COUNT || b->first < 0 || b->n < 0 || b->n > 32 || b->first > cap - b->n) {
         warn_once(W_BIND, "a bind of %d handles at %d of stage %d is out of range: ignored", b->n, b->first, b->stage);
         return;
     }
@@ -3044,7 +3066,7 @@ void vk_exec_op_draw(VkExec *ex, uint32_t op, const void *payload) {
     }
     case OP_BIND_UBO: {
         const p_bind_buf *b = payload;
-        if (b->stage >= 0 && b->stage < 6 && b->index >= 0 && b->index < 18) ex->ubo[b->stage][b->index] = *b;
+        if (b->stage >= 0 && b->stage < NVN2_STAGE_COUNT && b->index >= 0 && b->index < 18) ex->ubo[b->stage][b->index] = *b;
         bind_gen++;
         break;
     }
@@ -3063,10 +3085,10 @@ void vk_exec_op_draw(VkExec *ex, uint32_t op, const void *payload) {
     }
     case OP_BIND_SSBO: {
         const p_bind_buf *b = payload;
-        if (b->stage >= 0 && b->stage < 6 && b->index >= 0 && b->index < 16) ex->ssbo[b->stage][b->index] = *b;
+        if (b->stage >= 0 && b->stage < NVN2_STAGE_COUNT && b->index >= 0 && b->index < 16) ex->ssbo[b->stage][b->index] = *b;
         else {   // past the table: dropped (NVN 2 binds more storage buffers per stage than NVN 1's 16)
-            static uint64_t seen[6];
-            if (b->stage >= 0 && b->stage < 6 && b->index >= 0 && b->index < 64 && !(seen[b->stage] >> b->index & 1))
+            static uint64_t seen[NVN2_STAGE_COUNT];
+            if (b->stage >= 0 && b->stage < NVN2_STAGE_COUNT && b->index >= 0 && b->index < 64 && !(seen[b->stage] >> b->index & 1))
                 seen[b->stage] |= 1ull << b->index, rt_log("vk: storage buffer %d of stage %d dropped", b->index, b->stage);
         }
         bind_gen++;
@@ -3074,19 +3096,19 @@ void vk_exec_op_draw(VkExec *ex, uint32_t op, const void *payload) {
     }
     case OP_BIND_TEX: {
         const p_bind_handles *b = payload;
-        bind_handles(b->stage >= 0 && b->stage < 6 ? ex->tex[b->stage] : NULL, 128, b);
+        bind_handles(b->stage >= 0 && b->stage < NVN2_STAGE_COUNT ? ex->tex[b->stage] : NULL, 128, b);
         ex->tex_serial++;
         bind_gen++;
         break;
     }
     case OP_BIND_SAMP: {
         const p_bind_handles *b = payload;
-        bind_handles(b->stage >= 0 && b->stage < 6 ? ex->samp[b->stage] : NULL, 128, b);
+        bind_handles(b->stage >= 0 && b->stage < NVN2_STAGE_COUNT ? ex->samp[b->stage] : NULL, 128, b);
         break;
     }
     case OP_BIND_IMG: {
         const p_bind_handles *b = payload;
-        bind_handles(b->stage >= 0 && b->stage < 6 ? ex->img[b->stage] : NULL, 32, b);
+        bind_handles(b->stage >= 0 && b->stage < NVN2_STAGE_COUNT ? ex->img[b->stage] : NULL, 32, b);
         ex->tex_serial++;   // the shader memo's handle check (feedback_scan reads only textures: a rescan at most)
         bind_gen++;
         break;
@@ -3096,6 +3118,7 @@ void vk_exec_op_draw(VkExec *ex, uint32_t op, const void *payload) {
     case OP_DRAW_IDX: op_draw_idx(ex, payload); break;
     case OP_DISPATCH: op_dispatch(ex, payload); break;
     case OP_DRAW_IDX_IND: op_draw_idx_ind(ex, payload); break;
+    case OP_DRAW_MESH: op_draw_mesh(ex, payload); break;
     case OP_DISPATCH_IND: op_dispatch_ind(ex, payload); break;
     default: rt_fatal("vk: op %s is not a draw op", nvn_op_name(op));
     }
