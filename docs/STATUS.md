@@ -1,13 +1,60 @@
-# Engineering status — 2026-11-05, visible 3D cutscene
+# Engineering status — 2026-11-06, outdoor lighting investigation
 
-**The regular New Game path now reaches visible game-rendered scenery and the
-Deku Tree's dialogue. It is not yet a verified playable port.** The cutscene
-remains overexposed and incomplete. Required compute shader translation,
-aliased RGB9E5 views and sampled numeric types were corrected and tested on the
-RX 7900 XTX. The 12100-frame validation run emits 287 shader failures and ten
-messages for the unresolved shadow descriptor binding, then exits normally.
-Controllable gameplay, game saves/reload and audible audio remain unverified.
-See [new-game investigation](GAMEPLAY_BRINGUP.md).
+**Outdoor overexposure remains unresolved.** The user reported an all-white
+regression in an isolated float-reduction experiment. That experiment was
+rejected; the installed executable, translator and original manual launcher
+remain at the earlier verified hashes. Following a later manual test, the user
+confirmed that the game was closed and allowed diagnostic work to continue.
+The supplied emulator shader archive is used only as an offline
+reference, not installed as a native shader cache.
+
+**The missing foliage now has a confirmed implementation blocker.** Exact
+full-code comparison with the game's Foliage archive identifies 52 mesh and
+5 task stage captures; all 57 fail in the user's last manual-test log. The
+archive groups include `leaf`, `leaf_near`, `forest`, `low_tree_impostor` and
+`low_tree_shootleaf_impostor`. That same log confirms that direct and indirect
+mesh draws are accepted but not recorded. These entry points remain no-ops in
+`nvn_api_nvn2.c`, and the translator has no task/mesh stage model. Asset/shader
+availability is therefore not sufficient to render the foliage. This is an
+identified cause of missing vegetation, not yet a fix or proof of how much
+outdoor overexposure it explains. The user requests foliage as the priority
+and explicitly prohibits another build. No build was created after that
+instruction; the last diagnostic used an executable prepared earlier.
+
+A separate indexed-buffer translator candidate passes 6,076 GPU checks with
+zero failures and zero Vulkan validation errors; the prior translator fails
+19 checks in the same new reproducer. Four previously rejected captured
+compute stages now translate and pass SPIR-V validation. These tests establish
+specific shader translation defects, not a visual lighting or foliage fix.
+A separate manual test with a verified 25-file profile copy has now completed.
+The user reports stable performance but unchanged excessive outdoor brightness;
+the indexed-buffer candidate is therefore not a demonstrated lighting fix.
+The subsequent bounded capture reproduces the white haze. On the user's latest
+instruction, no further build is to be created; investigation uses existing
+executables and captures. See the archive-assisted investigation
+in [exposure and controls](EXPOSURE_AND_CONTROLS.md).
+
+**The existing build reaches controllable 3D gameplay and reloads a regular
+save. The tested camera washout and indoor bright cracks are corrected;
+other rendering defects remain and the port is not fully verified as playable.** Tests continue from cloned
+profiles and the existing generated game objects. Shadow rendering is deferred
+at the user's request. Audible audio remains unverified.
+
+The camera investigation found visibility-counter defects: reporting a sample
+count stopped subsequent counting, and a 256-entry ring could forget unfinished
+reports before their conditional draws. Original GPU fixtures reproduce both
+failures and pass after their respective corrections. The cumulative-count
+correction alone did not resolve the game symptom. A separate shader-optimizer
+bug moved a local-memory load across a later store to the same spill slot,
+corrupting house vertex positions. Keeping the load in place removes all 1,700
+bright gap pixels in the selected main-pass capture. The corrected game run
+completes 8,000 requests, and the original GPU reproducer, native high-register
+geometry suite and compute/resource suite pass with Vulkan validation enabled.
+The run still records 241 known shader failures; its successful process exit
+does not mean every rendering path is supported. See the current evidence and
+bounded gameplay results in [exposure and controls](EXPOSURE_AND_CONTROLS.md).
+The earlier [new-game investigation](GAMEPLAY_BRINGUP.md) remains historical
+evidence for the cutscene checkpoint, not the current failure count.
 
 The earlier [video/title/menu checkpoint](RENDERING_BRINGUP.md) fixed the sRGB
 storage-view issue and reduced its shorter path from 464 to 203 shader failures
@@ -31,8 +78,8 @@ existing PACGA commit is retained: 2,050 QARMA5 differential cases, 512 lifted
 register/flags cases, 1,000 concurrent calls and 12 tampered contexts pass.
 PACGA is not replaced by a zero return or no-op.
 
-All 551 generated translation units plus 113 runtime objects are linked into
-`oot2026.exe` (664 objects, approximately 308.4 MiB). The 548 generated chunks
+All 551 generated translation units plus 114 runtime objects are linked into
+`oot2026.exe` (665 objects, approximately 308.8 MiB). The 548 generated chunks
 and three function tables remain local game-derived material. The text scan still
 contains 394,261 / 63,478 / 2,224 trap sites in main/sdk/subsdk0; padding and data
 are included and universal reachability/correctness has not been established.

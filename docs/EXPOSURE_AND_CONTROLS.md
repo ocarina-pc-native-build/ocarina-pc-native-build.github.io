@@ -132,7 +132,8 @@ Left-stick inputs visibly change the character/view position; right-stick
 input changes the camera, making much of the scene almost completely white.
 PLUS opens the game's inventory. An A/"Open" prompt is visible, but a completed
 interaction and collision response have not been established. The regular load
-screen successfully loads the test autosave. Manual save/reload is still pending.
+screen successfully loads the test autosave. At this checkpoint manual save/reload
+was still pending; the later regular-save check below completes that check.
 The run exits 0 at 7600 requests; actual presentation and postprocessing captures
 are present. It records 374 native and five translator failures, 56 active failed
 native stages, with validation disabled. This is visible 3D and responsive game
@@ -239,7 +240,12 @@ System / Save, explicitly moves from Cancel to Save, and confirms. Screenshot
 5800 shows the game's "Gespeichert" confirmation; filesystem commits grow the
 save from four to six files, adding the manual slot's caption and progress.
 The process exits 0 at 6800 requests. The original profile is never selected.
-Regular reload of this new manual slot remains a separate pending check.
+`manual-reload` then starts a second clone of that saved profile. The regular
+load screen at request 1400 selects the manual slot (19:10), above the older
+autosave (17:30); request 4200 shows the restored 3D scene at Link's house.
+It exits 0 at 4400 requests after 120.719 seconds. All five original-profile
+file hashes still match the pre-test record. This establishes this manual
+save/reload path, not arbitrary save compatibility or all scene transitions.
 
 ## Full-rate reads, shadow gather and capture layout
 
@@ -296,3 +302,446 @@ lighting-path correction, without changing exposure or adding substitute output.
 The same camera-turn sequence still yields a largely white image at 6200.
 Missing foliage is not yet established as the remaining cause, and this is not
 a declaration of visually correct or fully playable gameplay.
+
+`depth-validation-monolithic` repeats the 4400-request capture with the same
+EXE, core validation enabled and diagnostic `TOTK_GPL=0`. It exits 0 after
+205.0 seconds, with accepted presentations through 4200. It has ten capped
+06479 messages, but no 00189 capture-layout or 10780 attachment-view messages.
+Using complete pipelines avoided the observed validation-layer crash in this
+bounded run. This is a diagnostic comparison, not a permanent settings change
+or proof of the crash's root cause. The remaining depth descriptors are invalid.
+
+## Negative min/max immediates and spilled comparisons
+
+IMNMX immediate form `0x817` rejected negative values, including -1, despite
+Maxwell's signed 20-bit immediate encoding. The lowering now checks the actual
+[-524288, 524287] range and writes the 19 payload bits plus the separate sign
+bit. Signed/unsigned operation selection and min/max selection are preserved.
+`constant_minmax.cpp` passes 56 checks; the same fixture against the old header
+fails 12 support checks. One hundred authored GPU cases cover signed/unsigned
+min/max, positive and negative boundaries, and unchanged output bytes. Three
+additional captured stages lower successfully. The originally investigated
+compute shader advances to a later unsupported multiply; it is not counted as
+fully repaired.
+
+At request 5200 of `minmax-camera-only`, two vertex stages still prevented draws:
+`3c18ee4ecd8da239` (count 2364) and `249f15f0cc8e0976` (count 12). Their spill
+plans did not recognize constant-buffer FSET (`0xa0a`) and immediate FSETP
+(`0x80b`). The fix classifies only the actual GPR operands; constant offsets,
+immediates and predicate outputs remain untouched. Authored tests simulate
+spill/restore with all low registers live, aliased source/result registers,
+disabled writes and distinct high-register values. The complete render suite
+passes 16,180,780 checks; the old header fails 200 checks in the same fixture.
+This is CPU spill-plan coverage; the arithmetic GPU probe does not exercise
+this vertex-only spill path.
+
+On the same 8,375 native inputs, support progresses as follows. These are native
+lowering results, not counts of fully translated, validated or rendered shaders:
+
+| Revision | Accepted | Newly accepted | Newly rejected |
+| --- | ---: | ---: | ---: |
+| Before masked TXD | 8091 | — | — |
+| Masked TXD | 8101 | 10 | 0 |
+| Full-rate register | 8127 | 26 | 0 |
+| Depth gather | 8128 | 1 | 0 |
+| Negative IMNMX immediate | 8131 | 3 | 0 |
+| Spill operand classification | 8143 | 12 | 0 |
+
+`minmax-camera-only` exits 0 at 6200 requests after 163.391 seconds, with
+241 distinct native failures and 11 downstream failures. `spill-camera-only`
+replays the same small right-stick turn and return from the same cloned save,
+with EXE SHA256
+`56e403b4b24087e2297edff2eabad69c6ec08f08533405bbb1377835b783c6c9`.
+It exits 0 after 163.625 seconds, with 229 distinct native failures (no repeated
+native messages), 11 downstream failures and 23 actively selected failed native
+stages. The 5200 dump has zero rejected draws, versus two before, but still 17
+blocked compute dispatches. It records a real pipeline using vertex shader
+`3c18ee4ecd8da239`, SPIR-V `97444487a5e284b9`. The second formerly rejected
+shader is accepted by lowering but is not present in this frame's pipeline list.
+This distinction matters when scene visibility differs. Captures after PC FSR
+exist through 6200; the last periodic accepted-presentation report is 6000.
+Validation is disabled for these image comparisons, so their zero validation
+counters are not a clean-Vulkan claim.
+
+The small camera turn shows shadowed 3D scenery and a responsive view. It does
+not reproduce the earlier larger movement-and-turn sequence. Neither restored
+draws nor bound texture handles identify the affected material as tree foliage.
+The suggested foliage explanation remains a hypothesis. Missing compute work
+and direct-pool descriptor resolution remain concrete rendering blockers.
+
+After these source changes the pool probe passes 5,270 checks with zero core
+validation errors. All 583 probe cache modules and 1,009 game cache modules
+pass `spirv-val --target-env vulkan1.3`; this checks structure, not image
+semantics or descriptor contents. All 15 host probes and 17 project tests pass.
+Translator SHA256 remains
+`8e3035cf53eb13a757fe47ffb2f7f3ab056ea25cebb6e043a171f5f539095d8c`.
+Lowered instruction changes select new cache entries; no old result is forced
+onto a repaired shader. No game-derived inputs, modules, saves or captures are
+committed.
+
+
+## Larger camera movement and visibility counters
+
+The continuation preserves all 551 generated game objects. The signed
+zero-product IMAD-with-carry form now accepts the same narrow identity as its
+unsigned form. The original CPU fixture passes 18,432,103 checks; the extended
+pool probe passes 5,991 checks with zero validation errors. Native lowering
+accepts one additional shader, but the downstream translation of that program
+still fails in the camera capture. This arithmetic correction is not presented
+as the camera fix.
+
+`carry-movement-camera` and `camera-large-only` reproduce the white scene.
+The depth prepass contains scenery, while the main opaque color pass draws only
+73 objects in the first capture. A diagnostic forcing the material depth test
+passes more geometry but gives incorrect occlusion. It is not retained.
+A separate diagnostic replacing zero sample counts with one restores 973 opaque
+draws with their normal depth test. The user's manual camera-test executable is
+a preserved copy of that diagnostic, with an isolated cloned save and automatic
+input enabled. It is a workaround, not proof of correct counter semantics.
+
+The first production correction keeps samples-passed counting active after a
+report. Reports snapshot a cumulative counter; they do not stop or reset it.
+The original GPU triangle fixture verifies consecutive reports, pass/submission
+boundaries, resets, an empty scissor, repeated reports and surrounding canaries.
+It fails before the correction and passes afterward (2,674 checks, zero failures
+and zero Vulkan validation errors). `camera-counter-fixed` exits normally after
+8,000 requests but still shows whitening. This genuine defect was not sufficient
+to resolve the game symptom.
+
+`camera-query-trace` records 1,918 sample reports at request 6200, including 863
+with no contributing query. The old pending-report ring held only 256 entries.
+Eviction could make a conditional draw consult stale host memory for a report
+that had not completed. An original GPU regression records a visible triangle's
+sample report, then 1,025 other reports, and conditionally draws the triangle
+in the same submission. The old ring suppresses all 288 covered pixels. The
+replacement retains all unfinished reports and discards only completed entries
+in submission order. This regression and the preceding geometry/counter tests
+pass together (4,728 checks, zero failures and zero validation errors).
+
+Opt-in `TOTK_QUERY_TRACE=first-last` diagnostics correlate draw state, report
+recording and completion, and conditional host reads by presentation request.
+These traces do not change query results. Normal operation performs no trace
+logging. Gameplay verification of the pending-report correction follows below.
+
+The separate `camera-condition-trace` run aborted while loading gameplay, before
+its target frames, with a host-import range error for a 2.375 GiB memory pool.
+It produced no camera evidence and is excluded from image comparisons.
+
+
+The retention regression also checks completed true and false comparisons and
+a later timestamp report overwriting an earlier sample report at the same
+address. The resulting geometry suite passes 6,781 checks with zero failures
+and zero Vulkan validation errors. The broader `probe-vkexec` command cannot
+run its draw/xfer suite in this workspace because its separate legacy shader
+census (`build/v*/shaders/jobs.json`) is absent; this is not recorded as a pass.
+
+`camera-pending-fixed` reaches request 6200 and captures the main passes, but
+hits the runner's 350-second timeout while completing that capture. This run
+therefore provides frame evidence, not a successful 8,000-request completion.
+Its main color pass contains 935 draws (versus 70 with only cumulative counting
+fixed). At request 5800 the large white washout is gone. At 6200, 1,700 of
+921,600 main-pass pixels still have all RGB components above 2.0; every one is
+unchanged from the sky pass, despite non-clear depth at those pixels. These
+remaining narrow gaps are investigated separately from lighting and shadows.
+The trace contains 1,802 conditional reads with an unfinished sample result,
+which are now retained as unknown rather than read from stale host memory.
+
+The checkpoint seed's 16 file hashes still exactly match the pre-test manifest.
+
+
+`camera-pending-lequal` completes 8,000 requests normally in 394.078 seconds.
+Its temporary diagnostic changes only the main opaque comparison from EQUAL to
+LEQUAL. The selected main pipeline confirms compare=4, but 1,750 bright pixels
+remain unchanged from the sky pass, versus 1,700 in the preceding capture.
+The changed comparison is not retained in source or the canonical executable.
+This comparison does not support a simple strict-equality-only fix.
+
+`camera-depth-rebuild` completes 6,400 requests normally in 367.375 seconds.
+For request 6200 only, a diagnostic clears the main color pass's copied depth
+image and rerenders those materials with LESS and depth writes. No bright
+RGB>2 pixels remain in that main pass. Depth equals the original prepass at
+910,554 of 921,600 pixels. Color geometry is nearer at 8,716 pixels and farther
+at 2,330; the latter differences span 15 to 658,252 positive float ULPs.
+This demonstrates a localized disagreement between the two passes, not a
+uniform one-bit rounding error. Rebuilding depth would bypass the game's
+prepass masking contract and is not retained as a production fix. The next
+trace correlates actual draw arguments, vertex input state and CPU-visible
+object matrices within a single normal frame.
+
+
+The first `camera-geometry-inputs` run stayed in the title menu: the PC settings
+menu was open during its scripted load inputs. Its 8,000-request exit is not a
+gameplay result. Earlier `camera-pending-lequal` logs also contain PC-menu opens,
+so its exact motion timing is not a controlled comparison; the surviving gaps
+are still directly observed. `camera-pending-fixed` and `camera-depth-rebuild`
+have no PC-menu-open entries. Automatic runs now use the existing
+`TOTK_BACKGROUND_WINDOW=1` option and the geometry trace is repeated with early
+checkpoint screenshots to verify that the save actually loaded.
+
+The corrected `camera-geometry-inputs-background` run completes 8,000 requests
+in 297.204 seconds with process exit 0. Its 241 known shader failures keep the
+runner's diagnostic status nonzero. Resized captures at 6200 and 7800 show
+narrow bright edges without the earlier large washout. The trace correlates
+919 depth/color draw keys (vertex buffer/state, index buffer, count, instances,
+base vertex/instance, and the first 12 object-matrix words). Other depth passes
+are included in the raw trace and must not be confused with the main prepass.
+The depth copy is bit-exact in `camera-pending-fixed`: all 921,600 original
+prepass depth values equal the main color pass's copied depth values.
+
+The updated manual launcher uses the real counter fixes without forced
+visibility or altered depth tests. The user's `manual-31698` test reports no
+camera flashes after leaving the house, but remaining rendering errors.
+Its largest measured stalls are predominantly graphics pipeline compilation:
+frame 19970 takes 3449.0 ms, including 3345.1 ms pipeline construction and
+48.1 ms shader translation. This explains that measured stall, not every
+possible performance dip. The manual test profile and recorded input remain
+separate from the original save. Further diagnosis targets the indoor gaps.
+
+### Local-memory load ordering in the shader optimizer
+
+The temporary `camera-depth-ids` capture identifies all 1,700 bright main-pass
+pixels with two house meshes (1,679 and 21 pixels). Both use the same native
+color vertex shader. Its translated position expression incorrectly contains
+lighting values: expression propagation moved a private-memory load past a
+later store to the same register-spill slot. The depth-only shaders do not have
+that expression, so the two passes disagree about the house surface positions.
+The annotation experiment completes 6,400 requests with process exit 0; its
+draw-state modifications are removed after the capture.
+
+Translator patch `0021-preserve-local-memory-load-order.patch` keeps assignments
+from local-memory loads at their original statement. Arithmetic propagation and
+unused-load removal remain enabled. The vendored Ryujinx tree is unchanged.
+An original Maxwell GPU fixture stores a color, loads it, overwrites the same
+private slot, then uses the loaded color. The old translator fails all covered
+triangle pixels (3 failed assertions). With the patch, the geometry suite passes
+6,781 checks with zero failures and zero Vulkan validation errors, including the
+cumulative-counter and pending-report regressions. Both default and optional
+translator preparation modes pass the six existing build-option checks.
+
+The corrected `camera-local-order-fixed` game run completes 8,000 requests in
+425.562 seconds with process exit 0. The selected 1280x720 main pass now has
+zero pixels with all RGB components above 2.0, compared with 1,700 before the
+patch. Resized captures at 6000, 6200 and 7800 also show the indoor cracks gone.
+The normal EQUAL depth test and the game's prepass are preserved. All 807 SPIR-V
+modules from the run pass `spirv-val --target-env vulkan1.3`. Validation layers
+were disabled for this game run; the existing 241 shader failures keep its
+diagnostic exit status nonzero. No active graphics-stage lowering failure or
+PC-menu-open event appears in this run. These are bounded results, not a claim
+that every remaining graphics defect is fixed.
+
+The native high-register geometry probe separately passes 6,781 checks and the
+compute/resource probe passes 5,991 checks, both with zero failures and zero
+Vulkan validation errors. The compute probe requires `TOTK_FIX_C0=1`; an initial
+invocation with the geometry probe's setting was rejected before running tests.
+The final post-capture camera segment averages 58.4 fps; its largest stall is
+555.3 ms, including 396.4 ms pipeline construction and 64.4 ms translation.
+
+The canonical and manual test executables now match the game-tested binary
+(`60f7e9c7cd6e87d25b8404fc0d0c44786089fdb0ac8580100c693831687c1066`).
+Both use the corrected translator beside the executable. Normalizing the new
+patch's line endings after the game capture changed only the source identity
+from `1fcc36455f5523eb` to `9b1980b46ad9e750`; the translator binary is unchanged.
+The launcher preserves the user's separate manual profile. All 16 checkpoint
+seed files still match the pre-test hash manifest. Shadows remain deferred.
+
+### Outdoor atmosphere and fragment-depth exports
+
+The user confirmed the remaining overexposure is mainly outdoors and closed
+the manual test. `outdoor-manual-replay` replays the first 40 seconds of the
+recorded inputs against a copy of that profile. It completes 8,000 requests
+with process exit 0 and 242 known shader failures. At capture frame 6500,
+the main scene's median linear luminance is 0.020825 after pass 178; the
+fullscreen fog composition in pass 180 raises it to 0.37872. This locates the
+large lift before the PC presentation/color controls. Those controls remain
+at their defaults.
+
+The requested Lichii review found commit
+[`f26ad432ae0a09da4b888b297afa67d7f4e2a9c2`](https://github.com/zortos293/Lichii/commit/f26ad432ae0a09da4b888b297afa67d7f4e2a9c2):
+query-cache/DMA ordering, sky-ambient buffer pointers and uniform-buffer
+refreshes address related rendering symptoms in its emulator architecture.
+Its own sky-ambient diagnosis explicitly leaves the outdoor haze unresolved.
+Our `outdoor-clear-trace` records 68 clears and no clear whose condition
+depends on an unknown sample count, so its stale-query clear explanation is
+not established for this capture. No upstream renderer implementation was
+copied into the MIT runtime.
+
+An independently authored pending-counter fixture nevertheless demonstrates
+that treating an unfinished sample report as visible can execute a false
+conditional clear. Replay now resolves the recorded GPU prefix when required,
+keeping callback ordering and avoiding double accumulation. The fixture fails
+before the change and passes afterwards; additional cases cover multiple
+prefixes, interleaved timestamps, repeated writes and resets. The
+`outdoor-pending-exact` run completes 4,800 requests, process exit 0, but the
+excessive haze remains. The last measured 60-frame interval averages 60.1 fps;
+the raw frame capture itself causes a large diagnostic stall.
+
+A separate concrete translator defect explains the all-zero half-resolution
+depth image. Shader `954261b81af3be1e` has color mask `0x10f`, reserving two
+four-register color groups, followed by sample-mask and depth slots. Ryujinx's
+color export already uses those groups, but `GetDepthRegister` counts enabled
+components and reads unwritten R6 instead of R9. The generated SPIR-V therefore
+stores literal zero to `FragDepth`. Patch
+`0022-count-fragment-output-register-groups.patch` derives the depth register
+from the number of enabled targets, keeping the vendor tree unchanged.
+
+This agrees with Lichii and Eglantine's `ExitFragment` behavior in
+[`exit_program.cpp`](https://github.com/Djihads80/Eglantine/blob/0ca2032bffc5f1a3fca75427f7d4a4718adda660/src/shader_recompiler/frontend/maxwell/translate/impl/exit_program.cpp),
+consulted as a behavioral reference. The patch is an original correction to
+the MIT translator. Six original Maxwell depth-export fixtures cover no color,
+full RGBA, partial components, nonadjacent targets and all eight targets.
+Three fail with the old translator; all pass with patch 0022. The extended
+geometry/visibility suite passes 15,000 checks with zero failures and zero
+Vulkan validation errors. Six translator-build preparation checks pass.
+
+The requested [Eglantine v0.1.0-rc1 release](https://github.com/Djihads80/Eglantine/releases/tag/v0.1.0-rc1)
+is explicitly marked broken by its maintainer, who directs users to Build 212.
+Its binary was not installed. Repository code was inspected for relevant
+behavior; no blanket upstream update was made.
+
+### Rejected expansion and supplied shader-cache reference (2026-11-06)
+
+The broad lowering experiment enabled expensive title/movie upscaler kernels:
+two calls of one kernel took approximately 83–94 ms each, and another took
+45–52 ms each. Removing the additional UIMAD form restored approximately
+60 fps in the subsequent focused outdoor capture, but the scene still had
+excessive haze and incomplete tree crowns. Supporting float reduction then
+caused the user's reported all-white regression despite passing arithmetic
+fixtures. That experiment is rejected. Its binaries and patch 0023 are
+quarantined outside the source tree; the production lowering header and pool
+probe were restored, dispatch timing instrumentation removed, and the restored
+pool suite passed 5,991 checks with zero failures and validation errors.
+The normal and manual camera executables remain SHA256 `60f7e9c7cd6e87d25b8404fc0d0c44786089fdb0ac8580100c693831687c1066`;
+the installed translator remains `10346ad4cff0e2bc0a12fbb797c94fb12af80b61da5b33f6c8bfa4d0076486f1`.
+
+The user's RAR contains only `vulkan.fork-v50.bin` and its usage index. The main
+file is an emulator pipeline cache with `yuzucach` magic and version 50, not
+native `.spv`/resource metadata. A complete, boundary-checked parse consumes
+all 439,490,523 bytes: 10,946 pipelines, 20,752 environments, 9,841 unique code
+blobs, and 1,140 compute records. The code retains native instruction address
+maps, constant-buffer observations and pointer classifications. It remains
+outside the public repository and was not copied into the installed cache.
+The desired screenshot was downscaled before inspection; it shows dense
+foliage and localized lighting rather than the observed pale outdoor blanket.
+
+Seven of fourteen selected captured compute stages have strong ordered-code
+matches in the archive (90–99.6% identical ordered Maxwell instructions).
+Native instruction count alone is insufficient: the apparent count match for
+`3de6d86ec7e6720e` is unrelated and was discarded. Record 1480 closely matches
+`383a566958350efe` (97.7%, matching workgroup size and shared-memory allocation).
+These matches aid diagnosis but do not establish ownership of tree foliage.
+
+The isolated translator candidate handles a dynamically indexed constant-bank
+pointer by considering the driver's declared buffer ranges, retaining the
+existing runtime address and extent checks. Its candidate traversal excludes
+select conditions, comparison inputs and floating arithmetic inputs from
+pointer-base discovery; treating numeric camera parameters as pointer origins
+had exhausted the descriptor limit. This is independently authored MIT code,
+kept outside the installed bundle. The candidate uses no cached emulator
+addresses or shader-specific allowlist.
+
+Original GPU fixtures exercise three buffer selections, direct driver-table
+and indirect user-UBO pointers, padded root tables, 64 floating inputs used to
+compute an address offset, invalid pointers, misalignment and range ends.
+The old translator reports 19 failures (18 expected data mismatches plus its
+translation-failure check). The candidate passes the complete extended pool
+suite: 6,076 checks, zero failures, zero Vulkan validation errors. Four captured
+compute stages translate and validate with Vulkan 1.2 SPIR-V rules:
+`383a566958350efe`, `3de6d86ec7e6720e`, `4247f1b4c3ce6cf3`, and `f0fed2bbccae7bdc`.
+Their jobs include the actual control-block shared-memory size. The other
+selected stages still require float atomics or subword global loads.
+
+The prepared manual test pairs the previously game-tested focused lowering
+executable (`4e127055cab364eb7c1dace9d0967e3cc46a9505444edf567f4ccc091fc68f4a`)
+with the isolated translator (`0f21202685135c38820f25d9e06895b240dba1d45f157707ac944dc4821b6518`).
+It excludes the rejected float-reduction experiment, uses a separate shader
+cache and a verified copy of all 25 files in the manual test profile, and has
+no scripted inputs. The user completed this test and reported stable frame
+rates but unchanged excessive outdoor brightness, then confirmed the game
+was closed. The manual log ends normally on window close and its last interval
+reports 59.8 fps. Foliage correctness is still unverified and this candidate
+does not solve the reported lighting defect.
+
+The bounded `light-composition-trace` run subsequently completed 4,200 requests
+with process exit 0 and reproduced the excessive haze. Its capture records
+the full-screen atmosphere composition at pass 180. Comparison with the user's
+archive finds all 805 substantive lowered instructions of the composition
+shader and all 155 of the volume integration shader identical, apart from
+padding/termination. This narrows the investigation but does not establish
+correct backend translation, resource bindings or shader input values.
+
+The user now explicitly requests continuation without creating another build.
+Further investigation therefore uses the existing executables, shader archive
+and captures. The already prepared `oot2026-fog-diagnostic.exe` isolates the
+atmosphere draw for frames 3400–3699 and records its CPU-side uniform buffers;
+it is a diagnostic executable, not an installed visual fix.
+
+### Confirmed foliage execution gap (2026-11-06)
+
+The user explicitly redirected the investigation to tree foliage. Offline
+analysis of the existing RomFS index and Foliage shader package now connects
+the missing vegetation to concrete unsupported stages and command entry points.
+No new build was made after the user's prohibition, and no production code or
+installed cache was changed by this analysis.
+
+The package `Shader/Foliage.Product.110.product.Nin_Ounce_NVN2.bfsha.zs`
+decompresses to 3,493,224 bytes. Its 14 shader-model records point to bounded
+BNSH sections and name groups including `leaf`, `leaf_near`, `forest`,
+`low_tree_impostor` and `low_tree_shootleaf_impostor`. Comparison requires the
+entire captured code, not just a shared prologue. It finds 109 exact stage
+matches. The NVN2 control byte at offset `0x56` distinguishes 52 mesh stages
+(7), 5 task stages (6), and 52 fragment stages (1). All 57 task/mesh stages
+fail in `manual-light-buffer-29584/game.log`; 14 fragment stages also fail.
+Shared short fragment code is present in multiple groups, so its presence in
+a graphics pass does not establish that the foliage geometry rendered.
+
+| Foliage group | Captured task/mesh stages | Rejected in manual log |
+| --- | ---: | ---: |
+| leaf | 4 | 4 |
+| leaf_near | 4 | 4 |
+| forest | 4 | 4 |
+| low_tree_impostor | 4 | 4 |
+| low_tree_shootleaf_impostor | 4 | 4 |
+
+For example, `leaf` mesh shader `60dbd7f60c759472` fails on its ISBERD input
+buffer access at native offset `0x10`; `forest` task shader
+`f0212fc90ccb6d10` fails at offset zero. The current lowering infers conventional
+graphics stages from SPH bits and does not preserve the control block's task/mesh
+identity. Consequently log labels such as "stage 1" or "stage 3" describe SPH
+fields here, not proof that these are ordinary vertex or tessellation programs.
+
+Independently of shader translation, manual log lines 292 and 451 state that
+`nvnCommandBufferDrawMeshTasks` and `nvnCommandBufferDrawMeshTasksIndirect` are
+accepted but not recorded. Both are `NVN2_NOT_RECORDED` stubs in
+`runtime/nvn_api_nvn2.c`. The runtime therefore has no mesh draw to replay.
+The reported zero ordinary draws skipped does **not** include these discarded
+mesh calls. Improving a compute translator or adjusting brightness cannot
+complete this missing rendering path.
+
+The Lichii source at commit `27226d2568c99c70cf78aa37adaf98b60457b2e5`
+provides a relevant reference: its
+[stage model](https://github.com/zortos293/Lichii/blob/27226d2568c99c70cf78aa37adaf98b60457b2e5/src/shader_recompiler/stage.h)
+contains Task and Mesh; its
+[Ampere lowering](https://github.com/zortos293/Lichii/blob/27226d2568c99c70cf78aa37adaf98b60457b2e5/src/shader_recompiler/frontend/ampere/lower_to_maxwell.h)
+preserves ISBERD/ISBEWR as special task/mesh operations; and its
+[SPIR-V emitter](https://github.com/zortos293/Lichii/blob/27226d2568c99c70cf78aa37adaf98b60457b2e5/src/shader_recompiler/backend/spirv/emit_spirv.cpp)
+emits TaskEXT and MeshEXT execution models. These are a coordinated frontend,
+intermediate-representation and backend feature, not an isolated opcode patch.
+The current Ryujinx-based translator enum has neither Task nor Mesh. No upstream
+implementation was copied or installed in this investigation.
+
+The repair must preserve NVN2 task/mesh identity, record direct and indirect
+mesh commands and their ordering, translate stage-buffer/payload/output
+operations, and create a compatible Vulkan mesh pipeline (or a verified
+equivalent fallback). Required verification includes payload/index output,
+indirect parameters, visibility ordering, actual leaf coverage in color and
+depth, and a controlled outdoor comparison with the user's reference. The
+rejected float-reduction experiment remains rejected; fragment reduction is
+a separate blocker to retest after the geometry path works. The share of
+overexposure caused by missing foliage remains unmeasured.
+
+Local reproducible evidence lives outside the public repository in
+`work/identify_foliage_shaders.py` and `work/foliage-investigation/` in the
+continuation workspace. The script reads the existing asset image, validates
+container bounds, compares full code, and links matches to the completed manual
+log. It neither builds nor launches the game. The existing diagnostic run has
+ended; no game is left running.

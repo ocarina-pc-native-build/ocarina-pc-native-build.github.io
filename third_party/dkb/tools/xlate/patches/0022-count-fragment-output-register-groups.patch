@@ -1,0 +1,17 @@
+--- a/src/Ryujinx.Graphics.Shader/Translation/TranslatorContext.cs
++++ b/src/Ryujinx.Graphics.Shader/Translation/TranslatorContext.cs
+@@ -159,8 +159,12 @@
+ 
+         internal int GetDepthRegister()
+         {
+-            // The depth register is always two registers after the last color output.
+-            return BitOperations.PopCount((uint)Definitions.OmapTargets) + 1;
++            // Each enabled render target reserves four registers, including disabled
++            // components, as in EmitterContext's color export. The following slot is
++            // reserved for the sample mask; depth follows it.
++            uint targets = (uint)Definitions.OmapTargets;
++            uint groups = (targets | (targets >> 1) | (targets >> 2) | (targets >> 3)) & 0x11111111u;
++            return BitOperations.PopCount(groups) * 4 + 1;
+         }
+ 
+         public void SetLayerOutputAttribute(int attr)

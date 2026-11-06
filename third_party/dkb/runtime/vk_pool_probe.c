@@ -266,6 +266,64 @@ static int run_uniform_reductions(uint8_t *memory,void *command_control) {
     return 1;
 }
 
+static int run_zero_product_carry(uint8_t *memory,void *command_control) {
+    // Read both the addend and predicate input from memory to avoid constant
+    // folding. Exercise the native signed/unsigned form and destination alias.
+    uint32_t native[][4]={
+        {0x00047a02,0x400,0xf00,0},{0x00057a02,0x500,0xf00,0},
+        {0x04007381,0,0x001eab00,0}, // LDG.64 R0:R1,[R4]
+        {0x0100780c,0,0x03f05000,0}, // ISETP.NE.U32 P0,PT,R1,0,PT
+        {0x00087802,0x12345678,0xf00,0},
+        {0xff087224,255,0x000e0600,0}, // IMAD.X R8,RZ,RZ,R0,P0
+        {0x00087202,8,0xf00,0}, // MOV result into store group
+        {0x00097802,0xabcdef01,0xf00,0},{0x000a7802,0xabcdef02,0xf00,0},
+        {0x000b7802,0xabcdef03,0xf00,0},
+        {0x04007386,0x1008,0x0010ad00,0},{0x0000794d,0,0x03800000,0}
+    };
+    uint32_t ctl[0xd8/4]={0};
+    ctl[0]=0x98761234;ctl[1]=0xc9;ctl[0x30/4]=sizeof ctl;ctl[0x38/4]=sizeof native;
+    ctl[0x58/4]=ctl[0x5c/4]=ctl[0x60/4]=1;((uint8_t *)ctl)[0xb2]=1;
+    const uint32_t values[]={0,1,0x7fffffff,0x80000000,0xfffffffe,0xffffffff};
+    const unsigned guards[]={7,0,8};
+    const GfxBackend *backend=&gfx_vulkan_backend;
+    const unsigned before=failures;
+    for(unsigned sign=0;sign<2;sign++)for(unsigned alias=0;alias<2;alias++)
+    for(unsigned g=0;g<3;g++) {
+        unsigned dest=alias?0:8,guard=guards[g];
+        native[5][0]=0xff000224|(dest<<16)|(guard<<12);
+        native[5][2]=0x000e0400|(sign<<9); native[6][1]=dest;
+        NVNshaderData shader={U(native),(const uint8_t *)ctl};
+        if(!(uint8_t)CALL(nvnProgramSetShaders,U(&program),1,U(&shader)))return 0;
+        for(unsigned carry=0;carry<2;carry++)for(unsigned v=0;v<6;v++) {
+            const uint32_t input[]={values[v],carry};
+            memset(memory+OUTPUT_OFF,0xa5,OUTPUT_BYTES);memcpy(memory+OUTPUT_OFF,input,sizeof input);
+            CALL(nvnMemoryPoolFlushMappedRange,U(&memory_pool),OUTPUT_OFF,OUTPUT_BYTES);
+            CALL(nvnCommandBufferAddControlMemory,U(&command),U(command_control),CONTROL_BYTES);
+            CALL(nvnCommandBufferBeginRecording,U(&command));
+            CALL(nvnCommandBufferBindProgram,U(&command),U(&program),NVN_SHADER_STAGE_COMPUTE_BIT);
+            CALL(nvnCommandBufferBindStorageBuffer,U(&command),NVN_SHADER_STAGE_COMPUTE,0,U(memory+OUTPUT_OFF),32);
+            CALL(nvnCommandBufferDispatchCompute,U(&command),1,1,1);
+            uint64_t commands=CALL(nvnCommandBufferEndRecording,U(&command));if(!commands)return 0;
+            uint64_t fence=backend->submit(&commands,1,rt_ticks());
+            if(!backend->fence_wait(fence,UINT64_C(10000000000)))return 0;
+            backend->cpu_synced(fence);
+            int enabled=guard==7 || (carry^(guard==8));
+            uint32_t expected[]={enabled?values[v]+carry:alias?values[v]:0x12345678,
+                                 0xabcdef01,0xabcdef02,0xabcdef03};
+            uint32_t actual[4];memcpy(actual,memory+OUTPUT_OFF+16,16);
+            for(unsigned k=0;k<4;k++) { checks++;if(actual[k]!=expected[k]) {
+                failures++;printf("probe-vkpool: FAIL zero-product carry sign %u alias %u guard %u carry %u value %#x word %u: %#x expected %#x\n",
+                    sign,alias,guard,carry,values[v],k,actual[k],expected[k]);
+            } }
+            int canary=!memcmp(memory+OUTPUT_OFF,input,sizeof input);
+            for(unsigned i=8;i<OUTPUT_BYTES;i++)if((i<16||i>=32)&&memory[OUTPUT_OFF+i]!=0xa5)canary=0;
+            checks++;if(!canary) {failures++;puts("probe-vkpool: FAIL zero-product carry output bounds");}
+        }
+    }
+    printf("probe-vkpool: zero-product carry GPU arithmetic: %s\n",failures==before?"passed":"FAILED");
+    return 1;
+}
+
 // Compare a lane register with a uniform float, including NaNs, signed zero,
 // source modifiers and both predicate results. Read back actual GPU stores.
 static int run_uniform_fsetp(uint8_t *memory,void *command_control) {
@@ -578,6 +636,34 @@ static int run_depth_gather(uint8_t *memory,void *command_control,uint64_t handl
         CALL(nvnSamplerFinalize,U(&shadow_sampler));
         if(!ok)return 0;
     }
+    return 1;
+}
+
+static int run_constant_minmax(uint8_t *memory,void *command_control,uint64_t handle,size_t stride) {
+    const uint32_t values[]={0,1,0x7fffffff,0x80000000,0xffffffff};
+    const uint32_t immediates[]={0,524287,0xfff80000,0xfffffffe,0xffffffff};
+    const NVNtexturePool *tp[3]={&texture_a,&texture_a,&texture_a};
+    const NVNsamplerPool *sp[3]={&sampler_repeat,&sampler_repeat,&sampler_repeat};
+    for(unsigned sign=0;sign<2;sign++)for(unsigned maximum=0;maximum<2;maximum++)
+        for(unsigned a=0;a<5;a++)for(unsigned b=0;b<5;b++) {
+            uint32_t native[][4]={
+                {0x00047802,values[a],0xf00,0},
+                {0x04087817,immediates[b],0x03800000|(sign<<9)|(maximum<<26),0},
+                {0x00097802,0xabcdef01,0xf00,0},{0x000a7802,0xabcdef02,0xf00,0},
+                {0x000b7802,0xabcdef03,0xf00,0},
+                {0x00287a02,0x400,0xf00,0},{0x00297a02,0x500,0xf00,0},
+                {0x28007386,8,0x0010ad00,0},{0x794d,0,0x03800000,0}
+            };
+            uint32_t ctl[0xd8/4]={0};
+            ctl[0]=0x98761234;ctl[1]=0xc9;ctl[0x30/4]=sizeof ctl;ctl[0x38/4]=sizeof native;
+            ctl[0x58/4]=ctl[0x5c/4]=ctl[0x60/4]=1;((uint8_t *)ctl)[0xb2]=1;
+            NVNshaderData shader={U(native),(const uint8_t *)ctl};
+            if(!(uint8_t)CALL(nvnProgramSetShaders,U(&program),1,U(&shader)))return 0;
+            int less=sign?(int32_t)values[a]<(int32_t)immediates[b]:values[a]<immediates[b];
+            uint32_t expected[3][4]={{(less^maximum)?values[a]:immediates[b],0xabcdef01,0xabcdef02,0xabcdef03}};
+            char name[96];snprintf(name,sizeof name,"minmax sign %u maximum %u source %u immediate %u",sign,maximum,a,b);
+            if(!run_case(name,memory,command_control,handle,tp,sp,expected,1,stride))return 0;
+        }
     return 1;
 }
 
@@ -1014,11 +1100,13 @@ int probe_vkpool(void) {
     REQUIRE(gfx_shader_failures() == shader_failures, "no shader translation failures");
     REQUIRE(run_warp_reductions(memory,command_control),"native warp reductions completed");
     REQUIRE(run_uniform_reductions(memory,command_control),"native uniform atomics completed");
+    REQUIRE(run_zero_product_carry(memory,command_control),"native signed zero-product carries completed");
     REQUIRE(run_uniform_fsetp(memory,command_control),"uniform floating comparisons completed");
     REQUIRE(run_feedback_views(),"feedback attachment views preserve pixels");
     REQUIRE(run_gradient_masks(memory,command_control,handle,stride,ti),"gradient channel masks and destination layouts completed");
     REQUIRE(run_fragment_rate(memory,command_control,handle,stride),"full fragment rate reads completed");
     REQUIRE(run_depth_gather(memory,command_control,handle,stride,ti,si),"depth gather comparison and overlap completed");
+    REQUIRE(run_constant_minmax(memory,command_control,handle,stride),"signed immediate minmax completed");
     REQUIRE(gfx_shader_failures() == shader_failures,"no warp translation failures");
 done:
     if (pool_live) backend->finish();

@@ -700,6 +700,7 @@ static void clear_attachment(VkExec *ex, const VkClearAttachment *a) {
 }
 
 static void clear_color(VkExec *ex, const p_clear_color *c) {
+    vk_exec_trace_clear(ex, c->index);
     vk_exec_frame.clears++;
     if (ex->render_disabled) return;
     resolve_rt(ex);
@@ -731,6 +732,7 @@ static void clear_color(VkExec *ex, const p_clear_color *c) {
 }
 
 static void clear_ds(VkExec *ex, const p_clear_ds *c) {
+    vk_exec_trace_clear(ex, -1);
     if (ex->render_disabled) return;
     resolve_rt(ex);
     const VkExecTarget *t = &ex->depth;
@@ -825,8 +827,22 @@ static void maybe_split(VkExec *ex) {
     n_parts++;
 }
 
-// An ordered read of the GPU-visible backing at this replay position. In particular, imported guest bytes can be
-// older than their shadow or VRAM mirror. Read through the same resolver/pick path as a buffer copy, never the VA.
+// Complete recorded GPU work without signalling the current submission's final
+// fence. Both ordered readback and pending conditional queries use this boundary.
+void vk_exec_wait_prefix(VkExec *ex) {
+    vk_exec_barrier(ex);
+    ex->cb = vk_sync_split_wait();
+    split_draws = 0;
+    part_start = ex->recorded;
+    part_t0 = kern_now_ns();
+    ex->barrier_at = -1;
+    ex->dirty = VK_EXEC_DIRTY_ALL;
+    vk_exec_draw_new_cb();
+    n_parts++;
+}
+
+// Read the GPU-visible backing at this replay position. Imported guest bytes can
+// be older than their VRAM mirror: use the buffer-copy resolver, never the VA.
 int vk_exec_read_buffer(VkExec *ex, uint64_t addr, uint64_t size, void *out) {
     if (!x_here || ex != &X || !ex->cb || !out || !addr || !size || size > (8ull << 20) ||
         addr > UINT64_MAX - size || (addr & 3) || (size & 3)) return 0;
@@ -858,14 +874,7 @@ int vk_exec_read_buffer(VkExec *ex, uint64_t addr, uint64_t size, void *out) {
     ex->recorded += 2;
     vk_mem_count(source.cls, VK_MUSE_COPY_SRC, size);
     VK_MEM_BOUND(source);
-    ex->cb = vk_sync_split_wait();   // this prefix, not ex->fence (only the final part signals that value)
-    split_draws = 0;
-    part_start = ex->recorded;
-    part_t0 = kern_now_ns();
-    ex->barrier_at = -1;
-    ex->dirty = VK_EXEC_DIRTY_ALL;
-    vk_exec_draw_new_cb();
-    n_parts++;
+    vk_exec_wait_prefix(ex);   // this prefix, not the still-unsubmitted final fence
     VkResult result = vmaInvalidateAllocation(c->vma, allocation, 0, size);
     if (result == VK_SUCCESS) memcpy(out, mapped.pMappedData, (size_t)size);
     // split_wait is fatal on submission/wait failure, so this allocation is never freed while the copy is in flight.
