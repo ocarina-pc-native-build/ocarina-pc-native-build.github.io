@@ -906,3 +906,44 @@ fog composite. Fog composite at frame 3900 (median / mean):
 | depth 0.0 | 0.049 / 0.207 | 0.283 / 0.424 | 164-170 |
 
 Same result: no visible change of the haze or the light shafts.
+
+### CALL through Lichii's bounded control pre-pass (task point 9, 2026-11-06)
+
+The Eglantine lowering now runs Lichii v13's bounded control pre-pass: for the
+whole program it proves one link register per CALL.REL.NOINC (its return-PC MOV
+may stand earlier, with only instructions of known write count in between and
+no control-flow entry), that every callee returns through that link, and that
+every RET was checked. With the proof `case 0x944` accepts CALLs whose link is
+set earlier or that sit in a callee; a forward BRA over a region with a CALL
+that nothing else enters marks that region dead. The adjacent form keeps
+precedence, so programs that lowered before are unchanged.
+`NativeRegisterSpill::Prepare` also takes the uniform-only ALU forms (USHF,
+ULEA, ULOP3, UISETP, USEL, UIMAD, UPOPC) and SEL/IMNMX with a uniform operand.
+
+`lower_probe` against `f965f3f`: the 8382 dumped stages go from 8322 to 8331
+lowered, the 4573 forest-run stages from 4534 to 4543; 9 gained each, 0 lost.
+Gained: the canopy mesh stages `907e1e206a9b2c8d`, `10eff7e5af4f0329`,
+`be221d3fcf0326ab` and six moss/frost/stone stages. One stage changes output:
+`102f5b0abb0f1e63`, a compute program the Lichii fallback lowered before and
+Eglantine lowers now. The R2UR spill fix of `d626371` alone gains nothing:
+`c049e63027bf4000` passes R2UR, USHF, ULOP3 and IMNMX in the spill path and
+then stops at IMAD with a uniform operand (`0xe24`). `d5f3434dcddac7cf` has
+threads 32, payload 128, vertices 128, primitives 64, all within the limits,
+and is rejected only for bit 7 of control +0x68 (0x80).
+
+Forest replay with a new shader cache, frame-3900 pass dump: blocked mesh draws
+fall from 10 to 3. The canopy programs now draw in the scene depth prepass
+(pass 113: prog 4095 with mesh `907e1e206a9b2c8d`, pass 114: prog 4070 with
+`10eff7e5af4f0329`) and in every 1600x1600 shadow cascade (passes 133, 134,
+140, 141, 147). The three still blocked are progs 20507 and 9882 (kind 0).
+Lowering rejections in the game log: 50 (34 register spill, 4 LEA carry/high,
+3 uniform move, 2 global reduction, 2 unsupported opcode). 57 fps mean.
+
+No crowns are visible, and the haze is unchanged (fog composite at frame 3900:
+median 0.046 before and 0.263 after, mean 0.199 and 0.404). The canopy draws
+change 0 of 921600 depth texels in passes 113 and 114. Their indirect records
+read as 0 groups at recording time (`DKB_MESH_TRACE_INDIRECT`), but that read
+precedes the culling dispatches of the same submission, so the GPU-side group
+count is not yet known. Next: read the indirect records back after execution
+(`TOTK_DUMP_BUF` on the record address) to tell an empty cull result from a
+mesh output that produces no primitives.

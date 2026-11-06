@@ -76,10 +76,10 @@ struct NativeRegisterSpill {
         switch (op) {
         case 0x802: case 0xa02: case 0xc02: add(16); break;
         case 0x202: case 0x245: case 0x305: case 0x306: case 0x307: case 0x308: case 0x309: case 0x300: add(16); add(32); break;
-        case 0x207: case 0x807: case 0xa07:
+        case 0x207: case 0x807: case 0xa07: case 0xc07: // DKB: 0xc07/0xc17, uniform b (form 6: no GPR)
         case 0x220: case 0x820: case 0xa20:
         case 0x209: case 0x809: case 0xa09: case 0x208: case 0x808:
-        case 0x20a: case 0x80a: case 0xa0a: case 0x217: case 0x817: case 0xa17:
+        case 0x20a: case 0x80a: case 0xa0a: case 0x217: case 0x817: case 0xa17: case 0xc17:
             add(16); operand(0); operand(1); break;
         case 0x221: case 0x421: case 0x621:
             add(16); operand(0); operand(form == 2 || form == 3 ? 2 : 1); break;
@@ -133,6 +133,12 @@ struct NativeRegisterSpill {
             }
             break;
         case 0xab9: case 0x882: // direct uniform load / immediate uniform move
+        // DKB: the uniform ALU forms read and write only uniform registers and uniform predicates, so no GPR is
+        // renamed (Ocarina's vegetation mesh stage c049e63027bf4000 in the spill path): USHF, ULEA, ULOP3,
+        // UISETP, USEL, UIMAD, UPOPC (UIADD3, UFLO, UBREV and VOTEU are listed above).
+        case 0x899: case 0x291: case 0x891: case 0x292: case 0x892:
+        case 0x28c: case 0x88c: case 0x287: case 0x887: case 0x2a4: case 0x4a4: case 0x8a4:
+        case 0x2bf:
         case 0x918: case 0x91a: case 0x947: case 0x94d: break;
         default: return false; // includes guest local memory, calls and indirect control flow
         }
@@ -217,9 +223,183 @@ inline LoweredProgram LowerToMaxwellWith(std::span<const Instruction> code, u32 
     // NativeRegisterSpill moves native R216 and up to local memory but keeps R(216 - high_uniforms)-R215 in
     // place, where the high uniform registers would live.
     if (spill_native && high_uniforms) return fail(0, "native register spill with uniform registers above UR27");
+    // DKB: bounded control pre-pass, from Lichii v13 (third_party/lichii/lower_to_maxwell.h, LowerToMaxwellWith,
+    // GPL-3.0-or-later). It proves for the whole program that every CALL.REL.NOINC has one link register set by a
+    // return-PC MOV somewhere before it (only instructions with a known write count that leave the link alone in
+    // between, and no control-flow entry), that every callee returns through that link, and that every RET was
+    // checked so. With that proof case 0x944 accepts a CALL whose link is set earlier or that sits in a callee
+    // (Ocarina's vegetation mesh stages); without it only the adjacent form below is accepted, as before.
+    // dead_instructions: a forward BRA over a region that holds a CALL and is entered from nowhere else.
+    std::vector<bool> control_entries(code.size()), dead_instructions(code.size()), checked_returns(code.size());
+    std::vector<u32> bounded_links(code.size(), ~0U), direct_targets(code.size(), ~0U);
+    std::vector<std::pair<u32, u32>> control_edges;
+    bool bounded_control = true;
+    control_entries[0] = true;
+    const auto write_count = [](const Instruction& instruction) -> std::optional<u32> {
+        switch (instruction.Bits(0, 12)) {
+        case 0x202: case 0x802: case 0x803: case 0x424: case 0x724: case 0x824: case 0xe24: case 0x227:
+        case 0x810: case 0x819: case 0x845: case 0x906: case 0x820:
+        case 0x812: case 0x589:
+        case 0x212: case 0x207: case 0x807: case 0x208: case 0x808:
+        case 0x220: case 0xa20: case 0x221: case 0x421: case 0x621:
+        case 0x223: case 0x423: case 0x623: case 0x823: case 0xa23:
+        case 0x243: case 0x245: case 0x306:
+        case 0x919: case 0xc12: case 0x300: case 0x210: case 0x308:
+            return instruction.Bits(16, 8) == 255 ? 0U : 1U;
+        case 0x225: case 0x625: case 0x825:
+            return 2;
+        case 0x305:
+            return instruction.Bits(75, 2) == 3 ? 2U : 1U;
+        case 0x83b:
+            return instruction.Bits(72, 2) == 3 ? std::nullopt : std::optional<u32>{1U << instruction.Bits(72, 2)};
+        case 0x381: case 0x981: case 0x984: case 0xb82: {
+            const u32 width = instruction.Bits(73, 3);
+            if (width > 6) return std::nullopt;
+            return width == 6 ? 4U : width == 5 ? 2U : 1U;
+        }
+        case 0x20c: case 0x80c: case 0x81c: case 0x387: case 0x388: case 0xb1d: case 0x348: case 0x918:
+        case 0x886: case 0x95b:
+            return 0;
+        default:
+            return std::nullopt;
+        }
+    };
+    const auto ordinary_operands = [&](const Instruction& instruction) {
+        for (const u32 bit : {16U, 24U, 32U, 64U}) {
+            if (bit == 32 && instruction.Bits(9, 3) != 1) continue;
+            const u32 reg = instruction.Bits(bit, 8);
+            if (reg >= (uses_uniform_bank ? high_uniform_base : 246U) && reg != 255) return false;
+        }
+        return true;
+    };
+    for (u32 index = 0; index < code.size(); ++index) {
+        const auto& instruction = code[index];
+        const u32 opcode = instruction.Bits(0, 12);
+        if (opcode == 0x944 || opcode == 0x945 || opcode == 0x947) {
+            if (opcode == 0x944 && index == 0) bounded_control = false;
+            const u32 mode = instruction.words[2] & ~0x3ffffU;
+            if (mode != (opcode == 0x944 ? 0x03c00000U : 0x03800000U) &&
+                !(opcode == 0x947 && mode == 0x0b800000)) bounded_control = false;
+            const u64 raw = (instruction.words[1] & (opcode == 0x947 ? ~3U : ~0U)) |
+                            (u64{instruction.words[2] & 0x3ffff} << 32);
+            const s64 relative = static_cast<s64>(raw << 14) >> 14;
+            const s64 target = s64{index} * 16 + 16 + relative;
+            if (target < 0 || target % 16 || static_cast<u64>(target / 16) >= code.size()) {
+                bounded_control = false;
+            } else {
+                direct_targets[index] = static_cast<u32>(target / 16);
+                control_entries[direct_targets[index]] = true;
+                control_edges.emplace_back(index, direct_targets[index]);
+            }
+            if (opcode == 0x944 && index + 1 < code.size()) {
+                control_entries[index + 1] = true;
+                control_edges.emplace_back(index, index + 1);
+            }
+        } else if ((opcode & 0x1ff) >= 0x140 && (opcode & 0x1ff) <= 0x15f &&
+                   opcode != 0x941 && opcode != 0x942 && opcode != 0x948 &&
+                   opcode != 0x348 && opcode != 0x94d && opcode != 0x950 && opcode != 0x95b) {
+            bounded_control = false;
+        }
+    }
+    for (u32 index = 1; bounded_control && index < code.size(); ++index) {
+        if (code[index].Bits(0, 12) != 0x944) continue;
+        if (code[index].words[0] != 0x7944) { bounded_control = false; break; }
+        std::array<bool, 256> overwritten{};
+        u32 setup = index;
+        for (u32 prior = index; prior-- > 0;) {
+            const auto& instruction = code[prior];
+            const u32 destination = instruction.Bits(16, 8);
+            if ((instruction.words[0] & ~0x00ff0000U) == 0x00007802 &&
+                instruction.words[1] == (index + 1) * 16 && instruction.words[2] == 0xf00 &&
+                !(instruction.words[3] & 0xc00001ffU) && ordinary_operands(instruction) &&
+                destination < 246 && !overwritten[destination]) {
+                bounded_links[index] = destination;
+                setup = prior;
+                break;
+            }
+            const auto count = write_count(instruction);
+            if (!count || !ordinary_operands(instruction) || destination + *count > 255) break;
+            for (u32 component = 0; component < *count; ++component)
+                overwritten[destination + component] = true;
+        }
+        if (bounded_links[index] == ~0U) { bounded_control = false; break; }
+        for (u32 entry = setup + 1; entry <= index; ++entry)
+            if (control_entries[entry]) bounded_control = false;
+    }
+    for (u32 index = 0; bounded_control && index < code.size(); ++index) {
+        if (code[index].Bits(0, 12) != 0x944) continue;
+        const u32 link = bounded_links[index], target = direct_targets[index];
+        if (target == 0) { bounded_control = false; break; }
+        const auto& previous = code[target - 1];
+        const u32 previous_opcode = previous.Bits(0, 12);
+        if (previous.Bits(12, 4) != 7 || previous.Bits(87, 4) != 7 ||
+            (previous_opcode != 0x947 && previous_opcode != 0x94d && previous_opcode != 0x950)) {
+            bounded_control = false;
+            break;
+        }
+        for (const auto& [source, destination] : control_edges)
+            if (destination == target && code[source].Bits(0, 12) != 0x944) bounded_control = false;
+        std::array<bool, 256> aliases{};
+        aliases[link] = true;
+        bool returned = false;
+        for (u32 pc = target; pc < code.size(); ++pc) {
+            const auto& instruction = code[pc];
+            if (pc != target && control_entries[pc]) break;
+            if (instruction.Bits(0, 12) == 0x950) {
+                const u64 raw = instruction.words[1] | (u64{instruction.words[2] & 0x3ffff} << 32);
+                const s64 relative = static_cast<s64>(raw << 14) >> 14;
+                returned = (instruction.words[0] & 0x00ffffffU) == 0x00007950 &&
+                           (instruction.words[2] & ~0x3ffffU) == 0x03c00000 &&
+                           !(instruction.words[3] & 0xc00001ffU) &&
+                           s64{pc} * 16 + 16 + relative == 0 &&
+                           aliases[instruction.Bits(24, 8)];
+                if (returned) checked_returns[pc] = true;
+                break;
+            }
+            const auto count = write_count(instruction);
+            const u32 destination = instruction.Bits(16, 8);
+            if (!count || !ordinary_operands(instruction) || destination + *count > 255 ||
+                (*count && destination <= link && link < destination + *count)) break;
+            bool copy = false;
+            if (instruction.Bits(12, 4) == 7) {
+                if ((instruction.words[0] & 0xff00ffffU) == 0x00007202U &&
+                    instruction.words[1] < 256 && instruction.words[2] == 0xf00)
+                    copy = aliases[instruction.words[1]];
+                if ((instruction.words[0] & 0xff00ffffU) == 0xff007224U &&
+                    instruction.words[1] == 0xff && (instruction.words[2] & ~0xffU) == 0x078e0000)
+                    copy = aliases[instruction.Bits(64, 8)];
+            }
+            for (u32 component = 0; component < *count; ++component)
+                aliases[destination + component] = component == 0 && copy;
+        }
+        if (!returned) bounded_control = false;
+    }
+    for (u32 index = 0; bounded_control && index < code.size(); ++index)
+        if (code[index].Bits(0, 12) == 0x950 && !checked_returns[index]) bounded_control = false;
+    for (u32 index = 0; bounded_control && index < code.size(); ++index) {
+        const auto& instruction = code[index];
+        const u32 target = direct_targets[index];
+        if (instruction.Bits(0, 12) != 0x947 || instruction.Bits(12, 4) != 7 ||
+            instruction.Bits(32, 2) == 2 ||
+            instruction.Bits(16, 8) || instruction.Bits(87, 4) != 7 || target <= index ||
+            target == ~0U || (instruction.words[3] & 0xc00001ffU) ||
+            (instruction.Bits(91, 1) ? instruction.Bits(24, 8) >= 64 : instruction.Bits(24, 8) != 0))
+            continue;
+        bool skipped_call = false;
+        for (u32 pc = index + 1; pc < target; ++pc)
+            skipped_call |= code[pc].Bits(0, 12) == 0x944;
+        if (!skipped_call) continue;
+        bool entered = false;
+        for (const auto& [source, destination] : control_edges)
+            entered |= index < destination && destination < target &&
+                       !(index < source && source < target);
+        if (!entered)
+            for (u32 pc = index + 1; pc < target; ++pc) dead_instructions[pc] = true;
+    }
     for (u32 index = 0; index < code.size(); ++index) {
         auto insn = code[index];
         result.source_instruction_offsets.push_back(static_cast<u32>(result.instructions.size()));
+        if (dead_instructions[index]) continue;
         u32 opcode = insn.Bits(0, 12);
         if (insn.Bits(12, 4) == 15) continue; // @!PT: never executes (compiler padding)
         NativeRegisterSpill spill;spill.local_base=spill_base;
@@ -2864,18 +3044,20 @@ inline LoweredProgram LowerToMaxwellWith(std::span<const Instruction> code, u32 
             // Native local argument stores may separate the return-PC setup from CALL.
             u32 setup=index;
             while(setup && index-setup<8 && code[setup-1].Bits(0,12)==0x387) --setup;
-            if (main_exited || setup == 0 || insn.words[0] != 0x7944 ||
-                (insn.words[2] & ~0x3ffffU) != 0x03c00000 ||
-                (code[setup - 1].words[0] & ~0x00ff0000U) != 0x00007802 ||
-                code[setup - 1].Bits(16, 8) >= 250 ||
-                code[setup - 1].words[1] != (index + 1) * 16 ||
-                code[setup - 1].words[2] != 0xf00)
+            const bool adjacent = !main_exited && setup != 0 &&
+                (code[setup - 1].words[0] & ~0x00ff0000U) == 0x00007802 &&
+                code[setup - 1].Bits(16, 8) < 250 &&
+                code[setup - 1].words[1] == (index + 1) * 16 &&
+                code[setup - 1].words[2] == 0xf00;
+            // DKB: without the adjacent setup, the bounded control pre-pass above must have proven the link.
+            if (index == 0 || insn.words[0] != 0x7944 ||
+                (insn.words[2] & ~0x3ffffU) != 0x03c00000 || (!adjacent && !bounded_control))
                 return fail(index, "native call linkage mode");
             const u64 raw = insn.words[1] | (u64{insn.words[2] & 0x3ffff} << 32);
             const s64 relative = static_cast<s64>(raw << 14) >> 14;
             const s64 target = s64{index} * 16 + 16 + relative;
             if (target < 0 || target % 16) return fail(index, "native call destination alignment");
-            const u32 link = code[setup - 1].Bits(16, 8);
+            const u32 link = adjacent ? code[setup - 1].Bits(16, 8) : bounded_links[index];
             for (size_t call = 0; call < call_targets.size(); ++call) {
                 if (call_targets[call] == target / 16 && call_links[call] != link)
                     return fail(index, "native inconsistent call linkage");

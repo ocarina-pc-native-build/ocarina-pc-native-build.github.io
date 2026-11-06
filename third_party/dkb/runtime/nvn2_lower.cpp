@@ -67,8 +67,10 @@ Lowered *lower(const uint8_t *control, const uint8_t *code) {
         mesh_info.uses_task = control[0x5e];
         if (mesh_info.threads != 32 || mesh_info.payload > 16384 || (!task && (mesh_info.vertices > 256 ||
             !mesh_info.vertices || !mesh_info.primitives || mesh_info.primitives > 255 || (control[0x68] & 0x80)))) {
-            rt_log("nvn2: mesh %016llx unsupported task/workgroup/primitive metadata",
-                   (unsigned long long)gfx_shader_nvn2_hash(control, code));
+            rt_log("nvn2: mesh %016llx unsupported task/workgroup/primitive metadata: %s, threads %u (32), payload %u "
+                   "(<= 16384), vertices %u (1-256), primitives %u (1-255), control +0x68 %#x (bit 7 clear)",
+                   (unsigned long long)gfx_shader_nvn2_hash(control, code), task ? "task" : "mesh", mesh_info.threads,
+                   mesh_info.payload, mesh_info.vertices, mesh_info.primitives, control[0x68]);
             return nullptr;
         }
         for (unsigned k=0;!task && k<4;k++) if ((code[0x35] >> (k+4)) & 1)
