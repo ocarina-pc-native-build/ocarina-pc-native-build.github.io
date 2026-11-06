@@ -217,7 +217,8 @@ static void bindless_textures() {
         CHECK(sampled); CHECK(reg[8]==2000);
         if (!depth) {CHECK(reg[9]==2001); CHECK(reg[10]==2002); CHECK(reg[11]==2003);}
         auto bad=i; bits(bad,81,3,2); CHECK(!lower(bad));
-        if (opcode==0xf60) {bad=i; bits(bad,40,6,28); CHECK(!lower(bad));}
+        // UR28 and up map below R216 since the high-uniform lowering; UR62 needs more than the 34 reserved.
+        if (opcode==0xf60) {bad=i; bits(bad,40,6,62); CHECK(!lower(bad));}
     }
 }
 static void wide_immediate_multiply() {
@@ -405,7 +406,7 @@ static void uniform_shift_registers() {
                 CHECK(actual==expected);
             }
         }
-    for (u32 bad:{28u,62u,63u}) {
+    for (u32 bad:{62u,63u}) {   // UR28 lowers since the high-uniform lowering; UR62 exceeds the 34 reserved
         auto i=op(0x899); bits(i,16,8,bad); bits(i,24,8,1); i.words[2]=0x0800063f;
         CHECK(!lower(i));
     }

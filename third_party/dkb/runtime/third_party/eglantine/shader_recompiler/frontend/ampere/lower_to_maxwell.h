@@ -190,7 +190,8 @@ inline LoweredProgram LowerToMaxwellWith(std::span<const Instruction> code, u32 
         const u32 op = instruction.Bits(0, 12);
         uses_uniform_bank |= op == 0x8a5 || op == 0xf60 || op == 0x3c4 || op == 0x2bd || op == 0xc0c || op == 0x986 || op == 0x9a8 || op == 0xc12 || op == 0xc17 || op == 0xe24 || op == 0xc24 || op == 0xd00 || op == 0xd09 || op == 0x9c3 || op == 0xc45 || op == 0x2a4 || op == 0x891 || op == 0x890 || op == 0x290 || op == 0x28c || op == 0x88c || op == 0x287 || op == 0x887 || op == 0x958 || op == 0xab9 || op == 0xabb || op == 0x899 || op == 0xc20 || op == 0xe21 || op == 0xe23 || op == 0xc02 ||
                              op == 0x886 || op == 0x3c2 || op == 0xc82 || op == 0x882 || op == 0x292 || op == 0x092 || op == 0x892 || op == 0x291 || op == 0x981 || op == 0xc13 || op == 0xc10 || op == 0xc23 || op == 0x526 || op == 0x2be || op == 0x8a4 || op == 0xd05 || (op == 0x984 && instruction.Bits(91, 1)) || op == 0x89c || op == 0x883 || op == 0x2a5 || op == 0xd06 || op == 0xd08 || op == 0x299 || op == 0xc09 || (op == 0x81c && instruction.Bits(67, 1)) ||
-                             op == 0x499 || op == 0x2bf; // DKB: USHF.HI immediate source and UPOPC (Lichii v13)
+                             op == 0x499 || op == 0x2bf || // DKB: USHF.HI immediate source and UPOPC (Lichii v13)
+                             op == 0xc07 || op == 0xc11 || op == 0x4a4; // DKB: SEL/LEA with a uniform operand, UIMAD
     }
     const auto address_of = [](u32 index) { return 0x50U + index * 8 + ((index + 1) / 3) * 8; };
     const auto fail = [&](u32 index, std::string_view reason) {
@@ -262,7 +263,7 @@ inline LoweredProgram LowerToMaxwellWith(std::span<const Instruction> code, u32 
         bool uniform_guard = false;
         bool checked_guard = false;
         u32 uniform_output = 7; // ULOP3's UPn output: computed in P(6-n), then merged into R239
-        if (opcode == 0x2a4 || opcode == 0x8a4 || opcode == 0x891 || opcode == 0x890 || opcode == 0x290 ||
+        if (opcode == 0x2a4 || opcode == 0x4a4 || opcode == 0x8a4 || opcode == 0x891 || opcode == 0x890 || opcode == 0x290 ||
             opcode == 0x292 || opcode == 0x092 || opcode == 0x892 || opcode == 0x291) {
             // A UPn guard is swapped into P(6-n) around the op; lowerings that would clobber the
             // saved predicate or write outside scratch unguarded are rejected after emission.
@@ -290,10 +291,13 @@ inline LoweredProgram LowerToMaxwellWith(std::span<const Instruction> code, u32 
                 uniform_output = insn.Bits(81, 3);
                 insn.words[2] = (insn.words[2] & ~(7U << 17)) | ((6 - uniform_output) << 17);
             }
-            opcode = opcode == 0x2a4 ? 0x224 : opcode == 0x8a4 ? 0x824 : opcode == 0x891 ? 0x811 : opcode == 0x890 ? 0x810
+            // DKB (as Lichii v13): UIMAD with an immediate (0x4a4) becomes IMAD's register-immediate form 0x424.
+            opcode = opcode == 0x2a4 ? 0x224 : opcode == 0x4a4 ? 0x424 : opcode == 0x8a4 ? 0x824 : opcode == 0x891 ? 0x811 : opcode == 0x890 ? 0x810
                    : opcode == 0x292 || opcode == 0x092 ? 0x212 : opcode == 0x892 ? 0x812 : opcode == 0x291 ? 0x211 : 0x210;
         }
-        const bool uniform_predication = opcode == 0xabb || opcode == 0xab9 || opcode == 0xc82 || opcode == 0x882;
+        // DKB (as Lichii v13): USHF (0x899) lowers to one SHF/SHR/SHL, so a uniform guard is swapped in like these.
+        const bool uniform_predication = opcode == 0xabb || opcode == 0xab9 || opcode == 0xc82 || opcode == 0x882 ||
+                                         opcode == 0x899;
         const u32 native_predicate = insn.Bits(12, 4);
         const bool guarded_uniform = (uniform_predication || uniform_guard) && native_predicate != 7;
         // A uniform guard UPn lives in R239 bit 6-n and is swapped into P(6-n) for the op.
@@ -888,9 +892,11 @@ inline LoweredProgram LowerToMaxwellWith(std::span<const Instruction> code, u32 
             }
             break;
         }
-        case 0x882: { // UMOV immediate.
-            if (dest >= 16 || insn.words[2]) return fail(index, "native uniform immediate move mode");
-            mov_imm(static_cast<u32>(dest) + 216, insn.words[1]);
+        case 0x882: { // UMOV immediate, into any mapped uniform register (as Lichii v13; Ocarina's vegetation mesh
+                      // stages load UR17-UR32). uniform_register keeps UR0-UR15 at R216-R231 as before.
+            const u32 target = uniform_register(static_cast<u32>(dest));
+            if (target == ~0U || insn.words[2]) return fail(index, "native uniform immediate move mode");
+            if (target != 255) mov_imm(target, insn.words[1]);
             break;
         }
         case 0xc82: { // UMOV UR, UR (or URZ), including uniform execution predicates.
@@ -929,7 +935,10 @@ inline LoweredProgram LowerToMaxwellWith(std::span<const Instruction> code, u32 
             const u32 high_reg = uniform_register(high);
             const bool dst_ok = dst != 63 && dst_reg != ~0U;
             const bool low_ok = low != 63 && low_reg != ~0U, high_ok = high != 63 && high_reg != ~0U;
-            if (insn.words[2] == (0x08001200U | high) && low_ok && high_ok && dst_ok && native_predicate == 7 &&
+            // DKB: every form below is one instruction under `predicate`, which carries a swapped-in UPn guard
+            // (uniform_predication above); @!UPT never executes.
+            if (native_predicate == 15) break;
+            if (insn.words[2] == (0x08001200U | high) && low_ok && high_ok && dst_ok &&
                 insn.words[1] <= 32) {
                 // DKB: USHF.R.U64 URd, URa, n, URb (low word of a 64-bit right shift; Ocarina's vegetation mesh
                 // shaders). Lichii v13 lowers it through a scratch register; for shifts through 32 Maxwell's
@@ -939,7 +948,7 @@ inline LoweredProgram LowerToMaxwellWith(std::span<const Instruction> code, u32 
                 break;
             }
             if (insn.words[2] == (0x08011400U | high) && low == 63 && high_ok &&
-                dst_ok && native_predicate == 7 && insn.words[1] <= 32) {
+                dst_ok && insn.words[1] <= 32) {
                 emit(0x3828000000000000ULL | predicate | dst_reg |
                      (u64{high_reg} << 8) | (u64{insn.words[1]} << 20) | (u64{1} << 48));
                 break;
@@ -948,14 +957,14 @@ inline LoweredProgram LowerToMaxwellWith(std::span<const Instruction> code, u32 
             // U32): USHF.R.U32 URd, URa, n, URZ and USHF.R.U32.HI URd, URZ, n, URb.
             const bool right_low = insn.words[2] == 0x0800163f && low_ok;
             const bool right_high = insn.words[2] == (0x08011600U | high) && low == 63 && high_ok;
-            if ((right_low || right_high) && dst_ok && native_predicate == 7 && insn.words[1] <= 32) {
+            if ((right_low || right_high) && dst_ok && insn.words[1] <= 32) {
                 emit(0x3828000000000000ULL | predicate | dst_reg |
                      (u64{right_high ? high_reg : low_reg} << 8) | (u64{insn.words[1]} << 20));
                 break;
             }
             const bool high_result = insn.words[2] == (0x08010600U | high) && low == 63 && high_ok;
             const bool low_result = insn.words[2] == 0x0800063f && low_ok;
-            if (!dst_ok || native_predicate != 7 || insn.words[1] > 32 || (!high_result && !low_result))
+            if (!dst_ok || insn.words[1] > 32 || (!high_result && !low_result))
                 return fail(index, "native uniform shift mode");
             emit(0x3848000000000000ULL | predicate | dst_reg |
                  (u64{high_result ? high_reg : low_reg} << 8) | (u64{insn.words[1]} << 20));
@@ -1529,17 +1538,26 @@ inline LoweredProgram LowerToMaxwellWith(std::span<const Instruction> code, u32 
             const u32 output = insn.Bits(81, 3);
             const u32 a = uniform_register(insn.Bits(24, 8)), b = opcode == 0x88c ? 252U : uniform_register(insn.Bits(32, 8));
             const u32 combine = insn.Bits(87, 3), combine_op = insn.Bits(74, 2);
+            // DKB (as Lichii v13): a UPn guard (bits 12-14, bit 15 negates; Ocarina's vegetation mesh stages use
+            // @UP4 UISETP) is loaded into P(6-n) with the current output UPn, so a false guard keeps the old value
+            // when R239 is updated below. @!UPT never executes.
+            const u32 guard = insn.Bits(12, 4);
+            if (guard == 15) break;
             if (output > 6 || insn.Bits(84, 3) != 7 || insn.Bits(72, 1) || combine_op == 3 ||
-                insn.Bits(12, 4) != 7 || a == ~0U || b == ~0U)
+                a == ~0U || b == ~0U)
                 return fail(index, "native uniform comparison mode");
             // The combined UPn is swapped in from R239 bit 6-n, as Maxwell ISETP's Pc (UPT stays PT).
             const u32 temporary = 6 - output, combine_slot = combine == 7 ? 7U : 6 - combine;
             const u32 combine_mask = combine == 7 ? 0U : 1U << combine_slot;
-            const u32 mask = (1U << temporary) | combine_mask;
-            if (opcode == 0x88c) mov_imm(252, insn.words[1]);
+            const bool guarded = guard != 7;
+            const u32 guard_p = 6 - (guard & 7);
+            const u32 load_mask = combine_mask | (guarded ? (1U << temporary) | (1U << guard_p) : 0U);
+            const u32 mask = (1U << temporary) | load_mask;
+            if (opcode == 0x88c)
+                emit(0x0100000000070000ULL | 252 | (u64{15} << 12) | (u64{insn.words[1]} << 20));
             emit(0x38e8000000070000ULL | 253 | (u64{255} << 8) | (u64{mask} << 20));
-            if (combine_mask) emit(0x38f0000000070000ULL | (u64{239} << 8) | (u64{combine_mask} << 20));
-            emit(0x5b60000000070000ULL | 7 | (u64{temporary} << 3) |
+            if (load_mask) emit(0x38f0000000070000ULL | (u64{239} << 8) | (u64{load_mask} << 20));
+            emit(0x5b60000000000000ULL | (u64{guarded ? (guard & 8) | guard_p : 7U} << 16) | 7 | (u64{temporary} << 3) |
                 (u64{a} << 8) | (u64{b} << 20) | (u64{combine_slot} << 39) | (u64{insn.Bits(90, 1)} << 42) |
                 (u64{combine_op} << 45) | (u64{insn.Bits(73, 1)} << 48) | (u64{insn.Bits(76, 3)} << 49));
             emit(0x38e8000000070000ULL | 239 | (u64{239} << 8) | (u64{1U << temporary} << 20));
@@ -1550,9 +1568,26 @@ inline LoweredProgram LowerToMaxwellWith(std::span<const Instruction> code, u32 
             const u32 condition = insn.Bits(87, 3);
             const u32 target = uniform_register(static_cast<u32>(dest));
             const u32 a = uniform_register(insn.Bits(24, 8)), b = opcode == 0x887 ? 252U : uniform_register(insn.Bits(32, 8));
+            // DKB: a UPn guard (bits 12-14, bit 15 negates; Ocarina's vegetation mesh stages use @UP4 USEL) is
+            // loaded from R239 together with the condition below, so the select writes only where the guard holds.
+            // @!UPT never executes. The generic guard swap is not used here: it saves P in R253 as well.
+            const u32 guard = insn.Bits(12, 4);
+            if (guard == 15) break;
             if (condition > 6 || target == ~0U || a == ~0U || b == ~0U ||
-                insn.Bits(12, 4) != 7 || (insn.words[2] & ~0x07800000U) != 0x08000000U)
+                (insn.words[2] & ~0x07800000U) != 0x08000000U)
                 return fail(index, "native uniform select mode");
+            if (guard != 7) {
+                const u32 temporary = 6 - condition, guard_p = 6 - (guard & 7);
+                const u32 mask = (1U << temporary) | (1U << guard_p);
+                if (opcode == 0x887)
+                    emit(0x0100000000070000ULL | 252 | (u64{15} << 12) | (u64{insn.words[1]} << 20));
+                emit(0x38e8000000070000ULL | 253 | (u64{255} << 8) | (u64{mask} << 20));
+                emit(0x38f0000000070000ULL | (u64{239} << 8) | (u64{mask} << 20));
+                emit(0x5ca0000000000000ULL | (u64{(guard & 8) | guard_p} << 16) | target | (u64{a} << 8) |
+                     (u64{b} << 20) | (u64{temporary} << 39) | (u64{insn.Bits(90, 1)} << 42));
+                emit(0x38f0000000070000ULL | (u64{253} << 8) | (u64{mask} << 20));
+                break;
+            }
             if (opcode == 0x887 && index > 0 && insn.words[1] <= 0x7ffff &&
                 code[index - 1].Bits(0, 12) == 0x88c && code[index - 1].Bits(12, 4) == 7 &&
                 code[index - 1].Bits(24, 8) == insn.Bits(24, 8) && code[index - 1].Bits(81, 3) == condition &&
@@ -2447,7 +2482,7 @@ inline LoweredProgram LowerToMaxwellWith(std::span<const Instruction> code, u32 
                  (u64{insn.Bits(78, 2)} << 39));
             break;
         }
-        case 0x207: case 0x807: case 0xa07: { // Bitwise SEL
+        case 0x207: case 0x807: case 0xa07: case 0xc07: { // Bitwise SEL (0xc07: uniform b, as in Lichii v13)
             const u32 a = operand(0, false), b = operand(1, false);
             emit(base(0x5ca0000000000000ULL) | (u64{a} << 8) | (u64{b} << 20) |
                 (u64{insn.Bits(87, 3)} << 39) | (u64{insn.Bits(90, 1)} << 42));
@@ -2664,8 +2699,9 @@ inline LoweredProgram LowerToMaxwellWith(std::span<const Instruction> code, u32 
                 (dest << 8) | (u64{b} << 20) | (u64{7} << 39) | (u64{1} << 49));
             break;
         }
-        case 0x211: case 0x811: { // LEA low word, no carry result
+        case 0x211: case 0x811: case 0xc11: { // LEA low word, no carry result (0xc11: uniform Rb, as in Lichii v13)
             if (insn.Bits(80, 1)) {
+                if (opcode == 0xc11) return fail(index, "native high effective address mode");
                 // LEA.HI Rd, Ra, Rb (or an immediate, 0x811), RZ, s: Rb + high word of (Ra << s);
                 // bit 73 sign-extends Ra. A register c (0x211) is the high word: Rb + ((Ra >> (32 - s)) | (Rc << s)).
                 const u32 c = insn.Bits(64, 8);
@@ -2694,13 +2730,15 @@ inline LoweredProgram LowerToMaxwellWith(std::span<const Instruction> code, u32 
                 break;
             }
             if (insn.Bits(72, 1) || insn.Bits(74, 1) || insn.Bits(80, 1) || insn.Bits(81, 3) != 7 ||
-                (opcode == 0x211 && insn.Bits(62, 1))) return fail(index, "native LEA carry/high mode");
-            // 0x211 bit 63 negates Rb (LEA Rd, Ra, -Rb, s), as Maxwell ISCADD's bit 48.
-            u32 b = insn.Bits(32, 8);
+                (opcode == 0x211 && insn.Bits(62, 1)) || (opcode == 0xc11 && (insn.words[1] & ~0x8000003fU)))
+                return fail(index, "native LEA carry/high mode");
+            // 0x211/0xc11 bit 63 negates Rb (LEA Rd, Ra, -Rb, s), as Maxwell ISCADD's bit 48.
+            u32 b = opcode == 0xc11 ? uniform_register(insn.Bits(32, 6)) : insn.Bits(32, 8);
+            if (b == ~0U) return fail(index, "native uniform LEA register");
             if (opcode == 0x811) { mov_imm(251, insn.words[1]); b = 251; }
             emit(base(0x5c18000000000000ULL) | (u64{insn.Bits(24, 8)} << 8) |
                  (u64{b} << 20) | (u64{insn.Bits(75, 5)} << 39) |
-                 (u64{opcode == 0x211 ? insn.Bits(63, 1) : 0U} << 48));
+                 (u64{opcode != 0x811 ? insn.Bits(63, 1) : 0U} << 48));
             break;
         }
         case 0x210: case 0x810: case 0xa10: case 0xc10: { // IADD3 with zero third source and no carry outputs
