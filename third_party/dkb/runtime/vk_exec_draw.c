@@ -125,12 +125,12 @@ static struct {
     VkBuffer sup_buf;
     VkDeviceSize sup_off;
     int sup_valid;
-    uint8_t c0[3][VK_C0_BYTES];          // last c0 bank per stage (vertex, fragment, compute) and where it lives
-    VkBuffer c0_buf[3];
-    VkDeviceSize c0_off[3];
-    int c0_valid[3];
+    uint8_t c0[4][VK_C0_BYTES];          // last c0 bank per stage (vertex or mesh, fragment, compute, task) and where it lives
+    VkBuffer c0_buf[4];
+    VkDeviceSize c0_off[4];
+    int c0_valid[4];
     struct { p_bind_buf ssbo[16], ubo[16]; uint32_t dim[3], binst, native_stage; Nvn2C0Layout lay; uint8_t has_lay;
-             uint32_t roots[NVN2_ROOT_TABLES][NVN2_ROOT_WORDS]; } c0_in[3];   // what vk_c0_fill read for c0[k]
+             uint32_t roots[NVN2_ROOT_TABLES][NVN2_ROOT_WORDS]; } c0_in[4];   // what vk_c0_fill read for c0[k]
     VkPipelineLayout ds_layout;          // graphics layout the sets below were last pushed or bound with
     VkDescriptorSet ds_bound[2];         // allocated set bound per set number (0: none or pushed since)
     VkDescriptorSet ds_last[2];          // last allocated and written set per set number, contents in DS
@@ -1045,9 +1045,10 @@ static int c0_on(void) {   // TOTK_FIX_C0=0: c0 reads zeros instead of the drive
 
 // c0 from replay scratch; a bank equal to the stage's previous one reuses its range, so it costs no copy.
 static VkDescriptorBufferInfo c0_info(VkExec *ex, int st) {
-    if (st != NVN_STAGE_VS && st != NVN_STAGE_FS && st != NVN_STAGE_CS && st != NVN2_STAGE_MESH)
+    if (st != NVN_STAGE_VS && st != NVN_STAGE_FS && st != NVN_STAGE_CS && st != NVN2_STAGE_MESH && st != NVN2_STAGE_TASK)
         rt_fatal("vk_exec: synthetic c0 is unavailable for stage %d", st);
-    int k = (st == NVN_STAGE_VS || st == NVN2_STAGE_MESH) ? 0 : st == NVN_STAGE_FS ? 1 : 2;
+    // The task stage runs in the same draw as the mesh stage, so it needs its own bank (vk_c0_fill: table at 0x670).
+    int k = (st == NVN_STAGE_VS || st == NVN2_STAGE_MESH) ? 0 : st == NVN_STAGE_FS ? 1 : st == NVN2_STAGE_TASK ? 3 : 2;
     // vk_c0_fill reads buffer bindings, compute root words and dispatch size, or the graphics base instance:
     // equal inputs give the same bank, so neither the fill nor the 2 KiB compare is needed.
     typeof(B.c0_in[0]) in;
@@ -2864,29 +2865,40 @@ static void op_dispatch_ind(VkExec *ex, const p_dispatch_ind *d) {
     if (vk_dump_armed) vk_dump_dispatch(ex, cs, p, info, &(p_dispatch){0, 0, 0, d->caller});
 }
 
-// Native no-task mesh dispatches share the ordinary render pass and descriptor machinery.
+// A mesh draw that does not execute: counted with the other skipped draws and logged with its reason, so that missing
+// mesh geometry (the game's foliage) is visible in the boot statistics instead of disappearing silently.
+static void mesh_skip(VkExec *ex, const p_draw_mesh *draw, const char *why) {
+    static volatile int32_t n_logged;
+    __atomic_fetch_add(&gfx_counters.draws_skipped, 1, __ATOMIC_RELAXED);
+    if (__atomic_fetch_add(&n_logged, 1, __ATOMIC_RELAXED) < 32) rt_log("mesh: draw skipped: %s", why);
+    if (vk_dump_armed) vk_dump_blocked_mesh(ex, draw);
+}
+
+// Native mesh dispatches (with or without a task stage) share the ordinary render pass and descriptor machinery.
 static void op_draw_mesh(VkExec *ex, const p_draw_mesh *draw) {
     if (ex->render_disabled) return;
     const uint8_t *ctl, *code; uint32_t len;
-    if ((draw->kind != NVN_MESH_DIRECT && draw->kind != NVN_MESH_INDIRECT) || !ex->prog ||
-        !find_stage(ex->prog, NVN2_STAGE_MESH, &ctl, &code, &len) || gfx_shader_is_nvn2(ctl) || !nvn_mesh_info(ctl)) {
-        __atomic_fetch_add(&gfx_counters.draws_skipped, 1, __ATOMIC_RELAXED);
-        if (vk_dump_armed) vk_dump_blocked_mesh(ex, draw);
-        return;
-    }
+    if (draw->kind != NVN_MESH_DIRECT && draw->kind != NVN_MESH_INDIRECT) return mesh_skip(ex, draw, "unknown mesh command kind");
+    if (!ex->prog) return mesh_skip(ex, draw, "no bound program");
+    if (!find_stage(ex->prog, NVN2_STAGE_MESH, &ctl, &code, &len)) return mesh_skip(ex, draw, "program has no mesh stage");
+    if (gfx_shader_is_nvn2(ctl)) return mesh_skip(ex, draw, "mesh stage was not lowered (see the nvn2: lowering log)");
+    if (!nvn_mesh_info(ctl)) return mesh_skip(ex, draw, "mesh stage lacks its lowering metadata");
     int indirect = draw->kind == NVN_MESH_INDIRECT;
     int32_t first = indirect ? 0 : (int32_t)draw->args[0], count = indirect ? 1 : (int32_t)draw->args[1];
-    if (first < 0 || count <= 0) return;
+    if (first < 0 || count <= 0) return;   // an empty dispatch draws nothing on the Switch either
     static PFN_vkCmdDrawMeshTasksEXT dispatch;
     if (!dispatch) dispatch = (PFN_vkCmdDrawMeshTasksEXT)vkGetDeviceProcAddr(vk_ctx()->device, "vkCmdDrawMeshTasksEXT");
-    if (!dispatch) return;
+    if (!dispatch) return mesh_skip(ex, draw, "vkCmdDrawMeshTasksEXT unavailable (VK_EXT_mesh_shader not enabled)");
     const NvnMeshInfo *mi = nvn_mesh_info(ctl);
     int task = mi->uses_task != 0;
     if (task) {
         const uint8_t *tc,*tb; uint32_t tl;
-        if (!find_stage(ex->prog,NVN2_STAGE_TASK,&tc,&tb,&tl) || gfx_shader_is_nvn2(tc)) return;
+        if (!vk_ctx()->has_task_shader) return mesh_skip(ex, draw, "task stage needed but taskShader is not enabled");
+        if (!find_stage(ex->prog,NVN2_STAGE_TASK,&tc,&tb,&tl)) return mesh_skip(ex, draw, "program has no task stage");
+        if (gfx_shader_is_nvn2(tc)) return mesh_skip(ex, draw, "task stage was not lowered (see the nvn2: lowering log)");
         const NvnMeshInfo *ti=nvn_mesh_info(tc);
-        if (!ti || ti->payload!=mi->payload || !vk_ctx()->has_task_shader) return;
+        if (!ti) return mesh_skip(ex, draw, "task stage lacks its lowering metadata");
+        if (ti->payload!=mi->payload) return mesh_skip(ex, draw, "task and mesh payload sizes differ");
     }
     mesh_arguments=(VkDescriptorBufferInfo){0};
     VkMemSpan source={0};
@@ -2901,7 +2913,8 @@ static void op_draw_mesh(VkExec *ex, const p_draw_mesh *draw) {
         }
         // NV-style one-dimensional record: taskCount, firstTask. Convert on
         // the GPU, preserving writes from earlier dispatches in this submission.
-        if(!vk_mem_resolve(draw->args[0],8,&source) || source.offset%4) return;
+        if(!vk_mem_resolve(draw->args[0],8,&source) || source.offset%4)
+            return mesh_skip(ex, draw, "indirect mesh arguments are not backed or not aligned");
         cb_res(ex);vk_exec_barrier(ex);VK_MEM_USE(source);
         VkBuffer buf;VkDeviceSize off;
         const uint32_t initial[4]={0,1,1,0};memcpy(scratch(ex,16,&buf,&off),initial,16);
@@ -2912,11 +2925,15 @@ static void op_draw_mesh(VkExec *ex, const p_draw_mesh *draw) {
         VK_MEM_BOUND(source);vk_mem_count(source.cls,VK_MUSE_IND,8);
     }
     B.res_valid=0; // the wrapper's argument descriptor is draw-specific
-    if (!prepare_draw(ex, NVN_DRAW_PRIMITIVE_TRIANGLES, 0x7fffffff, 0, task ? 2 : 1)) return;
+    if (!prepare_draw(ex, NVN_DRAW_PRIMITIVE_TRIANGLES, 0x7fffffff, 0, task ? 2 : 1)) {
+        static volatile int32_t n_prep;   // shaders still translating also land here; not counted as skipped
+        if (__atomic_fetch_add(&n_prep, 1, __ATOMIC_RELAXED) < 16) rt_log("mesh: draw not prepared (shader pending or pipeline failed)");
+        return;
+    }
     if(indirect) {
         static PFN_vkCmdDrawMeshTasksIndirectEXT fn;
         if(!fn)fn=(PFN_vkCmdDrawMeshTasksIndirectEXT)vkGetDeviceProcAddr(vk_ctx()->device,"vkCmdDrawMeshTasksIndirectEXT");
-        if(!fn)return;
+        if(!fn) return mesh_skip(ex, draw, "vkCmdDrawMeshTasksIndirectEXT unavailable");
         uint32_t push[2]={0,1};
         vkCmdPushConstants(ex->cb,B.ds_layout,VK_SHADER_STAGE_MESH_BIT_EXT|(task?VK_SHADER_STAGE_TASK_BIT_EXT:0),0,8,push);
         rec_mesh_indirect(fn,ex->cb,mesh_arguments.buffer,mesh_arguments.offset);
@@ -2928,7 +2945,7 @@ static void op_draw_mesh(VkExec *ex, const p_draw_mesh *draw) {
     uint32_t limit=task ? mp->maxTaskWorkGroupCount[0] : mp->maxMeshWorkGroupCount[0];
     uint32_t total=task ? mp->maxTaskWorkGroupTotalCount : mp->maxMeshWorkGroupTotalCount;
     if (total<limit) limit=total;
-    if (!limit) return;
+    if (!limit) return mesh_skip(ex, draw, "device reports a zero mesh work-group limit");
     uint32_t remaining = (uint32_t)count, base = (uint32_t)first;
     while (remaining) {
         uint32_t n = remaining > limit ? limit : remaining;

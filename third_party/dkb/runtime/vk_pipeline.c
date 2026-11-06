@@ -55,6 +55,7 @@
 
 #define LOG_ONCE(...) do { static volatile int32_t once_; if (!plat_xchg32(&once_, 1)) rt_log(__VA_ARGS__); } while (0)
 
+enum { SPV_OP_EXECUTION_MODE = 16, SPV_EXEC_OUTPUT_VERTICES = 26, SPV_OP_TYPE_ARRAY = 28 };
 enum { SPV_OP_ENTRY_POINT = 15, SPV_OP_TYPE_INT = 21, SPV_OP_TYPE_FLOAT = 22, SPV_OP_TYPE_VECTOR = 23,
        SPV_OP_TYPE_POINTER = 32, SPV_OP_CONSTANT = 43, SPV_OP_CONSTANT_COMPOSITE = 44,
        SPV_OP_CONSTANT_NULL = 46, SPV_OP_FUNCTION = 54, SPV_OP_VARIABLE = 59,
@@ -806,13 +807,16 @@ static uint32_t *spirv_alpha_test(const uint32_t *w, uint64_t n, unsigned func, 
 // point interface and initialised as Maxwell reads an unwritten output: (0, 0, 0, 1), the w as the bits of 1.0f whatever
 // the type (attribute memory is untyped); fewer than 4 components are all zero. Existing scalar, vector and pointer types
 // are reused. NULL when the module does not have the expected layout.
-static uint32_t *spirv_add_outputs(const uint32_t *w, uint64_t n, uint32_t missing, const GfxShaderIo io[32],
-                                   uint64_t *out_n) {
+// array_len != 0 (a mesh stage): each output is a per-vertex array of that many elements, zero-initialised as a whole,
+// since a mesh shader's outputs are indexed by vertex.
+static uint32_t *spirv_add_outputs_arrayed(const uint32_t *w, uint64_t n, uint32_t missing, const GfxShaderIo io[32],
+                                           uint32_t array_len, uint64_t *out_n) {
     uint64_t ep_at = 0, ann_end = 0, fn_at = 0;
-    uint32_t bound = w[3], scalar[3] = {0, 0, 0};          // GFX_TYPE_FLOAT, SINT, UINT
+    uint32_t bound = w[3], scalar[3] = {0, 0, 0}, len_id = 0;   // GFX_TYPE_FLOAT, SINT, UINT
     struct { uint32_t id, comp, count; } vec[64];
     struct { uint32_t id, type; } ptr[64];
-    int nvec = 0, nptr = 0;
+    struct { uint32_t id, elem; } arr[32];
+    int nvec = 0, nptr = 0, narr = 0;
     for (uint64_t i = 5; i < n;) {
         uint32_t op = w[i] & 0xffff, len = w[i] >> 16;
         if (!len || i + len > n) return NULL;
@@ -850,6 +854,24 @@ static uint32_t *spirv_add_outputs(const uint32_t *w, uint64_t n, uint32_t missi
             }
             type = vec[k].id;
         }
+        if (array_len) {
+            if (!scalar[GFX_TYPE_UINT]) {
+                scalar[GFX_TYPE_UINT] = bound++;
+                types[nt++] = 4u << 16 | SPV_OP_TYPE_INT, types[nt++] = scalar[GFX_TYPE_UINT], types[nt++] = 32, types[nt++] = 0;
+            }
+            if (!len_id) {
+                len_id = bound++;
+                types[nt++] = 4u << 16 | SPV_OP_CONSTANT, types[nt++] = scalar[GFX_TYPE_UINT], types[nt++] = len_id,
+                types[nt++] = array_len;
+            }
+            int a = 0;
+            while (a < narr && arr[a].elem != type) a++;
+            if (a == narr) {
+                arr[narr].id = bound++, arr[narr++].elem = type;
+                types[nt++] = 4u << 16 | SPV_OP_TYPE_ARRAY, types[nt++] = arr[a].id, types[nt++] = type, types[nt++] = len_id;
+            }
+            type = arr[a].id;
+        }
         int k = 0;
         while (k < nptr && ptr[k].type != type) k++;
         if (k == nptr) {
@@ -858,7 +880,7 @@ static uint32_t *spirv_add_outputs(const uint32_t *w, uint64_t n, uint32_t missi
             types[nt++] = 4u << 16 | SPV_OP_TYPE_POINTER, types[nt++] = ptr[k].id, types[nt++] = SPV_SC_OUTPUT, types[nt++] = type;
         }
         uint32_t init = bound++, var = bound++;
-        if (comps == 4) {
+        if (comps == 4 && !array_len) {
             if (!zero[t]) {
                 zero[t] = bound++, one[t] = bound++;
                 types[nt++] = 4u << 16 | SPV_OP_CONSTANT, types[nt++] = scalar[t], types[nt++] = zero[t], types[nt++] = 0;
@@ -890,6 +912,23 @@ static uint32_t *spirv_add_outputs(const uint32_t *w, uint64_t n, uint32_t missi
     memcpy(p, w + fn_at, (n - fn_at) * 4), p += n - fn_at;
     *out_n = (uint64_t)(p - o);
     return o;
+}
+
+static uint32_t *spirv_add_outputs(const uint32_t *w, uint64_t n, uint32_t missing, const GfxShaderIo io[32],
+                                   uint64_t *out_n) {
+    return spirv_add_outputs_arrayed(w, n, missing, io, 0, out_n);
+}
+
+// A mesh module's OpExecutionMode OutputVertices count, 0 when absent.
+static uint32_t spirv_output_vertices(const uint32_t *w, uint64_t n) {
+    for (uint64_t i = 5; w && i < n;) {
+        uint32_t op = w[i] & 0xffff, len = w[i] >> 16;
+        if (!len || i + len > n) return 0;
+        if (op == SPV_OP_EXECUTION_MODE && len >= 4 && w[i + 2] == SPV_EXEC_OUTPUT_VERTICES) return w[i + 3];
+        if (op == SPV_OP_FUNCTION) return 0;
+        i += len;
+    }
+    return 0;
 }
 
 // Remove unused translator declarations (NULL: nothing to change):
@@ -2000,7 +2039,20 @@ static VkPipeline create_graphics(const VkPipeState *s, const GKey *k, const Lay
                 else if (vout[i].type != fin[i].type)
                     LOG_ONCE("vk_pipeline: varying %d is type %d in the vertex stage, %d in the fragment stage", i, vout[i].type, fin[i].type);
             }
-            if (missing && mesh) return VK_NULL_HANDLE;
+            if (missing && mesh) {
+                // A fragment program shared between foliage groups can read a varying this mesh stage does not write.
+                // Declare it as a zeroed per-vertex output instead of dropping the whole draw.
+                uint32_t verts = spirv_output_vertices(vcode, vw);
+                uint64_t n2 = 0;
+                uint32_t *mp = verts ? spirv_add_outputs_arrayed(vcode, vw, missing, fin, verts, &n2) : NULL;
+                if (!mp) {
+                    LOG_ONCE("vk_pipeline: mesh stage lacks fragment inputs (mask %#x) and cannot be patched: pipeline skipped", missing);
+                    free(vpatched);
+                    return VK_NULL_HANDLE;
+                }
+                free(vpatched);
+                vpatched = mp, vcode = mp, vw = n2, missing = 0;
+            }
             if (missing && !l->set1) {
                 uint64_t n2 = 0;
                 vpatched = spirv_add_outputs(vcode, vw, missing, fin, &n2);
@@ -2063,6 +2115,13 @@ static VkPipeline create_graphics(const VkPipeState *s, const GKey *k, const Lay
         uint64_t sw = 0;
         const uint32_t *scode = gfx_shader_spirv(shaders[i], &sw);
         pin_subgroup32(st, &rq[stage_count], scode, sw);
+        // Task/mesh requests always tell the translator 32 lanes (gfx_shader.c build_request). Their work groups are
+        // exactly 32 invocations (nvn2_lower.cpp), so a wider wave only leaves lanes idle, but code that reads the
+        // subgroup size itself would still differ: report when the driver cannot pin these stages.
+        if ((st->stage & (VK_SHADER_STAGE_MESH_BIT_EXT | VK_SHADER_STAGE_TASK_BIT_EXT)) && !(P.sg32_stages & st->stage) &&
+            scode && uses_subgroup_ops(scode, sw))
+            LOG_ONCE("vk_pipeline: task/mesh stage uses subgroup operations but its subgroup size cannot be pinned to 32 "
+                     "(requiredSubgroupSizeStages %#x)", (unsigned)P.sg32_stages);
         stage_count++;
     }
     VkVertexInputAttributeDescription va[32];
