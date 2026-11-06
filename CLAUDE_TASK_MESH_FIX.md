@@ -60,6 +60,37 @@ Changes in the branch (`git diff 68f5d8e..fix/mesh-foliage`):
    and repeat the outdoor run (Kokiri Forest, frames 3600/3900). Report the rejection-reason counts again and say
    whether the canopy and the light shafts change.
 
+8. **Next task (not implemented, analysis only): light shadow maps come from wrong textures. Likely cause of the
+   brightness and of `VUID-06479`.** All 20 `VUID-...-06479` messages come from one fragment resource,
+   `fp_t2ds_cb0_40000000` (set 1, binding 23, a 2D shadow array). `game.log` reports it as
+   `vk_exec: unresolved direct-pool resource: stage 1 binding 23 type 0x403 handle 0x40000000 cbuf 0 array 32`. Its
+   sampler array is binding 55, same handle.
+   - Handle kind 4 is Ryujinx `TextureHandleType.Direct`, from `BindlessElimination.cs`. The shader reads the handle
+     from memory (a light table) and indexes the array with `min(handle & 0xfffff, 31)`: the **texture pool index**,
+     clamped to the array length that `tools/xlate/Program.cs` `QueryTextureArrayLengthFromPool()` gives (32). The
+     sampler index is `min(handle >> 20, 31)`. The texture pool has ~33,000 entries.
+   - `runtime/vk_exec_draw.c` `bind_resources` fills element k from **bound slot** `r->slot + k`, and for kind 4
+     `r->slot` is -1 (`gfx_shader.c` `handle_slot`). Element 0 is the dummy, and element k is bound slot k-1. These
+     are unrelated colour textures (RGBA8, BC1, BC4, RGBA32F), and every light's shadow test compares against them.
+     The result on AMD is undefined, and probably "lit". Lichii PR #354 found the same thing (a green tint on an
+     RX 7900 XTX for them). Its fix: descriptor arrays over the handle-table entries, and the null image for
+     depth-compare samples of formats that cannot be compared.
+   - **Step A, a quick experiment that proves or disproves the brightness link.** Create a 1x1 `D32_SFLOAT` dummy
+     (sampled, depth aspect). For elements of a shadow (`type & 0x400`) array whose image cannot be depth-compared,
+     bind that dummy instead, in draws as well (the existing depth twins are dispatch only, see `tex_info`). Run
+     the forest replay twice, once with the dummy cleared to 1.0 and once to 0.0 (env switch). Compare the fog
+     composite luminance and screenshots. If the haze and the light shafts change strongly, this resource drives
+     the brightness. Either way, `VUID-06479` should disappear.
+   - **Step B, the real fix:** kind-4 elements must come from the **texture pool** (element k = pool id k, sampler
+     element k = sampler pool id k), not from bound slots. The array also has to cover the pool indices the game
+     uses: a larger `QueryTextureArrayLengthFromPool`, with a persistent descriptor set per pool (descriptor
+     indexing, update-after-bind), or Lichii #354's approach of binding the entries the handle table names. The
+     descriptor-set reuse key in `vk_exec_draw.c` (the `rs_add` loop over `r->slot + k`) must then include the
+     pool identity, or sets go stale. First measure which pool indices the light table actually holds.
+   - Checked here and fine: patch 0014 makes FMNMX and `.SAT` NaN-safe. `FSETP` comparisons match Maxwell. Not
+     matched: F2I to S32/U32 with NaN or out-of-range input (raw `OpConvertFToS`), `.FTZ` is ignored, and no float
+     controls are declared. These have lower priority.
+
 Known and not fixed: an indirect mesh draw's group count is not clamped to `maxMeshWorkGroupCount[0]`/
 `maxTaskWorkGroupCount[0]`. A GPU-side clamp would need a small compute pass.
 
