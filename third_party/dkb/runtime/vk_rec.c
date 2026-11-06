@@ -39,7 +39,7 @@ enum {
     R_SetDepthWriteEnable, R_SetFrontFace, R_SetPrimitiveRestartEnable, R_SetPrimitiveTopology,
     R_SetRasterizerDiscardEnable, R_SetScissorWithCount, R_SetStencilCompareMask, R_SetStencilOp, R_SetStencilReference,
     R_SetStencilTestEnable, R_SetStencilWriteMask, R_SetViewportWithCount, R_WriteTimestamp, R_WriteTimestamp2,
-    R_PushTpl, R_Push, R_VertexInput, R_Bool, R_PolygonMode, R_BlendEnable, R_BlendEquation, R_WriteMask, R_EndCb, R_Crumb,
+    R_PushTpl, R_Push, R_VertexInput, R_Bool, R_PolygonMode, R_BlendEnable, R_BlendEquation, R_WriteMask, R_EndCb, R_Crumb, R_Mesh, R_MeshIndirect,
 };
 
 static uint64_t now_ns(void) { return plat_now_ns(); }
@@ -514,6 +514,18 @@ void rec_vertex_input(PFN_vkCmdSetVertexInputEXT fn, VkCommandBuffer cb, uint32_
     pub();
 }
 
+typedef struct { PFN_vkCmdDrawMeshTasksIndirectEXT fn; VkBuffer buffer; VkDeviceSize offset; } A_MeshIndirect;
+void rec_mesh_indirect(PFN_vkCmdDrawMeshTasksIndirectEXT fn,VkCommandBuffer cb,VkBuffer buf,VkDeviceSize offset) {
+    if(!OWNED(cb)){fn(cb,buf,offset,1,12);return;}
+    A_MeshIndirect *a=put(R_MeshIndirect,sizeof *a);*a=(A_MeshIndirect){fn,buf,offset};pub();
+}
+typedef struct { PFN_vkCmdDrawMeshTasksEXT fn; uint32_t x, y, z; } A_Mesh;
+void rec_mesh(PFN_vkCmdDrawMeshTasksEXT fn, VkCommandBuffer cb, uint32_t x, uint32_t y, uint32_t z) {
+    if (!OWNED(cb)) { fn(cb, x, y, z); return; }
+    A_Mesh *a = put(R_Mesh, sizeof *a);
+    *a = (A_Mesh){fn, x, y, z}; pub();
+}
+
 typedef struct { PFN_vkCmdSetDepthClampEnableEXT fn; VkBool32 v; } A_Bool;
 void rec_bool(PFN_vkCmdSetDepthClampEnableEXT fn, VkCommandBuffer cb, VkBool32 v) {
     if (!OWNED(cb)) { fn(cb, v); return; }
@@ -612,6 +624,8 @@ static void exec_packet(uint32_t op, void *p) {
     case R_PushTpl: { A_PushTpl *a = p; a->fn(cb, a->tpl, a->l, a->set, a->data); break; }
     case R_Push: { A_Push *a = p; a->fn(cb, a->bp, a->l, a->set, a->n, a->w); break; }
     case R_VertexInput: { A_VertexInput *a = p; a->fn(cb, a->nb, a->b, a->na, a->v); break; }
+    case R_MeshIndirect: { A_MeshIndirect *a=p; a->fn(cb,a->buffer,a->offset,1,12);break; }
+    case R_Mesh: { A_Mesh *a = p; a->fn(cb, a->x, a->y, a->z); break; }
     case R_Bool: { A_Bool *a = p; a->fn(cb, a->v); break; }
     case R_PolygonMode: { A_PolygonMode *a = p; a->fn(cb, a->m); break; }
     case R_BlendEnable: { A_Targets *a = p; ((PFN_vkCmdSetColorBlendEnableEXT)a->fn)(cb, a->first, a->n, a->v); break; }

@@ -333,3 +333,5 @@ int probe_movie(void);                                     // movie_probe.c: hos
 int probe_codec(void);                                     // ov_codec.c: AV1/VP9 lifecycle and AV1 output ABI
 int vk_pipeline_prepare_shaders(void);                     // vk_pipeline.c: --prepare-shaders (tools/prepare_shaders.py)
 int vk_pipeline_warm_shaders(void);                        // vk_pipeline.c: --warm-shaders (tools/build_game.py)
+
+int probe_vkmesh(void); // authored native MeshEXT replay and readback

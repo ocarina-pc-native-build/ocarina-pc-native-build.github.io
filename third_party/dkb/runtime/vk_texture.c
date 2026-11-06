@@ -73,8 +73,9 @@ typedef struct {
     view_t v;
     tex_t t;
 } TexSlot;
-typedef struct { samp_par p; VkSampler s, sp; uint8_t used; } SampSlot;   // s: vk_sampler_for(&p) once looked up; sp:
-                                                                           // its point-sampled form (vk_sampler_point_by_id_locked)
+typedef struct { samp_par p; VkSampler s, sp, sn, snp; uint8_t used; } SampSlot;   // s: vk_sampler_for(&p) once looked up; sp:
+                                                                           // its point-sampled form (vk_sampler_point_by_id_locked);
+                                                                           // sn, snp: both without depth compare (vk_sampler_plain_by_id_locked)
 enum { DESC_TEXTURE = 1, DESC_SAMPLER };
 typedef struct {
     uint32_t kind, serial;
@@ -1775,6 +1776,34 @@ VkSampler vk_sampler_point_by_id_locked(const dpool_ref *pool, int id) {
         s->sp = sampler_for(c, &k);
     }
     return s->sp;
+}
+
+// A plain (non-Dref) sample through a compare-enabled sampler: Maxwell ignores the comparison, Vulkan leaves the result
+// undefined and AMD's drivers return the 0/1 compare result instead of the texel. Lichii v13 (e608ac768) found this
+// blacking out Ocarina's forest fog composite. Such samples get a variant with compareEnable off; without a compare
+// mode in the guest sampler this is the ordinary (or point) sampler.
+VkSampler vk_sampler_plain_by_id_locked(const dpool_ref *pool, int id, int point) {
+    VkCtx *c = vk_ctx();
+    DescSlot *d = descriptor_slot(pool, id, 1u << 12, 0);
+    if (!c || !d || d->kind != DESC_SAMPLER) return VK_NULL_HANDLE;
+    SampSlot *s = &d->u.sampler;
+    if (!s->p.cmp_mode) return point ? vk_sampler_point_by_id_locked(pool, id) : vk_sampler_by_id_locked(pool, id);
+    VkSampler *slot = point ? &s->snp : &s->sn;
+    if (!*slot) {
+        samp_par k = s->p;
+        k.cmp_mode = 0, k.cmp_func = 0;
+        if (point) {
+            k.magf = NVN_MAG_FILTER_NEAREST;
+            k.minf = k.minf == NVN_MIN_FILTER_LINEAR ? NVN_MIN_FILTER_NEAREST :
+                     k.minf > NVN_MIN_FILTER_LINEAR ? NVN_MIN_FILTER_NEAREST_MIPMAP_NEAREST : k.minf;
+            k.aniso = 1;
+        }
+        *slot = sampler_for(c, &k);
+        static volatile int32_t n_logged;
+        if (__atomic_fetch_add(&n_logged, 1, __ATOMIC_RELAXED) < 4)
+            rt_log("vk: sampler slot %d has a depth compare but is read by a plain sample: compare dropped for it", id);
+    }
+    return *slot;
 }
 
 VkSampler vk_sampler_by_id(const dpool_ref *pool, int id) {

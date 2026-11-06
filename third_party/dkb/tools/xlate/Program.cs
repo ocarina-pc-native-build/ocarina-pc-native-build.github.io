@@ -225,6 +225,7 @@ static class SwshXlate
         public int QueryComputeLocalSizeX() => Local(0);
         public int QueryComputeLocalSizeY() => Local(1);
         public int QueryComputeLocalSizeZ() => Local(2);
+        public int QueryComputeLocalMemorySize() => _job["local_memory"]?.GetValue<int>() ?? 0x1000;
         public int QueryComputeSharedMemorySize() => _job["shared"] is JsonNode n ? (int)n : 0;   // 配对 PC 的 groupshared 声明之和 | sum of the paired PC shader's groupshared declarations
         static AttributeType Attr(string s) => s switch { "sint" => AttributeType.Sint, "uint" => AttributeType.Uint, _ => AttributeType.Float };
         public GpuGraphicsState QueryGraphicsState()
@@ -283,14 +284,15 @@ static class SwshXlate
                 var acc = new Accessor(code, job);
                 // 作业 debug = false：关 DebugMode（DebugMode 会跳过 AST 优化器，产物满是临时变量；不改语义）
                 // Job debug = false: turn off DebugMode (DebugMode skips the AST optimizer and the output is full of temporaries; semantics unchanged)
-                var flags = (job["debug"] is JsonNode dbg && !(bool)dbg ? 0 : TranslationFlags.DebugMode) | ((string)job["stage"] == "cs" ? TranslationFlags.Compute : 0);
+                var flags = (job["debug"] is JsonNode dbg && !(bool)dbg ? 0 : TranslationFlags.DebugMode) | ((string)job["stage"] is "cs" or "ms" or "ts" ? TranslationFlags.Compute : 0);
                 var ctx = Translator.CreateContext(0, acc, new TranslationOptions(TargetLanguage.Spirv, TargetApi.Vulkan, flags));
                 if (acc.GeometryVersion == 2)
                     ctx.SetGeometryPassthroughAttributes(acc.GeometryPassthroughAttributes);
                 ShaderProgram p = ctx.Translate();
                 if (acc.GeometryVersion != 0 && p.Info.Stage != ShaderStage.Geometry)
                     throw new InvalidDataException("Geometry translation produced a different stage");
-                File.WriteAllBytes(Path.Combine(outDir, key + ".spv"), p.BinaryCode);
+                int indirectBinding=-1;
+                File.WriteAllBytes(Path.Combine(outDir, key + ".spv"), (string)job["stage"] is "ms" or "ts" ? MeshExport.Wrap(p.BinaryCode, job, out indirectBinding) : p.BinaryCode);
                 var res = new JsonObject
                 {
                     ["key"] = key, ["stage"] = (string)job["stage"], ["notes"] = new JsonArray(acc.Notes.ConvertAll(n => (JsonNode)n).ToArray()),
@@ -299,6 +301,7 @@ static class SwshXlate
                     ["storage_candidates_version"] = acc.StorageCandidatesVersion,
                     ["tex_queried"] = new JsonArray(acc.TexQueried.Select(x => (JsonNode)x).ToArray()), ["img_queried"] = new JsonArray(acc.ImgQueried.Select(x => (JsonNode)x).ToArray()),
                 };
+                if ((string)job["stage"] is "ms" or "ts") res["mesh"] = job["mesh"].DeepClone();
                 if (acc.GeometryVersion != 0)
                 {
                     res["geometry_version"] = acc.GeometryVersion;
@@ -315,6 +318,7 @@ static class SwshXlate
                         res["geometry"]["source_passthrough"] = true;
                     }
                 }
+                if(indirectBinding>=0) res["cbufs"].AsArray().Add((JsonNode)new JsonObject{["binding"]=indirectBinding,["slot"]=-2});
                 foreach (var b in p.Info.CBuffers) res["cbufs"].AsArray().Add((JsonNode)new JsonObject { ["binding"] = b.Binding, ["slot"] = b.Slot });
                 foreach (var b in p.Info.SBuffers) res["sbufs"].AsArray().Add((JsonNode)new JsonObject { ["binding"] = b.Binding, ["slot"] = b.Slot, ["cb_slot"] = b.SbCbSlot, ["cb_offset"] = b.SbCbOffset, ["flags"] = (int)b.Flags });
                 foreach (var (list, name) in new[] { (p.Info.Textures, "textures"), (p.Info.Images, "images") })

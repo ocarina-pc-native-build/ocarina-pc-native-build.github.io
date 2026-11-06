@@ -2,6 +2,7 @@
 // lowering (runtime/third_party/eglantine, GPL-3.0-or-later) rewrites the Ampere code as Maxwell, laid out as TotK's
 // translator reads it, and a synthetic control block carries the fields the host reads.
 #include <cstdint>
+#include <cstdlib>
 #include <atomic>
 #include <cstring>
 #include <map>
@@ -11,8 +12,17 @@
 #include <utility>
 #include <vector>
 #include "nvn2_control.h"
+#include "nvn_mesh.h"
 
 #include "shader_recompiler/frontend/ampere/program_capture.h"
+
+// Lichii v13's lowering (third_party/lichii, GPL-3.0-or-later) under its own namespace: the fallback for programs the
+// Eglantine lowering above rejects. It lowers, among others, the global reductions (RED) of Ocarina's vegetation
+// culling and sky ambient compute programs, whose rejection blocked their GPU work and left leaves and grass at a count
+// of zero.
+#define Ampere AmpereLichii
+#include "third_party/lichii/program_capture.h"
+#undef Ampere
 
 extern "C" void rt_log(const char *fmt, ...);
 extern "C" uint64_t gfx_shader_nvn2_hash(const uint8_t *control, const uint8_t *code);
@@ -43,16 +53,38 @@ Lowered *lower(const uint8_t *control, const uint8_t *code) {
     std::memcpy(&control_bytes, control + 0x30, sizeof control_bytes);
     if (!control_bytes) control_bytes = 0xd8;
     const unsigned native_stage = nvn2_control_stage(control, control_bytes);
-    if (native_stage == NVN2_STAGE_TASK || native_stage == NVN2_STAGE_MESH) {
-        // Their ISBERD/ISBEWR instructions access payload and output memory,
-        // not ordinary vertex attributes. Keep the raw stage for mesh replay.
-        rt_log("nvn2: shader %016llx %s stage retained: task/mesh translator is not implemented",
-               (unsigned long long)gfx_shader_nvn2_hash(control, code),
-               native_stage == NVN2_STAGE_TASK ? "task" : "mesh");
-        return nullptr;
-    }
     uint32_t code_len, w0;
     std::memcpy(&code_len, control + 0x38, 4), std::memcpy(&w0, code, 4);
+    const bool task = native_stage == NVN2_STAGE_TASK;
+    const bool mesh = task || native_stage == NVN2_STAGE_MESH;
+    NvnMeshInfo mesh_info{};
+    uint32_t stage_memory[4]{};
+    if (mesh) {
+        auto u16 = [&](unsigned at) { return uint32_t(control[at]) | uint32_t(control[at+1]) << 8; };
+        mesh_info.magic = NVN_MESH_META_MAGIC;
+        mesh_info.threads = u16(0x58); mesh_info.payload = u16(0x5a);
+        mesh_info.vertices = u16(0x60); mesh_info.primitives = u16(0x62);
+        mesh_info.uses_task = control[0x5e];
+        if (mesh_info.threads != 32 || mesh_info.payload > 16384 || (!task && (mesh_info.vertices > 256 ||
+            !mesh_info.vertices || !mesh_info.primitives || mesh_info.primitives > 255 || (control[0x68] & 0x80)))) {
+            rt_log("nvn2: mesh %016llx unsupported task/workgroup/primitive metadata",
+                   (unsigned long long)gfx_shader_nvn2_hash(control, code));
+            return nullptr;
+        }
+        for (unsigned k=0;!task && k<4;k++) if ((code[0x35] >> (k+4)) & 1)
+            mesh_info.attribute[mesh_info.components++] = uint8_t(128+k);
+        for (unsigned k=0;!task && k<128;k++) if ((code[0x36+k/8] >> (k%8)) & 1)
+            mesh_info.attribute[mesh_info.components++] = uint8_t(k);
+        if (!task && (code[0x35] & 0xf0) != 0xf0) return nullptr;
+        mesh_info.output_base = 0x10 + ((mesh_info.payload+15)&~15u);
+        unsigned blocks = (std::max(mesh_info.vertices,mesh_info.primitives)+31)/32;
+        mesh_info.primitive_base = mesh_info.output_base + blocks*mesh_info.components*128;
+        mesh_info.shared_bytes = (mesh_info.primitive_base + 4 + 3*mesh_info.primitives + 127)&~127u;
+        if (task) mesh_info.shared_bytes = (mesh_info.output_base + mesh_info.payload + 127)&~127u;
+        if (mesh_info.shared_bytes > 32768) return nullptr;
+        stage_memory[0]=0; stage_memory[1]=0x10;
+        stage_memory[2]=mesh_info.output_base; stage_memory[3]=mesh_info.primitive_base;
+    }
     const bool gfx = nvn2_sph_type(w0) != 0;
     const uint32_t hdr = gfx ? 0x80 : 0;
     if (code_len <= hdr) {
@@ -65,21 +97,88 @@ Lowered *lower(const uint8_t *control, const uint8_t *code) {
     for (uint32_t at = hdr; at + 16 <= code_len; at += 16) {
         Shader::Ampere::Instruction insn;
         std::memcpy(insn.words.data(), code + at, 16);
+        if (mesh) {
+            unsigned op=insn.Bits(0,12);
+            if (op==0x984 || op==0x388 || op==0x38c || op==0x988 || op==0x98c || op==0xf8c) {
+                rt_log("nvn2: mesh shader uses overlapping native shared memory"); return nullptr;
+            }
+        }
         native.push_back(insn);
         const auto r = capture.Observe(insn, static_cast<uint32_t>(native.size() - 1));
         if (r != Shader::Ampere::ProgramCaptureState::Result::Continue) break;
     }
-    auto lowered = Shader::Ampere::LowerToMaxwell(native, "full");
-    if (!lowered && lowered.error == "native program uses lowering scratch registers" && gfx && ((w0 >> 10) & 15) == 1) {
+    uint32_t guest_local=0; if(mesh) std::memcpy(&guest_local,code+4,4); guest_local &= 0xffffff;
+    auto lowered = Shader::Ampere::LowerToMaxwell(native, "full", false, mesh ? stage_memory : nullptr);
+    if (!lowered && lowered.error == "native program uses lowering scratch registers" && gfx && (mesh || ((w0 >> 10) & 15) == 1)) {
         uint32_t local[3];
         std::memcpy(local, code + 4, sizeof local);
-        if (!((local[0] | local[1] | local[2]) & 0xffffff))
-            lowered = Shader::Ampere::LowerToMaxwell(native, "full", true);
+        if (!((local[0] | local[1] | local[2]) & 0xffffff) ||
+            (mesh && guest_local<=4096 && !((local[1]|local[2]) & 0xffffff)))
+            lowered = Shader::Ampere::LowerToMaxwell(native, "full", true, mesh ? stage_memory : nullptr, (guest_local+15)&~15u);
     }
-    if (!lowered) {
+    const auto eglantine_error = lowered.error;
+    const uint32_t eglantine_error_offset = lowered.error_offset;
+    // What the rest of this function takes from the lowering, from either lowerer.
+    std::vector<uint64_t> lowered_code;
+    std::vector<uint32_t> lowered_offsets;
+    uint32_t lowered_spill = 0;
+    if (lowered) {
+        lowered_code = std::move(lowered.instructions);
+        lowered_offsets = std::move(lowered.source_instruction_offsets);
+        lowered_spill = lowered.local_spill_bytes;
+    } else if (!mesh && !getenv("DKB_NO_LICHII_LOWER")) {
+        // Lichii fallback. Mesh and task programs keep the Eglantine path: their stage memory layout is ours.
+        namespace L = Shader::AmpereLichii;
+        std::vector<L::Instruction> lnative;
+        L::ProgramCaptureState lcapture;
+        for (uint32_t at = hdr; at + 16 <= code_len; at += 16) {
+            L::Instruction insn;
+            std::memcpy(insn.words.data(), code + at, 16);
+            lnative.push_back(insn);
+            if (lcapture.Observe(insn, static_cast<uint32_t>(lnative.size() - 1)) != L::ProgramCaptureState::Result::Continue)
+                break;
+        }
+        // Tensor-core programs (HMMA/IMMA/DMMA: Ocarina's neural-network passes) become a software matrix loop here.
+        // They cost ~330 ms per frame on an RX 7900 XTX and were blocked before, so they stay blocked unless
+        // DKB_LICHII_TENSOR=1.
+        bool tensor = false;
+        for (const auto &insn : lnative) {
+            const uint32_t op = insn.Bits(0, 12);
+            tensor |= op == 0x23c || op == 0x237 || op == 0x23f;
+        }
+        if (tensor && !getenv("DKB_LICHII_TENSOR")) {
+            rt_log("nvn2: shader %016llx uses tensor instructions: Lichii fallback skipped (DKB_LICHII_TENSOR=1 allows it)",
+                   (unsigned long long)gfx_shader_nvn2_hash(control, code));
+            lnative.clear();
+        }
+        L::LoweringOptions options{};
+        options.geometry = gfx && ((w0 >> 10) & 15) == 4;
+        L::LoweredProgram alt;
+        if (!lnative.empty()) alt = L::LowerToMaxwell(lnative, options);
+        else alt.error = "skipped";
+        // Lichii's banked register copy (MOV with an empty write mask and 0b1010 in bits 44-47) addresses registers
+        // past R255 that only Lichii's Maxwell frontend has; the translator here would read a different register.
+        bool banked = false;
+        for (uint64_t insn : alt.instructions)
+            banked |= (insn >> 48) == 0x5c98 && ((insn >> 39) & 15) == 0 && ((insn >> 44) & 15) == 10;
+        if (alt && !banked) {
+            static std::atomic<int> logged{0};
+            if (logged++ < 64)
+                rt_log("nvn2: shader %016llx stage %u lowered by the Lichii fallback (Eglantine: %.*s at +%#x)",
+                       (unsigned long long)gfx_shader_nvn2_hash(control, code), gfx ? (w0 >> 10) & 15 : 0,
+                       (int)eglantine_error.size(), eglantine_error.data(), eglantine_error_offset);
+            lowered_code = std::move(alt.instructions);
+            lowered_offsets = std::move(alt.source_instruction_offsets);
+        } else if (!alt && !lnative.empty()) {
+            rt_log("nvn2: shader %016llx Lichii fallback also failed at +%#x: %.*s",
+                   (unsigned long long)gfx_shader_nvn2_hash(control, code), alt.error_offset,
+                   (int)alt.error.size(), alt.error.data());
+        }
+    }
+    if (lowered_code.empty()) {
         rt_log("nvn2: shader %016llx stage %u Ampere lowering failed at +%#x: %.*s",
                (unsigned long long)gfx_shader_nvn2_hash(control, code), gfx ? (w0 >> 10) & 15 : 0,
-               lowered.error_offset, (int)lowered.error.size(), lowered.error.data());
+               eglantine_error_offset, (int)eglantine_error.size(), eglantine_error.data());
         return nullptr;
     }
 
@@ -90,13 +189,13 @@ Lowered *lower(const uint8_t *control, const uint8_t *code) {
     // as a scheduling word, so the code starts with a scheduling word and a NOP and instruction 0 lands 0x10 in. For
     // graphics, the 0x30 bytes the host skips and the first 0x50 bytes of the SPH come first. (Instruction 0 straight
     // at SPH+0x50 was decoded as a scheduling word and shifted every group: one real instruction in four was lost.)
-    if (gfx) {
+    if (gfx && !mesh) {
         m.assign(6, 0);
         m.resize(16);
         std::memcpy(m.data() + 6, code, 0x50);
-        if (lowered.local_spill_bytes) {
+        if (lowered_spill) {
             auto *header = reinterpret_cast<uint32_t *>(m.data() + 6);
-            header[1] = (header[1] & 0xff000000) | lowered.local_spill_bytes;
+            header[1] = (header[1] & 0xff000000) | lowered_spill;
         }
     }
     m.push_back(0), m.push_back(kMaxwellNop);
@@ -105,9 +204,9 @@ Lowered *lower(const uint8_t *control, const uint8_t *code) {
     // program whose last native instruction is a conditional exit or a self-branch would read past the buffer.
     // The compiler's end marker, an unconditional branch to itself after the last EXIT, becomes an EXIT too: Ryujinx's
     // structuring can join it to the exit path, and the empty endless loop it then emits hangs the GPU (device lost).
-    for (size_t i = 0; i < lowered.instructions.size() + 4; i++) {
+    for (size_t i = 0; i < lowered_code.size() + 4; i++) {
         if (pos % 32 == 0) m.push_back(0), pos += 8;
-        uint64_t insn = i < lowered.instructions.size() ? lowered.instructions[i] : kMaxwellExit;
+        uint64_t insn = i < lowered_code.size() ? lowered_code[i] : kMaxwellExit;
         if ((insn >> 52) == 0xe24 && ((insn >> 20) & 0xffffff) == 0xfffff8 && ((insn >> 16) & 15) == 7) insn = kMaxwellExit;
         m.push_back(insn), pos += 8;
     }
@@ -127,8 +226,8 @@ Lowered *lower(const uint8_t *control, const uint8_t *code) {
         // be one would be rewritten too. Track the LDC base of each BRX if that ever bites.
         if (brx)
             for (uint32_t &w : c1)
-                if (w % 16 == 0 && w / 16 < lowered.source_instruction_offsets.size()) {
-                    const uint32_t i = lowered.source_instruction_offsets[w / 16];
+                if (w % 16 == 0 && w / 16 < lowered_offsets.size()) {
+                    const uint32_t i = lowered_offsets[w / 16];
                     // The lowering's address_of (0x50-based). Instruction i sits at address_of(i) - 0x40 from the code
                     // start, and the lowered BRX's base works out to -0x40, so the value lands on instruction i
                     // (Ryujinx FindBrxTargets: target = BRX base + table value).
@@ -145,7 +244,13 @@ Lowered *lower(const uint8_t *control, const uint8_t *code) {
     const uint32_t stage = !gfx ? 5 : type == 5 ? 1 : type == 4 ? 2 : type == 2 ? 3 : type == 3 ? 4 : 0;
     put32(out->control, 0x700, c1_off);
     put32(out->control, 0x704, len);
-    put32(out->control, 0x714, stage);
+    put32(out->control, 0x714, mesh ? native_stage : stage);
+    if (mesh) {
+        static_assert(sizeof mesh_info <= kC0Layout - NVN_MESH_META_OFFSET);
+        std::memcpy(out->control.data()+NVN_MESH_META_OFFSET,&mesh_info,sizeof mesh_info);
+        put32(out->control,0x754,std::max(guest_local,lowered_spill));
+        put32(out->control,0x748,mesh_info.threads); put32(out->control,0x74c,1); put32(out->control,0x750,1);
+    }
     if (!gfx) {
         std::memcpy(out->control.data() + 0x748, control + 0x58, 12);   // local size (NVN 2 control +0x58)
         // The compute driver bank is packed per program from these counts (gfx_shader.c, "NVN 2 compute c0"):

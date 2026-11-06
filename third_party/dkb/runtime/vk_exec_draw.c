@@ -30,6 +30,7 @@
 #include "nvn2_control.h"
 #include "vk.h"
 #include "vk_exec.h"
+#include "nvn_mesh.h"
 #include "tex.h"
 #include "platform/platform.h"
 
@@ -128,7 +129,7 @@ static struct {
     VkBuffer c0_buf[3];
     VkDeviceSize c0_off[3];
     int c0_valid[3];
-    struct { p_bind_buf ssbo[16], ubo[16]; uint32_t dim[3], binst; Nvn2C0Layout lay; uint8_t has_lay;
+    struct { p_bind_buf ssbo[16], ubo[16]; uint32_t dim[3], binst, native_stage; Nvn2C0Layout lay; uint8_t has_lay;
              uint32_t roots[NVN2_ROOT_TABLES][NVN2_ROOT_WORDS]; } c0_in[3];   // what vk_c0_fill read for c0[k]
     VkPipelineLayout ds_layout;          // graphics layout the sets below were last pushed or bound with
     VkDescriptorSet ds_bound[2];         // allocated set bound per set number (0: none or pushed since)
@@ -247,7 +248,7 @@ static uint8_t *scratch(VkExec *ex, uint64_t size, VkBuffer *buf, VkDeviceSize *
         VkBufferCreateInfo bi = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = n,
                                  .usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
                                           VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT |
-                                          VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT};
+                                          VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT};
         VmaAllocationCreateInfo ai = {.usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST,
                                       .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT};
         VmaAllocationInfo info;
@@ -696,6 +697,7 @@ static void stage_metadata(const uint8_t *ctl,const uint8_t *code,uint32_t *stag
         // A rejected native stage still has the compact NVN2 control block;
         // reading legacy offsets 0x704/0x714 would read unrelated guest memory.
         uint32_t w; memcpy(&w,code,4); memcpy(len,ctl+0x38,4);
+        if (ctl[0x56] == NVN2_STAGE_TASK || ctl[0x56] == NVN2_STAGE_MESH) { *stage=ctl[0x56]; return; }
         int graphics=nvn2_sph_type(w)!=0;
         uint32_t type=(w>>10)&15;
         *stage=!graphics ? 5 : type==5 ? 1 : type==4 ? 2 : type==2 ? 3 : type==3 ? 4 : 0;
@@ -771,7 +773,7 @@ int probe_nvn2_stage_controls(void) {
 // Texture and image types of a stage's first 32 slots, each kept with the handle and the generation and slot token it
 // was looked up under: a slot is looked up again, a hash probe, only when the handle changed or its slot may resolve
 // otherwise (slot_still).
-static struct { uint64_t context, tex[32], img[32], ttok[32], itok[32]; uint32_t tgen[32], igen[32]; uint8_t tt[32], it[32], ifmt[32]; } AC[6];
+static struct { uint64_t context, tex[32], img[32], ttok[32], itok[32]; uint32_t tgen[32], igen[32]; uint8_t tt[32], it[32], ifmt[32]; } AC[NVN2_STAGE_COUNT];
 static uint64_t descriptor_serial = 1;
 
 // vk_texture_slot_token of the slot a texture or image handle names; an empty handle always resolves to nothing.
@@ -926,7 +928,7 @@ static const GfxShader *shader_for(VkExec *ex, int st, int *present, int *pendin
         }
     }
     int gs = st == NVN_STAGE_VS ? GFX_STAGE_VS : st == NVN_STAGE_FS ? GFX_STAGE_FS :
-             st == NVN_STAGE_GS ? GFX_STAGE_GS : st == NVN_STAGE_CS ? GFX_STAGE_CS : -1;
+             st == NVN_STAGE_GS ? GFX_STAGE_GS : st == NVN_STAGE_CS ? GFX_STAGE_CS : st == NVN2_STAGE_MESH ? GFX_STAGE_MS : st == NVN2_STAGE_TASK ? GFX_STAGE_TS : -1;
     if (gs < 0) return NULL;
     const GfxShader *s = await ? gfx_shader_await(gs, ctl, code, len, &a)
                        : pending && vk_pipeline_async_on() ? gfx_shader_get_async(gs, ctl, code, len, &a, pending)
@@ -946,7 +948,7 @@ static const GfxShader *shader_for(VkExec *ex, int st, int *present, int *pendin
 
 static int nvn_stage_of(int gfx_stage) {
     return gfx_stage == GFX_STAGE_VS ? NVN_STAGE_VS : gfx_stage == GFX_STAGE_FS ? NVN_STAGE_FS :
-           gfx_stage == GFX_STAGE_GS ? NVN_STAGE_GS : gfx_stage == GFX_STAGE_CS ? NVN_STAGE_CS : -1;
+           gfx_stage == GFX_STAGE_GS ? NVN_STAGE_GS : gfx_stage == GFX_STAGE_CS ? NVN_STAGE_CS : gfx_stage == GFX_STAGE_MS ? NVN2_STAGE_MESH : gfx_stage == GFX_STAGE_TS ? NVN2_STAGE_TASK : -1;
 }
 
 static VkDescriptorBufferInfo zero_info(uint64_t max) {
@@ -1020,7 +1022,7 @@ void vk_c0_fill(uint8_t bank[VK_C0_BYTES], int stage, const p_bind_buf ssbo[16],
         return;
     }
     memset(bank, 0, VK_C0_BYTES);
-    int base =stage == NVN_STAGE_VS ? 0x110 : stage == NVN_STAGE_FS ? 0x510 : stage == NVN_STAGE_CS ? 0x310 : -1;
+    int base =stage == NVN_STAGE_VS ? 0x110 : stage == NVN_STAGE_FS ? 0x510 : stage == NVN_STAGE_CS ? 0x310 : stage == NVN2_STAGE_MESH ? 0x770 : stage == NVN2_STAGE_TASK ? 0x670 : -1;
     if (base < 0) return;
     c0_table(bank + base, ssbo);
     if (stage == NVN_STAGE_CS) {
@@ -1043,13 +1045,14 @@ static int c0_on(void) {   // TOTK_FIX_C0=0: c0 reads zeros instead of the drive
 
 // c0 from replay scratch; a bank equal to the stage's previous one reuses its range, so it costs no copy.
 static VkDescriptorBufferInfo c0_info(VkExec *ex, int st) {
-    if (st != NVN_STAGE_VS && st != NVN_STAGE_FS && st != NVN_STAGE_CS)
+    if (st != NVN_STAGE_VS && st != NVN_STAGE_FS && st != NVN_STAGE_CS && st != NVN2_STAGE_MESH)
         rt_fatal("vk_exec: synthetic c0 is unavailable for stage %d", st);
-    int k = st == NVN_STAGE_VS ? 0 : st == NVN_STAGE_FS ? 1 : 2;
+    int k = (st == NVN_STAGE_VS || st == NVN2_STAGE_MESH) ? 0 : st == NVN_STAGE_FS ? 1 : 2;
     // vk_c0_fill reads buffer bindings, compute root words and dispatch size, or the graphics base instance:
     // equal inputs give the same bank, so neither the fill nor the 2 KiB compare is needed.
     typeof(B.c0_in[0]) in;
     memset(&in, 0, sizeof in);
+    in.native_stage = (uint32_t)st;
     memcpy(in.ssbo, ex->ssbo[st], sizeof in.ssbo);
     if (st == NVN_STAGE_CS) memcpy(in.ubo, ex->ubo[st], sizeof in.ubo), memcpy(in.dim, c0_dim, sizeof in.dim);
     else in.binst = c0_binst;
@@ -1081,10 +1084,15 @@ static void limits_init(void) {
     __atomic_store_n(&LIM.ubo_max, l->maxUniformBufferRange, __ATOMIC_RELEASE);
 }
 
+static VkDescriptorBufferInfo mesh_arguments; // GPU-converted indirect record, or the zero buffer
+
 static VkDescriptorBufferInfo ubo_info(VkExec *ex, int st, int slot) {
     if (!__atomic_load_n(&LIM.ubo_max, __ATOMIC_ACQUIRE)) limits_init();
     uint64_t max = LIM.ubo_max, align = LIM.ubo_align;
     VkDescriptorBufferInfo bi;
+    if(slot==-2 && (st==NVN2_STAGE_TASK || st==NVN2_STAGE_MESH)) {
+        RS.volatile_=1;return mesh_arguments.buffer ? mesh_arguments : zero_info(16);
+    }
     if (slot == 0 && c0_on()) return c0_info(ex, st);
     if (slot == 1 && ex->prog) {   // compiler constants stored after the shader code
         const uint8_t *ctl, *code;
@@ -1145,7 +1153,7 @@ static int ssbo_slot(const GfxShaderRes *r, int st, int *ubo) {
     // ordinary geometry table at c0+0x410. This only maps declared
     // bindings; it does not synthesize that driver bank or establish the native NVN2 geometry ABI.
     int off = r->handle * 4, base = st == NVN_STAGE_VS ? 0x110 : st == NVN_STAGE_FS ? 0x510 :
-                                  st == NVN_STAGE_GS ? 0x410 : st == NVN_STAGE_CS ? 0x310 : -1;
+                                  st == NVN_STAGE_GS ? 0x410 : st == NVN_STAGE_CS ? 0x310 : st == NVN2_STAGE_MESH ? 0x770 : st == NVN2_STAGE_TASK ? 0x670 : -1;
     if (st == NVN_STAGE_CS && off >= 0x210 && off < 0x310 && (off - 0x210) % 16 == 0) {
         *ubo = 1;
         return (off - 0x210) / 16;
@@ -1512,7 +1520,9 @@ static void tex_info_full(VkExec *ex, const GfxShaderRes *r, uint64_t h, int sto
             int sid = (int)(h >> 20 & 0xfff);
             int point = img && (img->aspect & VK_IMAGE_ASPECT_DEPTH_BIT) && !(r->type & 0x400) &&
                         vk_exec_view_aspect(img, &v, hv) != VK_IMAGE_ASPECT_STENCIL_BIT;
-            samp = point ? vk_sampler_point_by_id_locked(&ex->samp_pool, sid) : vk_sampler_by_id_locked(&ex->samp_pool, sid);
+            // Plain samples never see the guest sampler's depth compare (vk_sampler_plain_by_id_locked).
+            samp = !(r->type & 0x400) ? vk_sampler_plain_by_id_locked(&ex->samp_pool, sid, point) :
+                   point ? vk_sampler_point_by_id_locked(&ex->samp_pool, sid) : vk_sampler_by_id_locked(&ex->samp_pool, sid);
         }
     }
     if (!view) {
@@ -1600,7 +1610,7 @@ static Twin *twin_update(VkExec *ex, const VkTexImage *img) {
         VkDeviceSize want = twin_buf_cap ? twin_buf_cap * 2 : 1u << 16;
         while (want < bytes) want *= 2;
         VkBufferCreateInfo bi = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = want,
-                                 .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT};
+                                 .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT};
         VmaAllocationCreateInfo ai = {.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE};
         VkBuffer nb;
         VmaAllocation nm;
@@ -2443,12 +2453,14 @@ unsupported:
 }
 
 // Pass, shaders, pipeline, fixed state and resources for a draw. 0: the draw is skipped.
-static int prepare_draw(VkExec *ex, int prim, int32_t count, int restart) {
+static int prepare_draw(VkExec *ex, int prim, int32_t count, int restart, int mesh) {
+    const int vertex_stage = mesh ? NVN2_STAGE_MESH : NVN_STAGE_VS;
+    int want_ts = mesh == 2;
     if (ex->render_disabled) return 0;
     static int skip_all = -1;   // DKB_SKIP_DRAWS=1: drop every draw (bisecting GPU faults)
     if (skip_all < 0) skip_all = getenv("DKB_SKIP_DRAWS") != NULL;
     if (skip_all) return 0;
-    int want_gs = geometry_draw(ex, (uint32_t)prim);
+    int want_gs = mesh ? 0 : geometry_draw(ex, (uint32_t)prim);
     if (want_gs < 0) return 0;
     cb_res(ex);
     dummies_init();
@@ -2463,26 +2475,28 @@ static int prepare_draw(VkExec *ex, int prim, int32_t count, int restart) {
     VkRect2D sc = vk_exec_scissor(ex);
     if (!sc.extent.width || !sc.extent.height) return 0;
     if (!ex->prog) return warn_once(W_PROGRAM, "a draw without a bound program is skipped"), 0;
-    int has_vs, has_fs, has_gs = 0, vs_wait = 0, fs_wait = 0, gs_wait = 0, memo = shader_memo_on();
-    const GfxShader *vs, *fs, *gs = NULL;
+    int has_vs, has_fs, has_gs = 0, vs_wait = 0, fs_wait = 0, gs_wait = 0, memo = !mesh && shader_memo_on();
+    const GfxShader *vs, *fs, *gs = NULL, *ts = NULL;
+    int has_ts = 0, ts_wait = 0;
     uint32_t gen = memo ? vk_texture_slots_gen() : 0;   // before shader_for, whose lookups may bump it
     if (memo && SM.valid && memo_match(ex, gen, &SM.k)) {
         vs = SM.vs, fs = SM.fs, gs = SM.gs, has_vs = 1, has_fs = SM.has_fs, has_gs = SM.has_gs;
         if (memo == 2) {
             int hv, hf, hg = 0, wv, wf, wg = 0;
-            const GfxShader *v2 = shader_for(ex, NVN_STAGE_VS, &hv, &wv, 0), *f2 = shader_for(ex, NVN_STAGE_FS, &hf, &wf, 0);
+            const GfxShader *v2 = shader_for(ex, vertex_stage, &hv, &wv, 0), *f2 = shader_for(ex, NVN_STAGE_FS, &hf, &wf, 0);
             const GfxShader *g2 = want_gs ? shader_for(ex, NVN_STAGE_GS, &hg, &wg, 0) : NULL;
             if (v2 != vs || f2 != fs || g2 != gs || hf != has_fs || hg != has_gs || wv || wf || wg)
                 rt_fatal("vk_exec: shader memo of program %llu differs from the lookup", (unsigned long long)ex->prog->serial);
         }
     } else {
         SM.valid = 0;
-        vs = shader_for(ex, NVN_STAGE_VS, &has_vs, &vs_wait, 0);
+        vs = shader_for(ex, vertex_stage, &has_vs, &vs_wait, 0);
         fs = shader_for(ex, NVN_STAGE_FS, &has_fs, &fs_wait, 0);
         if (want_gs) gs = shader_for(ex, NVN_STAGE_GS, &has_gs, &gs_wait, 0);
         if (memo && vs && !vs_wait && !fs_wait && !gs_wait && (!has_fs || fs) && (!want_gs || (has_gs && gs)))
             memo_key(ex, gen, &SM.k), SM.vs = vs, SM.fs = fs, SM.gs = gs, SM.has_fs = has_fs, SM.has_gs = has_gs, SM.valid = 1;
     }
+    if (want_ts) ts = shader_for(ex, NVN2_STAGE_TASK, &has_ts, &ts_wait, 0);
     if (!has_vs) return warn_once(W_NO_VS, "a draw with a program that has no vertex stage is skipped"), 0;
     static int bis_lo = -1, bis_hi = 255;   // DKB_DRAW_BISECT=lo-hi (hex): only draws whose program byte is in range
     if (bis_lo < 0) {
@@ -2513,15 +2527,16 @@ static int prepare_draw(VkExec *ex, int prim, int32_t count, int restart) {
     // one-shot draws (volumes and LUTs generated once, later only sampled) would leave their target empty for the
     // session. A draw into per-frame targets is skipped until they are ready and comes back next frame.
     int oneshot = -1, skip = pipe_skip_mode();   // -1: not looked up
-    if (vs_wait || fs_wait || gs_wait) {
+    if (vs_wait || fs_wait || gs_wait || ts_wait) {
         if (!(oneshot = !vk_exec_targets_recent(ex, skip >= 1))) return perf_count(PERF_CNT_SHADER_SKIP), 0;   // skipped until ready
         perf_count(PERF_CNT_ONESHOT_WAIT);
-        if (vs_wait) vs = shader_for(ex, NVN_STAGE_VS, &has_vs, NULL, 1);
+        if (vs_wait) vs = shader_for(ex, vertex_stage, &has_vs, NULL, 1);
         if (fs_wait) fs = shader_for(ex, NVN_STAGE_FS, &has_fs, NULL, 1);
         if (gs_wait) gs = shader_for(ex, NVN_STAGE_GS, &has_gs, NULL, 1);
+        if (ts_wait) ts = shader_for(ex, NVN2_STAGE_TASK, &has_ts, NULL, 1);
     }
     if (light_quad_fault_skip(ex, vs, fs)) return 0;
-    if (!vs || (has_fs && !fs) || (want_gs && (!has_gs || !gs))) {
+    if (!vs || (has_fs && !fs) || (want_gs && (!has_gs || !gs)) || (want_ts && (!has_ts || !ts))) {
         if (vk_dump_armed) vk_dump_blocked_draw(ex, prim, count,
             (!vs ? 1u << NVN_STAGE_VS : 0) | (has_fs && !fs ? 1u << NVN_STAGE_FS : 0) |
             (want_gs && (!has_gs || !gs) ? 1u << NVN_STAGE_GS : 0));
@@ -2530,7 +2545,7 @@ static int prepare_draw(VkExec *ex, int prim, int32_t count, int restart) {
     if (!geometry_feedback_safe(ex, vs, gs)) return 0;
     uint32_t fbl = feedback_prepare(ex, fs);
     VkPipeState s = ex->pipe;
-    s.vs = vs, s.fs = fs, s.gs = gs;
+    s.vs = vs, s.fs = fs, s.gs = gs, s.ts = ts;
     s.feedback = (uint8_t)((fbl & 0xff ? 1 : 0) | (fbl & 0x100 ? 2 : 0));
     s.prim = (uint8_t)prim;
     s.depth_minus_w = (uint8_t)(nvn_depth_minus_w() != 0);
@@ -2603,7 +2618,7 @@ static int prepare_draw(VkExec *ex, int prim, int32_t count, int restart) {
     bind_resources(ex, info);
     if (fbl & ex->fb_dirty) feedback_barrier(ex);
     feedback_written(ex, &s);
-    bind_vertex_buffers(ex);
+    if (!mesh) bind_vertex_buffers(ex);
     if (vk_dump_armed) vk_dump_draw(ex, &s, p, info);
     vk_exec_oq_draw(ex);
     return 1;
@@ -2655,7 +2670,7 @@ static int indirect_reset_draw(VkExec *ex, const p_draw *d) {
 static void op_draw(VkExec *ex, const p_draw *d) {
     c0_binst = (uint32_t)d->base_instance;
     if (indirect_reset_draw(ex, d)) return;
-    if (d->count <= 0 || !prepare_draw(ex, d->prim, d->count, 0)) return;
+    if (d->count <= 0 || !prepare_draw(ex, d->prim, d->count, 0, 0)) return;
     vk_exec_frame.draws++;
     uint32_t inst = d->instances > 0 ? (uint32_t)d->instances : 1, first = (uint32_t)d->first, n = (uint32_t)d->count;
     if (d->prim == NVN_DRAW_PRIMITIVE_QUADS && n >= 4) {   // quads become two triangles each
@@ -2708,7 +2723,7 @@ static void op_draw_idx(VkExec *ex, const p_draw_idx *d) {
     static const uint32_t isize[3] = {1, 2, 4};
     if (d->itype < 0 || d->itype > 2) return warn_once(W_INDEX, "index type %d is unknown: draw skipped", d->itype);
     int restart = restart_for(ex, d->prim, d->itype);
-    if (d->count <= 0 || !prepare_draw(ex, d->prim, d->count, restart)) return;
+    if (d->count <= 0 || !prepare_draw(ex, d->prim, d->count, restart, 0)) return;
     vk_exec_frame.draws++;
     uint64_t bytes = (uint64_t)d->count * isize[d->itype];
     VkMemSpan sp;
@@ -2752,7 +2767,7 @@ static void op_draw_idx_ind(VkExec *ex, const p_draw_idx_ind *d) {
         return warn_once(W_INDIRECT, "indirect draw arguments at %#llx are not backed or not aligned: draws skipped", (unsigned long long)d->ind);
     if (!vk_mem_resolve(d->ibuf, 1, &ib) || ib.offset % (d->itype == NVN_INDEX_TYPE_UNSIGNED_SHORT ? 2 : 4))
         return warn_once(W_INDEX, "index buffer %#llx is not backed or not aligned: indirect draws skipped", (unsigned long long)d->ibuf);
-    if (!prepare_draw(ex, d->prim, 0x7fffffff, restart_for(ex, d->prim, d->itype))) return;
+    if (!prepare_draw(ex, d->prim, 0x7fffffff, restart_for(ex, d->prim, d->itype), 0)) return;
     vk_exec_frame.draws++;
     VK_MEM_USE(ip);
     VK_MEM_USE(ib);
@@ -2849,26 +2864,83 @@ static void op_dispatch_ind(VkExec *ex, const p_dispatch_ind *d) {
     if (vk_dump_armed) vk_dump_dispatch(ex, cs, p, info, &(p_dispatch){0, 0, 0, d->caller});
 }
 
-// This is an ingress handler, not mesh GPU execution. It preserves visibility
-// decisions, records the missing work and never interprets indirect CPU memory.
-// A later task/mesh pipeline must consume these records at this stream position.
+// Native no-task mesh dispatches share the ordinary render pass and descriptor machinery.
 static void op_draw_mesh(VkExec *ex, const p_draw_mesh *draw) {
     if (ex->render_disabled) return;
-    if (draw->kind == NVN_MESH_DIRECT && (int32_t)draw->args[1] == 0) return;
-    __atomic_fetch_add(&gfx_counters.draws_skipped, 1, __ATOMIC_RELAXED);
-    warn_once(W_MESH, "mesh draw retained in the command stream but not executed: task/mesh pipeline missing");
-    uint64_t frame = __atomic_load_n(&gfx_counters.frames, __ATOMIC_RELAXED) + 1;
-    for (unsigned i = 0; ex->prog && i < ex->prog->nstage && i < 6; i++) {
-        const uint8_t *ctl = ex->prog->sd[i].control;
-        const uint8_t *code = (const uint8_t *)(uintptr_t)ex->prog->sd[i].data;
-        if (!ctl || !code || !gfx_shader_is_nvn2(ctl)) continue;
-        uint32_t bytes = nvn2_control_u32(ctl + 0x30);
-        if (!bytes) bytes = 0xd8;
-        unsigned stage = nvn2_control_stage(ctl, bytes);
-        if (stage != NVN2_STAGE_INVALID)
-            nvn2_note_failed_use(ctl, code, ex->prog->serial, stage, frame);
+    const uint8_t *ctl, *code; uint32_t len;
+    if ((draw->kind != NVN_MESH_DIRECT && draw->kind != NVN_MESH_INDIRECT) || !ex->prog ||
+        !find_stage(ex->prog, NVN2_STAGE_MESH, &ctl, &code, &len) || gfx_shader_is_nvn2(ctl) || !nvn_mesh_info(ctl)) {
+        __atomic_fetch_add(&gfx_counters.draws_skipped, 1, __ATOMIC_RELAXED);
+        if (vk_dump_armed) vk_dump_blocked_mesh(ex, draw);
+        return;
     }
-    if (vk_dump_armed) vk_dump_blocked_mesh(ex, draw);
+    int indirect = draw->kind == NVN_MESH_INDIRECT;
+    int32_t first = indirect ? 0 : (int32_t)draw->args[0], count = indirect ? 1 : (int32_t)draw->args[1];
+    if (first < 0 || count <= 0) return;
+    static PFN_vkCmdDrawMeshTasksEXT dispatch;
+    if (!dispatch) dispatch = (PFN_vkCmdDrawMeshTasksEXT)vkGetDeviceProcAddr(vk_ctx()->device, "vkCmdDrawMeshTasksEXT");
+    if (!dispatch) return;
+    const NvnMeshInfo *mi = nvn_mesh_info(ctl);
+    int task = mi->uses_task != 0;
+    if (task) {
+        const uint8_t *tc,*tb; uint32_t tl;
+        if (!find_stage(ex->prog,NVN2_STAGE_TASK,&tc,&tb,&tl) || gfx_shader_is_nvn2(tc)) return;
+        const NvnMeshInfo *ti=nvn_mesh_info(tc);
+        if (!ti || ti->payload!=mi->payload || !vk_ctx()->has_task_shader) return;
+    }
+    mesh_arguments=(VkDescriptorBufferInfo){0};
+    VkMemSpan source={0};
+    if(indirect) {
+        static unsigned traced;
+        if(getenv("DKB_MESH_TRACE_INDIRECT") && traced<12) {
+            uint32_t values[4];
+            if(vk_exec_read_buffer(ex,draw->args[0],sizeof values,values)) {
+                traced++;rt_log("mesh: indirect native %016llx words %u %u %u %u",
+                    (unsigned long long)nvn2_origin(code),values[0],values[1],values[2],values[3]);
+            }
+        }
+        // NV-style one-dimensional record: taskCount, firstTask. Convert on
+        // the GPU, preserving writes from earlier dispatches in this submission.
+        if(!vk_mem_resolve(draw->args[0],8,&source) || source.offset%4) return;
+        cb_res(ex);vk_exec_barrier(ex);VK_MEM_USE(source);
+        VkBuffer buf;VkDeviceSize off;
+        const uint32_t initial[4]={0,1,1,0};memcpy(scratch(ex,16,&buf,&off),initial,16);
+        VkBufferCopy copy[2]={{source.offset,off,4},{source.offset+4,off+12,4}};
+        vkCmdCopyBuffer(ex->cb,source.buffer,buf,2,copy);ex->recorded++;
+        vk_exec_barrier(ex);
+        mesh_arguments=(VkDescriptorBufferInfo){buf,off,16};
+        VK_MEM_BOUND(source);vk_mem_count(source.cls,VK_MUSE_IND,8);
+    }
+    B.res_valid=0; // the wrapper's argument descriptor is draw-specific
+    if (!prepare_draw(ex, NVN_DRAW_PRIMITIVE_TRIANGLES, 0x7fffffff, 0, task ? 2 : 1)) return;
+    if(indirect) {
+        static PFN_vkCmdDrawMeshTasksIndirectEXT fn;
+        if(!fn)fn=(PFN_vkCmdDrawMeshTasksIndirectEXT)vkGetDeviceProcAddr(vk_ctx()->device,"vkCmdDrawMeshTasksIndirectEXT");
+        if(!fn)return;
+        uint32_t push[2]={0,1};
+        vkCmdPushConstants(ex->cb,B.ds_layout,VK_SHADER_STAGE_MESH_BIT_EXT|(task?VK_SHADER_STAGE_TASK_BIT_EXT:0),0,8,push);
+        rec_mesh_indirect(fn,ex->cb,mesh_arguments.buffer,mesh_arguments.offset);
+        ex->recorded++;vk_exec_frame.draws++;
+        return;
+    }
+    // The device query validates this limit; splits preserve the native first-group numbering.
+    const VkPhysicalDeviceMeshShaderPropertiesEXT *mp=&vk_ctx()->mesh_props;
+    uint32_t limit=task ? mp->maxTaskWorkGroupCount[0] : mp->maxMeshWorkGroupCount[0];
+    uint32_t total=task ? mp->maxTaskWorkGroupTotalCount : mp->maxMeshWorkGroupTotalCount;
+    if (total<limit) limit=total;
+    if (!limit) return;
+    uint32_t remaining = (uint32_t)count, base = (uint32_t)first;
+    while (remaining) {
+        uint32_t n = remaining > limit ? limit : remaining;
+        uint32_t push[2]={base,0};
+        vkCmdPushConstants(ex->cb, B.ds_layout, VK_SHADER_STAGE_MESH_BIT_EXT | (task ? VK_SHADER_STAGE_TASK_BIT_EXT : 0), 0, 8, push);
+        rec_mesh(dispatch, ex->cb, n, 1, 1);
+        remaining -= n; base += n; ex->recorded++;
+    }
+    vk_exec_frame.draws++;
+    static unsigned logged;
+    if (logged++ < 8) rt_log("mesh: executed native shader %016llx, %u groups from %u",
+        (unsigned long long)nvn2_origin(code), (unsigned)count, (unsigned)first);
 }
 
 static void op_update_ub(VkExec *ex, const p_update_ub *u) {

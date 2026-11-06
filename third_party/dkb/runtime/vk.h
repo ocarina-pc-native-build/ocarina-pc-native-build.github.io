@@ -20,6 +20,7 @@ typedef struct VkCtx {
     VkDevice device;
     VkPhysicalDeviceProperties props;
     VkPhysicalDeviceMemoryProperties mem_props;
+    VkPhysicalDeviceMeshShaderPropertiesEXT mesh_props;
     uint32_t gfx_family;                    // graphics + compute + presentation on win32
     uint32_t xfer_family;                   // a transfer-only family when the GPU has one, else gfx_family
     VkQueue gfx_queue;                      // graphics + present
@@ -33,7 +34,7 @@ typedef struct VkCtx {
     int has_custom_border_color, has_eds, has_eds2, has_eds3, has_vertex_input_dynamic_state,
         has_conditional_rendering, has_transform_feedback, has_provoking_vertex, has_device_fault, has_memory_budget,
         has_robustness2, has_buffer_device_address, has_fragment_shader_interlock, has_buffer_marker,
-        has_astc_ldr;                       // textureCompressionASTC_LDR (enabled when reported)
+        has_mesh_shader, has_task_shader, has_astc_ldr;                       // textureCompressionASTC_LDR (enabled when reported)
     // Feedback loops (maxwell.md 1.9, vk_exec_draw.c feedback_prepare): a draw samples a target of its open pass that
     // an earlier draw of the pass wrote. TOTK_FEEDBACK=0: VK_FEEDBACK_OFF (sampled in GENERAL without a barrier, the
     // old behaviour); VK_FEEDBACK_LAYOUT with VK_EXT_attachment_feedback_loop_layout and dynamicRenderingLocalRead
@@ -346,6 +347,8 @@ VkSampler vk_sampler_by_id_locked(const dpool_ref *pool, int id);
 // on the Switch although the game binds a linear sampler, and MacNativeGames samples it the same way. VK_NULL_HANDLE
 // for an empty slot.
 VkSampler vk_sampler_point_by_id_locked(const dpool_ref *pool, int id);
+// The slot's sampler without its depth compare, for plain samples (point: also point-filtered). Caller holds the lock.
+VkSampler vk_sampler_plain_by_id_locked(const dpool_ref *pool, int id, int point);
 uint32_t vk_texture_slots_gen(void);
 // What vk_texture_by_id(id) returns can change only when this does: the slot is registered again, or a texture entry at
 // its storage address is created, dropped, released or taken back into use. Unlocked; read it before the lookup it
@@ -466,6 +469,7 @@ typedef struct VkPipeState {
     float alpha_ref;                       // OP_BIND_STATE kind 7: reference of color.alpha_func's test. After gs, so not in
                                            // the pipeline-key records: a prebuilt alpha-test pipeline has reference 0 and
                                            // goes unused, and the draw builds its own
+    const GfxShader *ts;                   // optional task stage feeding the mesh stage in vs
 } VkPipeState;
 void vk_pipe_state_defaults(VkPipeState *s);   // NVN defaults of every state object (shaders and formats left 0)
 enum { VK_PIPE_SUPPORT = GFX_RES_KINDS };      // VkPipeBinding.kind of the support buffer

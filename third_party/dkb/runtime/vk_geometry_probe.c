@@ -701,3 +701,171 @@ done:
 int probe_vkgeometry(void) { return gp_run(0, 0); }
 int probe_vkgeometry_passthrough(void) { return gp_run(1, 0); }
 int probe_vkgeometry_ordering(void) { return gp_run(1, 1); }
+
+// Authored Ampere fixture: a single active lane emits one triangle, including
+// packed primitive bytes. Other lanes return before the wrapper's uniform export.
+static void gp_mesh_program(void) {
+    uint8_t *c = gp_control[0], *b = gp_code[0];
+    memset(c,0,GP_CONTROL); memset(b,0,GP_CODE);
+    gp_u32(b,1u|4u<<5|1u<<10); b[0x35]=0xf0; b[0x36]=0xf;
+    unsigned at=0x80;
+    #define MP(a,b0,c0) do { uint32_t w[4]={(a),(b0),(c0),0}; memcpy(b+at,w,16);at+=16; } while(0)
+    MP(0x00007919,0,0); // lane ID
+    MP(0x0000720c,255,0x03f05000); // P0 = lane != 0
+    MP(0x0000094d,0,0x03800000); // other lanes return
+    MP(0xff027923,0,0x7800); // R2 = draw's first + workgroup
+    MP(0xff007927,2|(3u<<8),0x8800); // primitive count byte
+    const float v[3][8]={{-.75f,-.75f,.25f,1,1,0,0,1},
+                        {.75f,-.75f,.25f,1,1,0,0,1},
+                        {0,.75f,.25f,1,1,0,0,1}};
+    for(unsigned n=0;n<3;n++) {
+        for(unsigned k=0;k<8;k++) {
+            uint32_t f;memcpy(&f,&v[n][k],4);
+            MP(0x00017802,f,0xf00);
+            MP(0xff007927,1|((k*128+n*4)<<8),0xf800);
+        }
+        MP(0x00017802,n,0xf00);
+        MP(0xff007927,1|((4+n)<<8),0x8000);
+    }
+    MP(0x0000794d,0,0x03800000);
+    #undef MP
+    gp_u32(c,0x98761234);gp_u32(c+4,0xc9);
+    gp_u32(c+0x30,0xd8);gp_u32(c+0x38,at);
+    c[0x56]=7;c[0x58]=32;c[0x5a]=16;c[0x60]=32;c[0x62]=1;
+}
+
+// Authored task fixture exports one mesh group per requested first index and
+// a payload value consumed by the mesh primitive-count instruction.
+static void gp_task_program(uint8_t *c, uint8_t *b) {
+    memset(c,0,GP_CONTROL);memset(b,0,GP_CODE);
+    gp_u32(b,1u|4u<<5|2u<<10);
+    const uint32_t ins[][4]={
+        {0x00007919,0,0,0}, {0x0000720c,255,0x03f05000,0}, {0x0000094d,0,0x03800000,0},
+        {0xff027923,0,0x7800,0}, {0xff007927,2|(4u<<8),0xb800,0},
+        {0x00017802,1,0xf00,0}, {0xff007927,1|(8u<<8),0xb800,0},
+        {0x0000794d,0,0x03800000,0}};
+    memcpy(b+0x80,ins,sizeof ins);
+    gp_u32(c,0x98761234);gp_u32(c+4,0xc9);gp_u32(c+0x30,0xd8);gp_u32(c+0x38,0x80+sizeof ins);
+    c[0x56]=6;c[0x58]=32;c[0x5a]=16;
+}
+
+int probe_vkmesh(void) {
+    const GfxBackend *backend=&gfx_vulkan_backend;
+    gp_checks = gp_failures = 0;
+    uint64_t heap = 0, shader_failures = gfx_shader_failures();
+    uint8_t *memory = NULL;
+    void *control = NULL;
+    int depth_live = 0;
+    static _Alignas(16) NVNtexture depth;
+    static _Alignas(16) uint8_t task_ctl[GP_CONTROL],task_code[GP_CODE];
+    int device_live = 0, pool_live = 0, texture_live = 0, command_live = 0, programs_live = 0;
+    GP_REQUIRE(!mem_set_heap_size(16ull << 20, &heap) && heap, "SetHeapSize");
+    memory = (uint8_t *)(uintptr_t)heap;
+    control = mem_kernel_alloc(GP_COMMAND_CONTROL, 16);
+    GP_REQUIRE(control, "owned command control allocation");
+    GP_CALL(nvnDeviceBuilderSetDefaults, GP_U(&gp_device_builder));
+    GP_REQUIRE((uint8_t)GP_CALL(nvnDeviceInitialize, GP_U(&gp_device), GP_U(&gp_device_builder)), "DeviceInitialize");
+    device_live = 1;
+    GP_CALL(nvnMemoryPoolBuilderSetDefaults, GP_U(&gp_memory_builder));
+    GP_CALL(nvnMemoryPoolBuilderSetDevice, GP_U(&gp_memory_builder), GP_U(&gp_device));
+    GP_CALL(nvnMemoryPoolBuilderSetStorage, GP_U(&gp_memory_builder), GP_U(memory), GP_POOL);
+    GP_CALL(nvnMemoryPoolBuilderSetFlags, GP_U(&gp_memory_builder),
+        NVN_MEMORY_POOL_FLAGS_CPU_CACHED | NVN_MEMORY_POOL_FLAGS_GPU_CACHED);
+    GP_REQUIRE((uint8_t)GP_CALL(nvnMemoryPoolInitialize, GP_U(&gp_memory_pool), GP_U(&gp_memory_builder)), "MemoryPoolInitialize");
+    pool_live = 1;
+    printf("probe-vkgeometry: device %s driver %#x core-validation-active %d\n", vk_ctx()->props.deviceName,
+        vk_ctx()->props.driverVersion, vk_ctx()->validation);
+    GP_CALL(nvnTextureBuilderSetDefaults, GP_U(&gp_texture_builder));
+    GP_CALL(nvnTextureBuilderSetDevice, GP_U(&gp_texture_builder), GP_U(&gp_device));
+    GP_CALL(nvnTextureBuilderSetTarget, GP_U(&gp_texture_builder), NVN_TEXTURE_TARGET_2D);
+    GP_CALL(nvnTextureBuilderSetSize2D, GP_U(&gp_texture_builder), GP_WIDTH, GP_HEIGHT);
+    GP_CALL(nvnTextureBuilderSetLevels, GP_U(&gp_texture_builder), 1);
+    GP_CALL(nvnTextureBuilderSetFormat, GP_U(&gp_texture_builder), NVN_FORMAT_RGBA8);
+    GP_CALL(nvnTextureBuilderSetStorage, GP_U(&gp_texture_builder), GP_U(&gp_memory_pool), GP_COLOR);
+    uint64_t texture_bytes = GP_CALL(nvnTextureBuilderGetStorageSize, GP_U(&gp_texture_builder));
+    GP_REQUIRE(texture_bytes && texture_bytes <= 0x10000, "bounded color storage");
+    GP_REQUIRE((uint8_t)GP_CALL(nvnTextureInitialize, GP_U(&gp_color), GP_U(&gp_texture_builder)), "TextureInitialize");
+    texture_live = 1;
+
+    GP_CALL(nvnTextureBuilderSetFormat,GP_U(&gp_texture_builder),NVN_FORMAT_DEPTH32F);
+    GP_CALL(nvnTextureBuilderSetStorage,GP_U(&gp_texture_builder),GP_U(&gp_memory_pool),0x80000);
+    GP_REQUIRE((uint8_t)GP_CALL(nvnTextureInitialize,GP_U(&depth),GP_U(&gp_texture_builder)),"mesh depth target");
+    depth_live=1;
+    GP_REQUIRE(vk_ctx()->has_task_shader,"device enables task shaders");
+    GP_REQUIRE(vk_ctx()->has_mesh_shader,"device enables mesh shaders");
+    gp_mesh_program();gp_program(1,gp_control[1],gp_code[1]);
+    NVNshaderData shaders[2]={{GP_U(gp_code[0]),gp_control[0]}, {GP_U(gp_code[1]),gp_control[1]}};
+    GP_REQUIRE((uint8_t)GP_CALL(nvnProgramInitialize,GP_U(&gp_full_program),GP_U(&gp_device)),"mesh program initialization");
+    programs_live=1;
+    GP_REQUIRE((uint8_t)GP_CALL(nvnProgramSetShaders,GP_U(&gp_full_program),2,GP_U(shaders)),"native mesh program");
+    GP_REQUIRE((uint8_t)GP_CALL(nvnCommandBufferInitialize,GP_U(&gp_command),GP_U(&gp_device)),"mesh command buffer");
+    command_live=1;
+    GP_CALL(nvnCommandBufferAddCommandMemory,GP_U(&gp_command),GP_U(&gp_memory_pool),GP_COMMAND,0x10000);
+    uint32_t pixels[GP_WIDTH*GP_HEIGHT];int orientation;
+    // Repeat each scene once: the first replay can request a background pipeline.
+    for(unsigned test=0;test<8;test++) {
+        if(test==2 || test==4 || test==6) {
+            GP_CALL(nvnProgramFinalize,GP_U(&gp_full_program));programs_live=0;
+            gp_mesh_program();
+            gp_control[0][0x5e]=(test==2 || test==6);
+            if(test==2 || test==6) {gp_u32(gp_code[0]+0x80+3*16+4,8u<<8);gp_u32(gp_code[0]+0x80+3*16+8,0x3800);}
+            gp_task_program(task_ctl,task_code);
+            NVNshaderData task_stages[3]={shaders[0],shaders[1],{GP_U(task_code),task_ctl}};
+            GP_REQUIRE((uint8_t)GP_CALL(nvnProgramInitialize,GP_U(&gp_full_program),GP_U(&gp_device)),"task program init");
+            programs_live=1;
+            GP_REQUIRE((uint8_t)GP_CALL(nvnProgramSetShaders,GP_U(&gp_full_program),test==4 ? 2 : 3,GP_U(task_stages)),"task mesh program");
+        }
+        for(unsigned warm=0;warm<2;warm++) {
+            gp_prefix(memory,control,0);
+            const NVNtexture *color=&gp_color;
+            GP_CALL(nvnCommandBufferSetRenderTargets,GP_U(&gp_command),1,GP_U(&color),0,GP_U(&depth),0);
+            gp_cpu.v[0]=0x3f800000u;
+            GP_CALL(nvnCommandBufferClearDepthStencil,GP_U(&gp_command),1,0,0);
+            NVNdepthStencilState ds;GP_CALL(nvnDepthStencilStateSetDefaults,GP_U(&ds));
+            GP_CALL(nvnDepthStencilStateSetDepthTestEnable,GP_U(&ds),1);
+            GP_CALL(nvnDepthStencilStateSetDepthWriteEnable,GP_U(&ds),1);
+            GP_CALL(nvnDepthStencilStateSetDepthFunc,GP_U(&ds),NVN_DEPTH_FUNC_ALWAYS);
+            GP_CALL(nvnCommandBufferBindDepthStencilState,GP_U(&gp_command),GP_U(&ds));
+            GP_CALL(nvnCommandBufferBindProgram,GP_U(&gp_command),GP_U(&gp_full_program),test==2 || test==3 || test>=6 ? 0xc2 : 0x82);
+            if(test<4) GP_CALL(nvnCommandBufferDrawMeshTasks,GP_U(&gp_command),test%2 ? 0 : 1,1);
+            else {
+                static uint32_t args[4];args[0]=test%2 ? 0 : 1;args[1]=1;args[2]=0x11223344;args[3]=0x55667788;
+                GP_CALL(nvnCommandBufferUpdateUniformBuffer,GP_U(&gp_command),GP_U(memory+GP_GUARD),16,0,16,GP_U(args));
+                GP_CALL(nvnCommandBufferBarrier,GP_U(&gp_command),NVN_BARRIER_ORDER_PRIMITIVES_BIT|NVN_BARRIER_ORDER_INDIRECT_DATA_BIT);
+                GP_CALL(nvnCommandBufferDrawMeshTasksIndirect,GP_U(&gp_command),GP_U(memory+GP_GUARD));
+            }
+            GP_REQUIRE(gp_submit(),"mesh submission completed");
+        }
+        if(!(test%2)) gp_pixels(pixels,0xff0000ffu,&orientation);
+        else {
+            NVNcopyRegion region={0,0,0,GP_WIDTH,GP_HEIGHT,1};
+            memset(pixels,0x5a,sizeof pixels);
+            GP_CALL(nvnTextureReadTexels,GP_U(&gp_color),0,GP_U(&region),GP_U(pixels));
+            for(unsigned i=0;i<GP_WIDTH*GP_HEIGHT;i++) GP_REQUIRE(pixels[i]==0xffff0000u,"zero primitive count preserves clear");
+        }
+        float depth_pixels[GP_WIDTH*GP_HEIGHT];NVNcopyRegion region={0,0,0,GP_WIDTH,GP_HEIGHT,1};
+        GP_CALL(nvnTextureReadTexels,GP_U(&depth),0,GP_U(&region),GP_U(depth_pixels));
+        for(unsigned i=0;i<GP_WIDTH*GP_HEIGHT;i++)
+            GP_REQUIRE(depth_pixels[i]==(pixels[i]==0xff0000ffu ? .25f : 1.f),"mesh writes matching depth");
+    }
+    GP_REQUIRE(gfx_shader_failures()==shader_failures,"mesh translation succeeded");
+done:
+    if (pool_live) backend->finish();
+    if (command_live) {
+        if (control) GP_CALL(nvnCommandBufferAddControlMemory, GP_U(&gp_command), GP_U(control), GP_COMMAND_CONTROL);
+        GP_CALL(nvnCommandBufferFinalize, GP_U(&gp_command));
+    }
+    if (programs_live >= 2) GP_CALL(nvnProgramFinalize, GP_U(&gp_plain_program));
+    if (programs_live >= 1) GP_CALL(nvnProgramFinalize, GP_U(&gp_full_program));
+    if (depth_live) GP_CALL(nvnTextureFinalize,GP_U(&depth));
+    if (texture_live) GP_CALL(nvnTextureFinalize, GP_U(&gp_color));
+    if (pool_live) GP_CALL(nvnMemoryPoolFinalize, GP_U(&gp_memory_pool));
+    if (device_live) GP_CALL(nvnDeviceFinalize, GP_U(&gp_device));
+    if (control) mem_kernel_free(control, GP_COMMAND_CONTROL);
+    vk_pipeline_shutdown(), vk_exec_draw_shutdown(), vk_exec_xfer_shutdown(), vk_backend_shutdown();
+    long errors = vk_validation_errors_total();
+
+    printf("probe-vkmesh: %s (%u checks, %u failures, %ld validation errors)\n",
+           gp_failures || errors ? "FAILED" : "passed", gp_checks, gp_failures, errors);
+    return gp_failures || errors;
+}

@@ -152,3 +152,6 @@ REC_CMDS(REC_DECL)
 #define vkCmdWriteTimestamp rc_vkCmdWriteTimestamp
 #define vkCmdWriteTimestamp2 rc_vkCmdWriteTimestamp2
 #endif
+
+void rec_mesh_indirect(PFN_vkCmdDrawMeshTasksIndirectEXT fn, VkCommandBuffer cb, VkBuffer buf, VkDeviceSize offset);
+void rec_mesh(PFN_vkCmdDrawMeshTasksEXT fn, VkCommandBuffer cb, uint32_t x, uint32_t y, uint32_t z);
