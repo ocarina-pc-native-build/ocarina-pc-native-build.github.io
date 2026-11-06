@@ -46,6 +46,20 @@ Changes in the branch (`git diff 68f5d8e..fix/mesh-foliage`):
    atomically on every try, as patch 0024 does. Affected: the vegetation-culling/sky-ambient compute programs that
    the Lichii fallback lowers. Checked only with `git apply` against the full chain, with and without 0014.
 
+7. **Branch `test2` only, after the 2026-11-06 run:** the Eglantine lowering now maps UR28 and up
+   (`eglantine/.../ampere/lower_to_maxwell.h`, `LowerToMaxwell` wraps `LowerToMaxwellWith`). Mesh and task stages never
+   take the Lichii fallback (`nvn2_lower.cpp`), so the 41 vegetation mesh stages rejected with
+   `native uniform arithmetic register` (e.g. ULOP3 into UR28) and `native register-to-uniform mode` (R2UR into UR29)
+   stayed unlowered. As in Lichii v13, a program that touches UR28+ is lowered again with that many registers
+   reserved directly below R216, and native GPRs from there up are rejected as scratch. It is not combined with
+   the native register spill path (that fails with `native register spill with uniform registers above UR27`).
+   Lichii's register shadowing (`register_pressure.h`) is **not** ported. A stage whose native code also uses those
+   GPRs now fails with `native program uses lowering scratch registers` instead.
+   **Verify first with your offline `tools/lower_probe.cpp` over all 8,382 dumped shaders:** count newly lowered
+   stages, and confirm 0 lost and 0 changed among stages that lowered before. Then rebuild, use a new shader cache,
+   and repeat the outdoor run (Kokiri Forest, frames 3600/3900). Report the rejection-reason counts again and say
+   whether the canopy and the light shafts change.
+
 Known and not fixed: an indirect mesh draw's group count is not clamped to `maxMeshWorkGroupCount[0]`/
 `maxTaskWorkGroupCount[0]`. A GPU-side clamp would need a small compute pass.
 

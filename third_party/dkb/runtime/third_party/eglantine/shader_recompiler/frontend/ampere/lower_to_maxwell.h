@@ -34,6 +34,10 @@ struct LoweredProgram {
     u32 source_size{};
     u32 required_texture_buffer = ~0U;
     u32 local_spill_bytes{};
+    // UR28 and up seen while lowering without room for them: lowering again with this many registers
+    // below R216 reserved for them (even, so pairs stay adjacent) maps them. DKB: after Lichii v13,
+    // third_party/lichii/lower_to_maxwell.h, LowerToMaxwell.
+    u32 high_uniform_registers{};
     u32 error_offset{};
     std::string_view error;
 
@@ -168,9 +172,12 @@ struct NativeRegisterSpill {
 // Lower only operations whose semantics are representable by the existing
 // Maxwell frontend. These are new instructions, not reinterpretations of the
 // native bytes. Scheduling/control words are added by the environment adapter.
-inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code,
-                                     std::string_view tensor_mode = {}, bool spill_native = false, const u32* stage_memory = nullptr, u32 spill_base = 0) {
+inline LoweredProgram LowerToMaxwellWith(std::span<const Instruction> code, u32 high_uniforms,
+                                         std::string_view tensor_mode, bool spill_native, const u32* stage_memory, u32 spill_base) {
     LoweredProgram result;
+    // UR28 and up (when used) live just below R216: UR28 at R(216 - high_uniforms). Native GPRs from
+    // there up are then rejected as lowering scratch, like R216 and up without them.
+    const u32 high_uniform_base = 216 - high_uniforms;
     struct Relocation { u32 output_index; s64 target; };
     std::vector<Relocation> relocations;
     std::vector<u32> barrier_tokens;
@@ -205,6 +212,9 @@ inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code,
         return result;
     };
     if (code.empty() || code.size() > 65536) return fail(0, "invalid native program size");
+    // NativeRegisterSpill moves native R216 and up to local memory but keeps R(216 - high_uniforms)-R215 in
+    // place, where the high uniform registers would live.
+    if (spill_native && high_uniforms) return fail(0, "native register spill with uniform registers above UR27");
     for (u32 index = 0; index < code.size(); ++index) {
         auto insn = code[index];
         result.source_instruction_offsets.push_back(static_cast<u32>(result.instructions.size()));
@@ -235,15 +245,17 @@ inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code,
             if (spill_native) break; // exact operand decoding above keeps GPR and UR identities separate
             if (bit == 32 && insn.Bits(9, 3) != 1 && opcode != 0xb60 && opcode != 0xb66) continue;
             const u32 reg = insn.Bits(bit, 8);
-            if (reg >= (uses_uniform_bank ? 216U : 246U) && reg < 255) return fail(index, "native program uses lowering scratch registers");
+            if (reg >= (uses_uniform_bank ? high_uniform_base : 246U) && reg < 255) return fail(index, "native program uses lowering scratch registers");
         }
         // UR0-UR21 live in R216-R237 and UR22-UR27 in R240-R245 (R239 holds the uniform
-        // predicates), so even/odd pairs stay adjacent. Sites that still check reg < 16 rely on
-        // UR0-UR15 being R216-R231.
+        // predicates), so even/odd pairs stay adjacent; UR28 and up below R216 when reserved.
+        // Sites that still check reg < 16 rely on UR0-UR15 being R216-R231.
         const auto uniform_register = [&](u32 reg) -> u32 {
             if (reg < 22) return 216 + reg;
             if (reg < 28) return 218 + reg;
             if (reg == 63) return 255;
+            if (reg < 63 && reg - 28 < high_uniforms) return high_uniform_base + (reg - 28);
+            if (reg < 63) result.high_uniform_registers = (std::max)(result.high_uniform_registers, (reg - 26) & ~1U);
             return ~0U;
         };
         bool rewritten_uniform = false;
@@ -2951,6 +2963,20 @@ inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code,
         if (spill_native) spill.Emit(result.instructions, true);
     }
     return fail(static_cast<u32>(code.size()), main_exited ? "native program lacks captured library return" : "native program has no unconditional EXIT");
+}
+
+// Programs using uniform registers above UR27 (Ocarina's vegetation mesh stages write UR28-UR30) are
+// lowered again with room for them below R216. DKB: after Lichii v13, third_party/lichii/lower_to_maxwell.h,
+// LowerToMaxwell.
+inline LoweredProgram LowerToMaxwell(std::span<const Instruction> code,
+                                     std::string_view tensor_mode = {}, bool spill_native = false, const u32* stage_memory = nullptr, u32 spill_base = 0) {
+    u32 high_uniforms = 0;
+    for (;;) {
+        LoweredProgram lowered = LowerToMaxwellWith(code, high_uniforms, tensor_mode, spill_native, stage_memory, spill_base);
+        if (lowered || lowered.high_uniform_registers <= high_uniforms || lowered.high_uniform_registers > 34)
+            return lowered;
+        high_uniforms = lowered.high_uniform_registers;
+    }
 }
 
 } // namespace Shader::Ampere
