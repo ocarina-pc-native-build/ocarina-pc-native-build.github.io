@@ -1,0 +1,53 @@
+diff --git a/src/Ryujinx.Graphics.Shader/Instructions/InstEmitMemory.cs b/src/Ryujinx.Graphics.Shader/Instructions/InstEmitMemory.cs
+index 51c1adb..61801ac 100644
+--- a/src/Ryujinx.Graphics.Shader/Instructions/InstEmitMemory.cs
++++ b/src/Ryujinx.Graphics.Shader/Instructions/InstEmitMemory.cs
+@@ -263,7 +263,7 @@ namespace Ryujinx.Graphics.Shader.Instructions
+                 (type is not (AtomSize.S32 or AtomSize.U32) ||
+                  op is not (AtomOp.Add or AtomOp.Min or AtomOp.Max or AtomOp.And or AtomOp.Or or AtomOp.Xor or AtomOp.Exch)))
+             {
+-                throw new System.NotSupportedException("Storage candidates v1 supports only 32-bit integer atomics.");
++                throw new System.NotSupportedException($"Storage candidates v1 supports only 32-bit integer atomics (type {type}, op {op}).");
+             }
+             Operand res = Const(0);
+ 
+@@ -426,7 +426,7 @@ namespace Ryujinx.Graphics.Shader.Instructions
+             {
+                 if (size is not (LsSize.U8 or LsSize.S8 or LsSize.U16 or LsSize.S16))
+                 {
+-                    throw new System.NotSupportedException("Storage candidates v1 supports naturally aligned B32/B64/B128 global loads only.");
++                    throw new System.NotSupportedException($"Storage candidates v1 supports naturally aligned B32/B64/B128 global loads only (size {size}).");
+                 }
+ 
+                 EmitGuardedSmallLdg(context, size, ra, rd, offset, extended);
+@@ -539,7 +539,7 @@ namespace Ryujinx.Graphics.Shader.Instructions
+             {
+                 if (size is not (LsSize2.U8 or LsSize2.S8 or LsSize2.U16 or LsSize2.S16))
+                 {
+-                    throw new System.NotSupportedException("Storage candidates v1 supports naturally aligned B32/B64/B128 global stores only.");
++                    throw new System.NotSupportedException($"Storage candidates v1 supports naturally aligned B32/B64/B128 global stores only (size {size}).");
+                 }
+ 
+                 EmitGuardedSmallStg(context, size, ra, rd, offset, extended);
+diff --git a/src/Ryujinx.Graphics.Shader/Translation/Optimizations/GlobalToStorage.cs b/src/Ryujinx.Graphics.Shader/Translation/Optimizations/GlobalToStorage.cs
+index f5c38c4..92eb468 100644
+--- a/src/Ryujinx.Graphics.Shader/Translation/Optimizations/GlobalToStorage.cs
++++ b/src/Ryujinx.Graphics.Shader/Translation/Optimizations/GlobalToStorage.cs
+@@ -484,7 +484,7 @@ namespace Ryujinx.Graphics.Shader.Translation.Optimizations
+ 
+             if (candidates.Count == 0)
+             {
+-                throw new NotSupportedException("No bounded cbuf-pair candidate found for global operation.");
++                throw new NotSupportedException($"No bounded cbuf-pair candidate found for global operation ({operation.Inst}, {operation.StorageKind}).");
+             }
+             if (gtsContext.TryGetFunctionId(operation, true, candidates, out int functionId, guarded: true))
+             {
+@@ -503,7 +503,7 @@ namespace Ryujinx.Graphics.Shader.Translation.Optimizations
+                 bool write = operation.Inst == Instruction.Store || operation.Inst.IsAtomic();
+                 if (!resourceManager.TryGetStorageBufferBinding(slot, offset, write, out int binding, guarded: true))
+                 {
+-                    throw new NotSupportedException("Storage candidates exceed the descriptor resource limit.");
++                    throw new NotSupportedException($"Storage candidates exceed the descriptor resource limit ({candidates.Count} candidates; failed at cbuf slot {slot} offset 0x{offset:X}).");
+                 }
+ 
+                 // Match the host exactly: without an explicit unaligned-storage

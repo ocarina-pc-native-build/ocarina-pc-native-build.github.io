@@ -123,6 +123,37 @@ Changes in the branch (`git diff 68f5d8e..fix/mesh-foliage`):
      again and dump the passes. Are pass 112/130/135 mesh draws still blocked? Are crowns visible? What is the fog
      luminance now?
 
+10. **Next task: the crown draws run but draw nothing. Suspect the blocked GPU culling chain.** Point 9 got the
+    crown mesh stages lowered, and their draws now run in pass 113/114 and in the shadow cascades. They still
+    change 0 depth pixels. In the frame-3900 dump of `run-p9-dump-233330`, ten **indirect compute dispatches** at
+    the very start of the frame are `blocked dispatch ... reason shader translation`:
+    - **The blocked dispatches:** progs 13594, 13610, 13394, 13613-13617, 13426 and 13431, with indirect args at
+      `0x29bb4c000`/`+0x10`/`+0x20`, `0x29bb8a000`/`+0x10`/`+0x20`, `0x29f6c2000`, `0x29f9aa000`, `0x2a18ce000`.
+      Their native shaders are `44511d69b52282ad`, `4247f1b4c3ce6cf3`, `6344c53d07706e30`, `3de6d86ec7e6720e`,
+      `102f5b0abb0f1e63`, `abccf81b45c5eb50`, `7650519f88e59b19`, `cb2e06ddfb9d7d27`, `f0fed2bbccae7bdc` and
+      `383a566958350efe`. Most are lowered by the Lichii fallback.
+    - **Why they matter:** the crown draws read their indirect arguments at `0x29bc50000`, `0x29bc68000` and
+      `0x29bd6c000`, in the same arena. This looks like the GPU-driven culling that writes those arguments. If it
+      never runs, the crowns get 0 groups.
+    - **Why they fail:** these shaders fail in the translator's storage-candidate path (patch 0015/0023): 30x
+      unaligned/odd-size loads, 20x non-32-bit atomics, 12x descriptor limit, 9x no cbuf pair. The old messages did
+      not say what the shader asked for.
+    - **New patch `0027-storage-candidate-failure-details.patch`** (`build_xlate.py` expects 27): the messages now
+      name the load/store `LsSize`, the atomic `type`/`op`, the candidate count and failing cbuf slot/offset, and
+      the operation for the cbuf-pair case. It changes messages only, no behaviour. Checked here with `git apply`
+      over the full chain. Note: the lowerings only emit LDG sizes 0-6, so if the load failures really report
+      `UB128` (7), check where a size-7 LDG comes from.
+    - **Do:**
+      - Rebuild the translator and use a new cache.
+      - In the runtime, log the native hash and program for every failed translation (today
+        `vk: a stage 5 shader of program N failed to translate` is logged once only).
+      - Map the ten blocked dispatches to their exact failure messages.
+      - Read back the crown draws' indirect buffers after GPU execution (`TOTK_DUMP_BUF`). Are the group counts 0?
+      - Then extend the storage-candidate path for exactly the forms these shaders need. For example, if
+        the atomics are 64-bit or INC/DEC, add a CAS loop as patch 0024 does. Raise the limit for the descriptor
+        cases. `0` lost and `0` changed in `lower_probe` does not cover this, so check the translation-failure count
+        instead.
+
 Known and not fixed: an indirect mesh draw's group count is not clamped to `maxMeshWorkGroupCount[0]`/
 `maxTaskWorkGroupCount[0]`. A GPU-side clamp would need a small compute pass.
 
@@ -144,7 +175,7 @@ Known and not fixed: an indirect mesh draw's group count is not clamped to `maxM
    the repo say not to rebuild. Use the existing local artifacts and do not re-extract, re-lift or regenerate
    anything:
    - **Branch `test2` only:** rebuild the translator first, because patches 0025/0026 live there. In
-     `third_party/dkb`, run `python tools/build_xlate.py`. It must apply all 26 patches and produce
+     `third_party/dkb`, run `python tools/build_xlate.py`. It must apply all 27 patches (0014 optional) and produce
      `build/xlate/totk_xlate.exe`. If a patch fails to apply, stop and report which one.
    - Then do an incremental runtime build: `tools/build_full_runtime.py ...` as in `docs/FULL_RUNTIME.md`, or the
      existing `work/build_native.py`, with `--translator` pointing at the rebuilt translator.
