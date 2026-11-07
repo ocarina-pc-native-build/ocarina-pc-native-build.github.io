@@ -67,8 +67,7 @@ records 600 accepted presentations, and the menu run 3,000.
 | Visible game content | Reviewed video, title and options captures; scripted selection changes |
 
 The automated JSON's `rendering_verified=false` remains conservative: it does
-not inspect image semantics. Human/visual evidence is recorded separately in
-`logs/rendering-integration-2026-11-05.json`. Nonblack pixels alone, a counter,
+not inspect image semantics. Human/visual evidence is recorded separately, outside the repository. Nonblack pixels alone, a counter,
 or the synthetic regression's pixels are never treated as a Zelda boot.
 
 ## Two buffer errors

@@ -1813,7 +1813,7 @@ static void tex_info(VkExec *ex, const GfxShaderRes *r, uint64_t h, int storage,
     if (v) out->imageView = v, out->imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 }
 
-// ---- shadow-array stand-in (CLAUDE_TASK_MESH_FIX.md point 8, step A)
+// ---- shadow-array stand-in
 // A shadow (depth-compare) texture array whose elements come from bound slots (handle kind 4, Ryujinx
 // TextureHandleType.Direct: the light table names texture pool indices, but the replay still binds slot r->slot + k)
 // samples unrelated colour images (RGBA8, BC1, BC4, RGBA32F) under a compare sampler. Vulkan leaves that undefined

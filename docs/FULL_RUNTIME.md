@@ -49,9 +49,8 @@ it to the chat. A new run never mistakes a previous capture for a new result.
 
 Earlier boot/failure logs are retained under `work/logs/continuation/`, including
 the crashing/passing fiber regression, pre-fix shutdown timeout and final validated
-600-frame result. The public source summary is in
-`logs/runtime-integration-2026-11-05.json`. The visible title/menu continuation is
-recorded separately in `logs/rendering-integration-2026-11-05.json` and
+600-frame result. The source summary and the visible title/menu continuation logs are kept outside
+the repository; the continuation is described in
 [RENDERING_BRINGUP.md](RENDERING_BRINGUP.md), including the before/after shader
 census and actual Vulkan device. No files need to be regenerated to continue.
 
