@@ -189,6 +189,49 @@ Changes in the branch (`git diff 68f5d8e..fix/mesh-foliage`):
       - Check whether a clear or divide pass for it is skipped. Dump the buffer over a few frames: does it grow every
         frame?
 
+12. **Findings from another OoT2026 recomp (NVIDIA-tested notes `oot-lighting-fixes-amd-test.md`), mapped to ours.**
+    Reference: the Lichii emulator on the same RX 7900 XTX renders Kokiri Forest correctly, with a dark forest, the
+    canopy present and little haze. So driver and hardware are fine.
+    - **Ballot folded into a one-lane branch: missing canopy and too bright (their fix 1). Present here, patched:**
+      - Our translator runs the AST optimizer, because the runtime sends `"debug":false` (`gfx_shader.c`), and
+        `AstOptimizer.Optimize` propagates single-use temporaries.
+      - The culling shaders do `m = VOTE.ALL`, then add `POPC(m)` to a counter from the first lane only. Folding the
+        ballot into that use moved it inside `if (lane == first)`, where it counted 1 lane, so the visible lists kept
+        about 1 entry in 32. They measured 138-181 workgroups before and ~4580 after, with the canopy back.
+      - New **`0029-keep-votes-where-they-run.patch`** (`build_xlate.py` expects 29): a temporary whose expression
+        contains Ballot, Vote* or Shuffle* is never propagated. Checked with `git apply` over the chain; not compiled.
+      - **Use a new shader cache:** every shader with a vote or ballot changes.
+      - After 0028 and 0029, check that the crown/foliage indirect groups (`DKB_MESH_TRACE_INDIRECT`) are in the
+        thousands.
+    - **Subgroup size (their main AMD risk):** the compaction assumes 32 lanes. Confirm in the log that every compute
+      pipeline with votes/ballots is pinned to 32 (`subgroup pin 32 on stages 0xf0`, compute 32). Report any that is not.
+    - **Pointers loaded from memory (their fix 2):**
+      - Our 9 `No bounded cbuf-pair candidate found for global operation (Load, GlobalMemory)` failures, including
+        the culling shader `383a566958350efe`, are this case: the address comes from a pointer that was itself
+        loaded from memory, not from a cbuf pair.
+      - Their fix follows such pointers, each access guarded by a bound length. They cover four shapes:
+        - a word of a uniform block
+        - an entry of an indexed uniform array
+        - a one-hop holder behind a `c[0]` descriptor
+        - a phi of `c[0]` descriptors plus a constant
+      - Extend `GlobalToStorage` the same way, and port the behaviour, not their code.
+    - **Exposure meter range (their fix 3):** the exposure compute reads baked light probes ~121 MiB into a table
+      behind a stored pointer. Their 64 MiB read cap left the sum at 0 and pre-exposure at 2^-10. Check our guarded and
+      pointer storage range cap (`bind_range` `max`, `vk_exec_draw.c` `ssbo_info`/`guarded_storage_binding`) for a
+      similar limit. Raise it to 512 MiB, still bounded by the mapping. Credit: seedds/nxnative (MIT).
+    - **Conditional clears (their fix 6):** the engine sets a report record to 1 from the CPU, then clears under a
+      condition on it. A known report value may stand only until its submission completes. After that, read memory.
+      Check our conditional-render/report path (`vk_sync.c`, visibility records). Credit: seedds/nxnative b1d7c707 (MIT).
+    - **Read-only dispatches writing back (their fix 7, a white flash):** applies only if guest memory is mirrored.
+      The sky light block is zeroed by the CPU every frame and summed by compute atomics; dispatches that only read it
+      copied old bytes back over the zero. This may also be the patch-0024 white image: check after 0028/0029.
+    - **TLD4 `.F16.RN`, bits 79-80 (their fix 8):** bars/black picture above 953x536 in the upscaler networks. Check
+      that our TLD4 lowering and decoding keep the F16 field as TEX does.
+    - **Do not** scale fog or exposure to hide the fault.
+    - **Fragment depth register (their fix 5):** already ours, adapted from our patch 0022.
+    - **Licensing:** these notes describe behaviour, so write our own code. Where a fix credits a project, name it in
+      the commit and in `THIRD_PARTY_NOTICES.md` if code is reused.
+
 Known and not fixed: an indirect mesh draw's group count is not clamped to `maxMeshWorkGroupCount[0]`/
 `maxTaskWorkGroupCount[0]`. A GPU-side clamp would need a small compute pass.
 

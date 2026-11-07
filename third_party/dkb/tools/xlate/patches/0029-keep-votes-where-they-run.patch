@@ -1,0 +1,55 @@
+diff --git a/src/Ryujinx.Graphics.Shader/StructuredIr/AstOptimizer.cs b/src/Ryujinx.Graphics.Shader/StructuredIr/AstOptimizer.cs
+index d0a256a..0f13e3e 100644
+--- a/src/Ryujinx.Graphics.Shader/StructuredIr/AstOptimizer.cs
++++ b/src/Ryujinx.Graphics.Shader/StructuredIr/AstOptimizer.cs
+@@ -31,7 +31,11 @@ namespace Ryujinx.Graphics.Shader.StructuredIr
+                         // its use can cross another store to the same spill slot.
+                         bool localLoad = assignment.Source is AstOperation load &&
+                             (load.Inst & Instruction.Mask) == Instruction.Load && load.StorageKind == StorageKind.LocalMemory;
+-                        bool isWorthPropagating = !sideEffects && !localLoad &&
++                        // DKB: a vote, ballot or shuffle answers for the lanes active where it runs. Ocarina's culling shaders take
++                        // m = VOTE.ALL, then add POPC(m) to a counter from the first lane only; folding the ballot into that use moved
++                        // it inside "if (lane == first)", where it counted one lane, and the visible lists kept about 1 entry in 32.
++                        bool laneDependent = ContainsLaneDependentOperation(assignment.Source);
++                        bool isWorthPropagating = !sideEffects && !localLoad && !laneDependent &&
+                             (propVar.Uses.Count == 1 || IsWorthPropagating(assignment.Source));
+ 
+                         // TOTK: SPIR-V passes call arguments by pointer to a variable (StructuredProgram copies them
+@@ -81,6 +85,37 @@ namespace Ryujinx.Graphics.Shader.StructuredIr
+             return false;
+         }
+ 
++        private static bool ContainsLaneDependentOperation(IAstNode node)
++        {
++            if (node is not AstOperation operation)
++            {
++                return false;
++            }
++
++            switch (operation.Inst & Instruction.Mask)
++            {
++                case Instruction.Ballot:
++                case Instruction.Shuffle:
++                case Instruction.ShuffleDown:
++                case Instruction.ShuffleUp:
++                case Instruction.ShuffleXor:
++                case Instruction.VoteAll:
++                case Instruction.VoteAllEqual:
++                case Instruction.VoteAny:
++                    return true;
++            }
++
++            for (int index = 0; index < operation.SourcesCount; index++)
++            {
++                if (ContainsLaneDependentOperation(operation.GetSource(index)))
++                {
++                    return true;
++                }
++            }
++
++            return false;
++        }
++
+         private static bool IsWorthPropagating(IAstNode source)
+         {
+             if (source is not AstOperation srcOp)
