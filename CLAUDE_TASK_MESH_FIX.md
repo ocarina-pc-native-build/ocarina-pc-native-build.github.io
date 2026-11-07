@@ -267,6 +267,35 @@ Changes in the branch (`git diff 68f5d8e..fix/mesh-foliage`):
     - **Order:** do this after 0028/0029 have been measured. Then count the remaining `cbuf-pair` failures, check that
       `383a566958350efe` runs, and look at exposure and fog again.
 
+14. **Next task: the culling never binds the crown argument buffers (from `run-p12-head-dump2-163947`, frame 3900).**
+    The culling now runs completely, yet every indirect mesh record reads `groups 0`. The pass dump shows why:
+    - **What the crowns read:** the crown mesh draws read their records at `0x29bc50000`, `0x29bc62000`, `0x29bc68000`
+      and `0x29bd6c000`. The blocked-mesh ABI shows `x4 = 0x4040`, so each is one of a series of 0x4040-byte list
+      buffers: a 0x40 header holding the indirect record, then a 0x4000 list.
+    - **What the culling binds:** across all culling dispatches (passes 0000-0011), the only 0x4040 buffers bound are
+      `0x29bc32000` and `0x29bc56000`, plus `0x29bc7a000+0xf0040`, which ends at `0x29bd6a040`, 0x1fc0 short of
+      `0x29bd6c000`. **None of the crown list buffers is ever bound.**
+    - **Consequence:** a guarded store or atomic to an address outside every bound candidate is dropped silently.
+      The culling appends its survivors (and the count) to a per-type list buffer it picks at run time. Its address
+      is therefore not a cbuf pair or a c1 table word (0030); it is almost certainly a pointer loaded from memory
+      (a holder or pointer array). That is point 13's "form 3", which was skipped because no translation failed.
+      Translation succeeds, but the run-time binding misses.
+    - **Do:**
+      1. Push `995266c` (point 11/12 work, the c0[1..3] workgroup-count fix, patch 0030) first.
+      2. Confirm the miss: add a debug counter to the guarded codegen. In the else branch of a guarded store or
+         atomic (no candidate matched), atomically increment a word in a dedicated debug SSBO, keyed by shader, and
+         log it per dispatch. Expected: large miss counts in the culling shaders.
+      3. Find where `0x29bc68000` comes from. At frame 3900, scan the guest memory the culling dispatches can read
+         (their bound ranges, c0/c1/c3/c5/c6 banks and what those point to) for the 64-bit value `0x29bc68000` (and
+         `0x29bc50000`/`0x29bc62000`). That gives the pointer table and its holder. Then find the culling shader's
+         load of that table.
+      4. Implement point 13 for that shape (Lichii `NativePointerCandidates`: holder phis/selects up to 8, dynamic
+         pointer arrays up to 16; one CPU hop at bind time, re-read of the pointer in the shader, closest-base
+         routing). Check that the crown list buffers then appear among the bound ranges.
+      5. Also check why `0x29bc7a000` is sized `+0xf0040`, ending just before `0x29bd6c000`.
+      6. Measure again: groups in `DKB_MESH_TRACE_INDIRECT`, crowns visible, fog luminance, and compare with the
+         Lichii screenshot (dark forest, canopy, little haze).
+
 Known and not fixed: an indirect mesh draw's group count is not clamped to `maxMeshWorkGroupCount[0]`/
 `maxTaskWorkGroupCount[0]`. A GPU-side clamp would need a small compute pass.
 
