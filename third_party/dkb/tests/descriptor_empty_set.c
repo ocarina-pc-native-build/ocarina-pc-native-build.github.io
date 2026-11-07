@@ -5,8 +5,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include "vk_exec.h"
-#define MAX_BINDINGS 128
-#define MAX_DESC 1024
+#define MAX_BINDINGS 512
+#define MAX_DESC 2048
 #define SUPPORT_BYTES 1408u
 #define NVN_STAGE_VS 0
 #define NVN_STAGE_FS 1

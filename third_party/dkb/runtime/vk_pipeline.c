@@ -62,7 +62,8 @@ enum { SPV_OP_ENTRY_POINT = 15, SPV_OP_TYPE_INT = 21, SPV_OP_TYPE_FLOAT = 22, SP
        SPV_OP_DECORATE = 71, SPV_DEC_BUILTIN = 11, SPV_DEC_LOCATION = 30, SPV_DEC_INDEX = 32, SPV_DEC_BINDING = 33, SPV_DEC_DESCRIPTOR_SET = 34,
        SPV_SC_OUTPUT = 3 };
 
-#define MAX_BINDINGS 128
+// Bindings per pipeline: up to 256 guarded storage buffers per stage (translator patch 0028) plus the rest.
+#define MAX_BINDINGS 512
 #define PIPE_BUCKETS 4096
 #define LAYOUT_BUCKETS 256
 

@@ -154,6 +154,41 @@ Changes in the branch (`git diff 68f5d8e..fix/mesh-foliage`):
         cases. `0` lost and `0` changed in `lower_probe` does not cover this, so check the translation-failure count
         instead.
 
+11. **Next task: let the culling shaders translate (patch 0028), then look at the white image again.**
+    Point 10 proved that every indirect mesh draw gets 0 groups on the GPU, and 7 of the 8 blocked culling dispatches
+    fail with `Storage candidates exceed the descriptor resource limit` (19 to 103 candidates).
+    - **The limit was a hard-coded array in the translator** (`ResourceManager.cs`, `_sbSlotToBindingMap = new
+      SetBindingPair[32]`, patch 0012). It is no device limit: every guarded candidate takes one storage slot, and
+      guarded and unguarded slots share that one array.
+    - **Patch `0028-two-hundred-fifty-six-storage-slots.patch`** (`build_xlate.py` expects 28):
+      - The array grows to 256 slots.
+      - `_sbSlotWritten` was a 32-bit mask (`1u << slot`). Past 32 it would have aliased slot n with slot n % 32 and
+        wrongly marked buffers as written or not written. It is now one `bool` per slot.
+      - Checked here with `git apply` over the full chain; not compiled.
+    - **Runtime:** `MAX_BINDINGS` 128 -> 512 (`vk_exec_draw.c`, `vk_pipeline.c`), `MAX_DESC` 1024 -> 2048
+      (`vk_exec_draw.c`). The same constants are mirrored in `tests/descriptor_empty_set.c` and
+      `tests/geometry_replay_test.py`. The descriptor pools hold 2048 storage buffers each, so one set of 256 fits.
+      Not checked: device `maxPerStageDescriptorStorageBuffers` (large on desktop AMD). Log it once.
+    - **Test:** `tests/xlate_storage_candidates_test.py` `test_descriptor_limit_rejects_instead_of_truncating` now uses
+      255/256 candidates (256 slots accepted, 257 rejected). Not run here.
+    - **Do:**
+      - Rebuild the translator (28 patches) and the runtime, and use a new cache.
+      - Run the storage-candidate tests and the render regressions.
+      - Forest run:
+        - How many translation failures remain?
+        - Do the 7 culling dispatches run?
+        - Read back the crown indirect args again (`DKB_MESH_TRACE_INDIRECT`). Are the groups non-zero?
+        - Are crowns visible?
+        - What is the fog luminance?
+    - **White image with 0024:** patch 0024 itself looks right: a CAS loop for `RED/ATOM.ADD.F32`, returning the old
+      value. Likely mechanism: before 0024 the sky-ambient and light-accumulation shaders failed translation and never
+      ran. With 0024 they accumulate, but whatever clears or normalises those buffers (or the counts they divide by)
+      may sit in the still-blocked shaders, so values grow without bound. Re-check the white image **after** 0028.
+      If it is still white:
+      - Find the accumulation buffer the 0024 shaders write (by its dispatch).
+      - Check whether a clear or divide pass for it is skipped. Dump the buffer over a few frames: does it grow every
+        frame?
+
 Known and not fixed: an indirect mesh draw's group count is not clamped to `maxMeshWorkGroupCount[0]`/
 `maxTaskWorkGroupCount[0]`. A GPU-side clamp would need a small compute pass.
 

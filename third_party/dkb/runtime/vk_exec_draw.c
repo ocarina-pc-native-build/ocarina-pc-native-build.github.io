@@ -34,12 +34,13 @@
 #include "tex.h"
 #include "platform/platform.h"
 
-#define MAX_BINDINGS 128
+// Bindings per pipeline: up to 256 guarded storage buffers per stage (translator patch 0028) plus the rest.
+#define MAX_BINDINGS 512
 // NVN 2 compute parameter layout of the program being dispatched (gfx_shader_c0_layout), NULL for NVN 1: read by
 // vk_c0_fill, set by the dispatch ops around bind_resources like c0_dim.
 static const Nvn2C0Layout *c0_lay;
 static const uint32_t (*c0_push)[NVN2_ROOT_WORDS];
-#define MAX_DESC 1024
+#define MAX_DESC 2048
 #define CHUNK_BYTES (4u << 20)
 #define ZERO_BYTES 65536u
 #define SUPPORT_BYTES 1408u   // Ryujinx SupportBuffer (std140): alpha_test, is_bgra[8], viewport_inverse, viewport_size, ...

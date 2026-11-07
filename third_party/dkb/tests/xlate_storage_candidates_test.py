@@ -363,7 +363,7 @@ class CandidateTest(unittest.TestCase):
 
     def test_descriptor_limit_rejects_instead_of_truncating(self):
         jobs = []
-        for count in (31, 32):
+        for count in (255, 256):   # one storage slot for the c0 root pair plus count candidates; 256 slots (patch 0028)
             ops = [original.movc(4, 0, 192), original.movc(5, 0, 193)]
             for index in range(count):
                 ops += [original.movc(0, 0, 4 + 4 * index), original.movc(1, 0, 5 + 4 * index),
@@ -372,7 +372,7 @@ class CandidateTest(unittest.TestCase):
             jobs.append(packet('resources_' + str(count), encoded(ops), storage_candidates_version=1,
                                c0_roots=[64, 64, 64, 0, 0, 0, 0, 0]))
         self.translate(jobs[:1])
-        self.assertEqual(len(self.reflection('resources_31')['sbufs']), 32)
+        self.assertEqual(len(self.reflection('resources_255')['sbufs']), 256)
         self.assertIn('descriptor resource limit', self.translate(jobs[1:], valid=False)[0])
 
     def test_guarded_and_legacy_resource_identity_and_backend_gate(self):

@@ -85,7 +85,7 @@ const GfxShader *gfx_shader_await(int stage,const uint8_t *ctl,const uint8_t *co
                         function(draw, 'static int upd_read(') + '\n' + function(draw, 'static uint64_t ubo_ptr('))
     old_list = function(base, 'static const RsList *rs_list(')
     ranges = '\n'.join((
-        '#define MAX_DESC 1024\n#define MAX_BINDINGS 128\n' +
+        '#define MAX_DESC 2048\n#define MAX_BINDINGS 512\n' +
         next(line for line in draw.splitlines() if line.startswith('#define RS_BYTES ')),
         'static nvn_hmap rs_lists; static const VkPipeInfo *rs_last; static const RsList *rs_last_l;',
         'static int nvn_stage_of(int);', function(draw, 'static int ssbo_slot('), function(draw, 'static int ubo_ptr_res('),
