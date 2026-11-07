@@ -52,6 +52,10 @@ void vk_texture_unlock(void) { abort(); }
 static void tex_info(VkExec *ex,const GfxShaderRes *r,uint64_t h,int image,int separate,VkDescriptorImageInfo *out) {
     (void)ex; (void)r; (void)h; (void)image; (void)separate; (void)out; abort();
 }
+void rt_log(const char *fmt,...) { (void)fmt; }
+static void shadow_array_element(VkExec *ex,const GfxShaderRes *r,uint64_t h,VkDescriptorImageInfo *out) {
+    (void)ex; (void)r; (void)h; (void)out; abort();
+}
 
 // Bounded malloc storage supplies alignment without imposing an array's declared
 // effective type. The real producers decide packet sizes and copy every payload.

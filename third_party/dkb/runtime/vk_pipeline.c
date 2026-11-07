@@ -215,6 +215,10 @@ static int ensure_init(void) {
     VkPhysicalDeviceProperties2 p2 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, .pNext = &pd};
     vkGetPhysicalDeviceProperties2(c->phys, &p2);
     P.max_push = pd.maxPushDescriptors;
+    // The real storage-buffer limits a layout must respect (maxPushDescriptors only decides push versus allocated set).
+    rt_log("vk_pipeline: storage buffers per stage %u, per set %u; descriptors per stage %u; push descriptors %u",
+           p2.properties.limits.maxPerStageDescriptorStorageBuffers, p2.properties.limits.maxDescriptorSetStorageBuffers,
+           p2.properties.limits.maxPerStageResources, pd.maxPushDescriptors);
     P.indep = vk_caps.gpl;
     P.gpl = vk_caps.gpl;
     rt_log(P.gpl ? "vk_pipeline: graphics pipeline library on: a draw whose pipeline is building gets a fast-linked one, "
@@ -3303,6 +3307,21 @@ static VkPipeline compute_create(const GfxShader *cs, const Layout *l) {
                                                 .stage = VK_SHADER_STAGE_COMPUTE_BIT, .module = m, .pName = "main"},
                                       .layout = l->layout};
     pin_subgroup32(&ci.stage, &rqc, code, words);
+    // Vote/ballot compaction (the culling shaders' append) assumes 32 lanes: count the compute pipelines with subgroup
+    // operations that got the size-32 pin and name every one that did not.
+    if (uses_subgroup_ops(code, words)) {
+        static volatile int64_t pinned, unpinned;
+        if (ci.stage.pNext) {
+            int64_t n = plat_inc64(&pinned);
+            if (n == 1 || n == 10 || n == 100 || n == 1000)
+                rt_log("vk_pipeline: %lld compute pipelines with subgroup operations pinned to subgroup size %u",
+                       (long long)n, vk_caps.sg_size);
+        } else {
+            rt_log("vk_pipeline: compute pipeline %lld with subgroup operations is NOT pinned to subgroup size 32 "
+                   "(%u SPIR-V words, pin stages %#x)", (long long)plat_inc64(&unpinned), (unsigned)words,
+                   (unsigned)P.sg32_stages);
+        }
+    }
     VkPipeline pipe = VK_NULL_HANDLE;
     if (getenv("DKB_SHADER_MODULE_DUMP")) rt_log("vk_pipeline: compute begin module %llx", (unsigned long long)(uintptr_t)m);
     VkResult result = vkCreateComputePipelines(P.device, P.cache, 1, &ci, NULL, &pipe);

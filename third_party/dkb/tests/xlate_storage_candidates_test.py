@@ -173,7 +173,9 @@ class CandidateTest(unittest.TestCase):
         args.out.mkdir(parents=True, exist_ok=True)
         cls.env = {k: v for k, v in os.environ.items() if k.upper() in {
             'SYSTEMROOT', 'WINDIR', 'PATH', 'TEMP', 'TMP', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA',
-            'PROGRAMFILES', 'PROGRAMFILES(X86)', 'PROGRAMDATA', 'SYSTEMDRIVE'}}
+            'PROGRAMFILES', 'PROGRAMFILES(X86)', 'PROGRAMDATA', 'SYSTEMDRIVE',
+            # A local package cache, so the resource probe restores offline where the translator was built that way.
+            'NUGET_PACKAGES', 'NUGET_HTTP_CACHE_PATH'}}
         cls.env.update(DOTNET_ROOT=str(args.dotnet.parent), DOTNET_PROCESSOR_COUNT='2',
                        DOTNET_CLI_TELEMETRY_OPTOUT='1', DOTNET_GENERATE_ASPNET_CERTIFICATE='false',
                        DOTNET_SKIP_FIRST_TIME_EXPERIENCE='1', DOTNET_NOLOGO='1',
@@ -274,15 +276,16 @@ class CandidateTest(unittest.TestCase):
         self.translate(jobs, valid=False)
 
     def test_unsupported_widths_fail_before_scalarization(self):
-        jobs = []
-        for key, store, size in (('load8', False, 0), ('store8', True, 0),
-                                 ('load16', False, 2), ('store16', True, 2), ('unaligned128', False, 7)):
+        # Patch 0023 guards 8- and 16-bit accesses (U8/S8/U16/S16), so those translate; the unaligned 128-bit size
+        # (LsSize 7) is still rejected before scalarization.
+        def job(key, store, size):
             ops = original.instructions(True)
             for i, op in enumerate(ops):
                 if op >> 51 == (0xEED8000000000000 if store else 0xEED0000000000000) >> 51:
                     ops[i] = (op & ~(7 << 48)) | (size << 48)
-            jobs.append(packet(key, encoded(ops), storage_candidates_version=1))
-        replies = self.translate(jobs, valid=False)
+            return packet(key, encoded(ops), storage_candidates_version=1)
+        self.translate([job('load8', False, 0), job('store8', True, 0), job('load16', False, 2), job('store16', True, 2)])
+        replies = self.translate([job('unaligned128', False, 7)], valid=False)
         self.assertTrue(all('naturally aligned B32/B64/B128 global' in x for x in replies))
 
     def test_original_wide_register_values_and_canaries(self):
@@ -363,10 +366,13 @@ class CandidateTest(unittest.TestCase):
 
     def test_descriptor_limit_rejects_instead_of_truncating(self):
         jobs = []
-        for count in (255, 256):   # one storage slot for the c0 root pair plus count candidates; 256 slots (patch 0028)
+        # One storage slot for the c0 root pair plus count candidates; 256 slots (patch 0028). The candidates sit at
+        # c0 words 4, 8, 12, ...; the one at word 192 would be the root pair itself and share its slot, so it is skipped.
+        words = [4 + 4 * index for index in range(257) if 4 + 4 * index != 192]
+        for count in (255, 256):
             ops = [original.movc(4, 0, 192), original.movc(5, 0, 193)]
-            for index in range(count):
-                ops += [original.movc(0, 0, 4 + 4 * index), original.movc(1, 0, 5 + 4 * index),
+            for word in words[:count]:
+                ops += [original.movc(0, 0, word), original.movc(1, 0, word + 1),
                         original.global_memory(False, 2, 0), original.global_memory(True, 2, 4)]
             ops += [original.EXIT]
             jobs.append(packet('resources_' + str(count), encoded(ops), storage_candidates_version=1,

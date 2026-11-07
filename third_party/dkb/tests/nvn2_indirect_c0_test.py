@@ -86,6 +86,9 @@ static void vkCmdDispatchIndirect(int cb, VkBuffer src, uint64_t offset) {
 static void vk_mem_count(int cls, int use, uint64_t bytes) { (void)cls; (void)use; (void)bytes; }
 static void vk_dump_dispatch(VkExec *ex, const GfxShader *shader, VkPipeline pipe, const VkPipeInfo *info,
                              const p_dispatch *dispatch) { (void)ex; (void)shader; (void)pipe; (void)info; (void)dispatch; }
+static void vk_dump_blocked_dispatch(VkExec *ex, const p_dispatch *dispatch, uint64_t indirect, const char *reason) {
+    (void)ex; (void)dispatch; (void)indirect; (void)reason; abort();
+}
 '''
     after = r'''
 static unsigned checks, failures;
@@ -98,9 +101,9 @@ static void run(const Nvn2C0Layout *layout, unsigned expected_copies) {
     memset(&noted, 0, sizeof noted);
     op_dispatch_ind(&ex, &d);
     CHECK(dispatches == 1 && !memcmp(groups, arguments + 1, sizeof groups), "indirect dispatch keeps actual GPU arguments");
-    CHECK(copies == expected_copies, "only the NVN 1 bank receives the legacy dimension copy");
+    CHECK(copies == expected_copies, "a bank that binds c0 receives the dimension copy where its ABI reads it");
     CHECK(ex.recorded == 1 + expected_copies && barriers == 1 + expected_copies, "copy bookkeeping follows the selected ABI");
-    CHECK(B.c0_valid[2] == (bind_c0 && !expected_copies), "the NVN 2 packed bank stays reusable");
+    CHECK(B.c0_valid[2] == (bind_c0 && !expected_copies), "a bank changed on the GPU is not reused");
     CHECK(noted.calls == 1 && noted.ex == &ex, "indirect dispatch profiles its executor exactly once");
     CHECK(noted.kind == 3 && noted.work == 0, "indirect profiling keeps the GPU-only work count unknown");
     CHECK(noted.recorded == 1 + expected_copies && noted.dispatches == 1 && !noted.twin_dispatch,
@@ -123,15 +126,18 @@ int main(void) {
     ubo[0].addr = UINT64_C(0x1122334455667788), ubo[0].size = 0x1234;
     Nvn2C0Layout layout = {.ubos=1, .roots={64,64}};
     CHECK(nvn2_c0_pack(bank, sizeof bank, &layout, roots, ssbo, ubo), "synthetic roots cross the legacy +0x200 slot");
+    // NVN 2 reads the counts in its driver head, words 1-3 (NVN2_C0_DISPATCH); the roots behind it stay as packed.
     memcpy(expected, bank, sizeof bank);
-    run(&layout, 0);
-    CHECK(!memcmp(bank, expected, sizeof bank), "NVN 2 declared root words survive indirect dispatch unchanged");
+    memcpy(expected + NVN2_C0_DISPATCH, arguments + 1, sizeof groups);
+    run(&layout, 1);
+    CHECK(!memcmp(bank, expected, sizeof bank), "NVN 2 head gets the counts, declared root words survive unchanged");
 
     layout.roots[1] = 60;
     CHECK(nvn2_c0_part(&layout, 1) == 0x200 && nvn2_c0_pack(bank, sizeof bank, &layout, roots, ssbo, ubo),
           "synthetic NVN 2 uniform table starts at +0x200");
     memcpy(expected, bank, sizeof bank);
-    run(&layout, 0);
+    memcpy(expected + NVN2_C0_DISPATCH, arguments + 1, sizeof groups);
+    run(&layout, 1);
     CHECK(!memcmp(bank, expected, sizeof bank), "NVN 2 buffer address/size survive indirect dispatch unchanged");
 
     memcpy(bank, expected, sizeof bank);

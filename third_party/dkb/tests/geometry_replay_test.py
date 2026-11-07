@@ -75,6 +75,7 @@ const GfxShader *gfx_shader_await(int stage,const uint8_t *ctl,const uint8_t *co
     where = base.index('static int nvn_stage_of(')
     base = base[:where] + draw[stage_start:stage_end] + draw[slot_start:slot_end] + base[where:]
     extra = [function(shader, 'int gfx_shader_is_nvn2('), function(pipeline, 'uint8_t vk_geometry_input('),
+             function(draw, 'static int skip_native('),
              function(draw, 'static const GfxShader *shader_for('), function(draw, 'static int experimental_geometry_on('),
              function(draw, 'static int geometry_draw('), function(draw, 'static int geometry_feedback_safe(')]
 
@@ -118,6 +119,13 @@ int vk_mem_resolve(uint64_t addr,uint64_t bytes,VkMemSpan *out) {
     }
     return 0;
 }
+// bind_range sizes a binding by the registered range left at addr; the two fixture regions are the only ones.
+uint64_t vk_mem_pool_available(uint64_t addr) {VkMemSpan sp;return vk_mem_resolve(addr,1,&sp)?sp.avail:0;}
+GfxStats gfx_counters;
+void rt_log(const char *fmt,...) {va_list ap;va_start(ap,fmt);vfprintf(stderr,fmt,ap);va_end(ap);fputc('\n',stderr);}
+void nvn2_note_failed_use(const uint8_t *control,const uint8_t *code,uint64_t program,unsigned stage,uint64_t frame) {
+    (void)control;(void)code;(void)program;(void)stage;(void)frame;
+}
 void vk_mem_use(VkMemSpan *span) {uses++;span->buffer=(VkBuffer)(uintptr_t)22;span->offset+=256;}
 void vk_mem_gpu_wrote(const VkMemSpan *span,uint64_t bytes) {CHECK((uintptr_t)span->buffer==22 && bytes,"write uses selected backing");gpu_writes++;}
 void vk_usnap_drop(uint64_t addr,uint64_t bytes) {CHECK(addr==(uintptr_t)output_words && bytes==sizeof output_words,"write drops exact output snapshot");drops++;}
@@ -149,7 +157,8 @@ void rc_vkCmdPipelineBarrier2(VkCommandBuffer cb,const VkDependencyInfo *di) {
            (VK_ACCESS_2_MEMORY_READ_BIT|VK_ACCESS_2_MEMORY_WRITE_BIT),"full dependency covers GS stores and later indirect reads");
 }
 '''
-    lim = function(draw, 'static struct { uint64_t ubo_max,') + ' LIM;'
+    # ubo_info hands task and mesh stages the GPU-converted indirect record kept in mesh_arguments.
+    lim = function(draw, 'static struct { uint64_t ubo_max,') + ' LIM;\nstatic VkDescriptorBufferInfo mesh_arguments;'
     memory_helpers = '\n'.join(function(draw, prefix) for prefix in ('static VkDescriptorBufferInfo zero_info(',
         'static int bind_range(', 'static void note_written(', 'static p_bind_buf guarded_storage_binding(',
         'static VkDescriptorBufferInfo ssbo_info(', 'static VkDescriptorBufferInfo ubo_info('))

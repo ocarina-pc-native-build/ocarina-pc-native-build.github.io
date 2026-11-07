@@ -1002,3 +1002,134 @@ at `0x29bc50000`, `be221d3fcf0326ab` at `0x29bd6c000`) and the leaves
 (`abc92fb8fa764c57`, `740d7951f6393207`). The crowns draw nothing because their
 group counts stay 0; the blocked culling dispatches above are the next target:
 a storage-candidate limit above the largest count (103) and the cbuf-pair load.
+
+### Storage-candidate limit, pointer tables and the 0024 regression (2026-11-07)
+
+Resource model, translator to Vulkan: each guarded storage candidate (patch
+0015) becomes one SPIR-V storage-buffer variable and one descriptor; the
+runtime binds each from the guest address its cbuf slot and offset hold
+(`vk_exec_draw.c` `guarded_storage_binding`: c0 from the compute driver bank,
+c1 from the stage's inline constants, c2-c16 through `ubo_ptr` from the bound
+uniform buffer). The only 32 limit was the translator's (`ResourceManager`
+`SetBindingPair[32]` from patch 0012, with a 32-bit written mask whose
+`1u << slot` wraps above 31). `maxPushDescriptors` (32) only decides whether a
+layout is a push set or an allocated set; the device reports
+`maxPerStageDescriptorStorageBuffers` and `maxDescriptorSetStorageBuffers` of
+4294967295 (`vk_pipeline.c` logs both and `maxPushDescriptors` once at
+startup). Patch 0028 raises the translator to 256 storage slots per stage with
+one written flag per slot; `MAX_BINDINGS` goes from 128 to 512 and `MAX_DESC`
+from 1024 to 2048 in the runtime. The largest culling shader needs 103
+candidates, so 256 leaves room. A local trial with 1024 slots gave the same
+result in the forest run (blocked dispatches at frame 3900: 8 to 1;
+translation failures 41 to 9).
+
+`383a566958350efe` and three more compute stages (`53caac5f38279735`,
+`a54f19e927d8faef`, `b612216258832b9c`) still fail with "no bounded cbuf
+pair". A diagnostic translator build that prints the address expression in
+that message (not in the patch chain) shows: the 64-bit address is a phi
+of a value loaded from a constant buffer at a register index (native
+`LDC.64 c[n][Rx]`, then `LDG`/`STG` through it): pointer tables. At runtime
+the stage's c1 holds 64-bit object pointers at a 16-byte stride (0x180 bytes).
+A trial patch (now in `rejected`) made every 8-byte entry of a 0x200-byte
+window of such a table a candidate; all nine failures then translated offline,
+but a phi over four tables gave 259 candidates per access, the unrolled
+guarded chains grew SPIR-V modules to 19.5 MB and 11.7 MB (median 16 KB), and
+the driver compile stalled the game at script frame 1202 for over 30 minutes.
+A compact form is needed: one descriptor array or one arena binding per table,
+or device addresses.
+
+`DKB_TRACE_ADDR` logs every storage binding whose resolved range covers a
+traced address. The crown record `0x29bd6c000` is written by the culling
+shaders `78ccf14779ec3efb`, `abccf81b45c5eb50` and `7650519f88e59b19`; the
+records `0x29bc68000` and `0x29bc50000` are only read (task stages
+`33fa6133e0664611`, `e15612b842b347ff`, `a423fdb35e8eab46`); no resolved
+binding writes them. All traced indirect mesh records still read 0 groups at
+frame 3880. The remaining writer is most likely one of the pointer-table
+stages above.
+
+With the seven culling shaders running, about half the forest runs first ended
+in `device lost` between script frames 1249 and 2365, with and without 0024.
+The process commits 21 to 22 GB; the runs that failed coincided with the
+Windows commit limit being reached (32 GB RAM, small page file). With the page
+file raised to 10 to 32 GB the same runs are stable.
+
+0024 with the culling shaders running: screenshots 251 with all 29 patches,
+151-157 without 0024. The cause was not 0024 itself but the NVN 2 compute
+driver head; see the next section.
+
+### Votes, pointer tables and the white image (task point 12, 2026-11-07)
+
+Forest replay, translator with 30 patches, 8-bit screenshot luma
+(`claude` tool `shot_brightness.py`, 255 is white), frames 3200-4000.
+
+- **Patch 0029 (votes and ballots stay where they run):** built and run with a
+  new cache. The traced crown and foliage indirect records (76 at frame 3880,
+  among them `907e1e20`, `10eff7e5`, `be221d3f`) still read 0 task groups in X,
+  with and without 0024 and with 0030. The ballot fold is fixed, but no record
+  is in the thousands.
+- **Subgroup size:** `vk caps` reports size control 32-64 with required stages
+  `0xf0` (fragment, compute, task, mesh); `vk_pipeline.c` `compute_create` now
+  counts the compute pipelines with subgroup operations that get the size-32
+  pin and names any that does not. Over 100 were pinned in a cold run, none
+  missed it.
+- **Pointers read from an indexed uniform array (patch 0030):** the nine
+  "No bounded cbuf-pair candidate" failures (`383a566958350efe`,
+  `53caac5f38279735`, `a54f19e927d8faef`, `b612216258832b9c`) all load their
+  address from c1 at a computed word: `Load.ConstantBuffer(1, w >> 2, w & 3)`
+  with `w = (k - 4) * 4 + {0, 0x20}` and `k` a phi of the constants 0-9 and the
+  global thread index. 0030 evaluates such a word index over phis and constant
+  integer arithmetic (at most 64 values; a phi source without a bounded set,
+  such as a thread index, is left out and its addresses hit no candidate; a
+  loop-carried phi is not bounded) and adds each word as an ordinary guarded
+  candidate, which the runtime already resolves from the stage's inline
+  constants. All nine translate (SPIR-V 690-751 KB, `spirv-val` clean);
+  translation failures in the forest 9 to 0, blocked dispatches at frame 3900
+  1 to 0. The other three shapes: a word of a uniform block (c2-c16 through
+  `ubo_ptr`) and a phi of c0 descriptors plus a constant are already found by
+  the candidate walk; a one-hop holder behind a c0 descriptor (pointer read
+  from guest memory) would need the runtime to read that memory at bind time
+  and no current failure needs it, so it is not implemented.
+- **Exposure meter range:** guarded and pointer storage bindings are capped at
+  the device `maxStorageBufferRange` and at the rest of the registered pool
+  (`bind_range`, `vk_mem_pool_available`); there is no fixed 64 MiB cap.
+- **Conditional clears:** `vk_exec_xfer.c` `counter_word` uses a known report
+  value only while its submission is pending and reads memory afterwards.
+- **Write-back of mirrored pools:** the pools are mirrored ("mode mirror",
+  discrete GPU). A written guarded binding reaches to the end of its pool, so
+  the whole remainder goes back to guest memory after each submission: 41.4 MiB
+  a frame, nearly all of it from guarded bindings (`7984161db3e053b5` alone
+  binds twelve written ranges, about 7 GB together). With
+  `DKB_GUARDED_WRITEBACK=0` the write-back falls to 0.009 MiB a frame and the
+  image stays as it was, so this is not the white image; it is a cost worth
+  bounding later.
+- **TLD4 `.F16.RN`:** both lowerings (Eglantine and Lichii `lower_to_maxwell.h`)
+  take bit 79 as the F16 form, gather in float, round to nearest and pack, and
+  reject bit 80; no shader in the forest fails with "gather mode".
+- **The white image:** with 0024 six compute shaders translate that otherwise
+  fail. Skipping them one group at a time (`DKB_SKIP_NATIVE`): all six skipped
+  186, only `499dbfd0721d2858` active 252, only `592079442d7129da` active 168.
+  `499d` projects a cube texture onto spherical harmonics (Fibonacci-sphere
+  samples, factor 0.2820950) and adds the coefficients with float atomics. Its
+  sample count is `(c0[1] * 32) * (c0[2] * 32)` and it multiplies by the
+  reciprocal. c0 words 1-3 of the NVN 2 compute parameter block are the driver
+  head, which `nvn2_c0_pack` left zero, so the reciprocal was infinite and the
+  ambient SH turned NaN (`DKB_WATCH_ADDR` showed NaN in the table at
+  `0x25fb6e000`). Of 127 compute shaders in the forest, six read the head and
+  only words 1, 1-2 or 1-3: the workgroup counts. `vk_c0_fill` now writes the
+  dispatch size there (`NVN2_C0_DISPATCH`); an indirect dispatch copies its
+  counts there on the GPU. With all 30 patches the screenshots read 173-184
+  instead of 252 and the scene is visible again; the fog composite takes the
+  median luminance from 0.024 to 0.278 (mean 0.22 to 0.40).
+- **Still open:** the crown records keep 0 groups although no dispatch is
+  blocked any more; the culling runs and passes nothing.
+
+Diagnostic switches added: `DKB_SKIP_NATIVE=<hex,...>` (stages lowered from
+these NVN 2 shaders count as failed translations), `DKB_GUARDED_WRITEBACK=0`,
+`DKB_TRACE_GUARDED_WRITES=1` (each written guarded binding once),
+`DKB_WATCH_ADDR=<addr,...>` (words of guest memory every 10 frames from 3000).
+
+Test notes: the replay presses A at fixed script frames; when the load menu
+opens late the run stays in it (screenshots about 58), in cold and warm runs
+alike. With about 24 GB of other programs committed, the game's 21-22 GB and a
+page file that grows on demand, some runs end in `device lost` near the commit
+limit, and a second emulator running alongside takes the rest.

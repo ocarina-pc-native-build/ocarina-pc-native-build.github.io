@@ -1,0 +1,146 @@
+--- a/src/Ryujinx.Graphics.Shader/Translation/Optimizations/GlobalToStorage.cs
++++ b/src/Ryujinx.Graphics.Shader/Translation/Optimizations/GlobalToStorage.cs
+@@ -466,6 +466,16 @@
+                 {
+                     AddCandidate(new SearchResult(operand.GetCbufSlot(), operand.GetCbufOffset()));
+                 }
++                else if (TryGetIndexedConstantBufferWords(resourceManager, operand, out int tableSlot, out List<uint> tableWords))
++                {
++                    // A pointer read from a constant buffer at a computed word (native LDC c[n][Rx], an indexed
++                    // uniform array): every word the index can take is an ordinary candidate. The index expression
++                    // itself is not walked; it is no pointer.
++                    foreach (uint word in tableWords)
++                    {
++                        AddCandidate(new SearchResult(tableSlot, (int)word));
++                    }
++                }
+                 else if (operand.AsgOp is PhiNode phi)
+                 {
+                     for (int index = 0; index < phi.SourcesCount; index++)
+@@ -938,6 +948,126 @@
+             return true;
+         }
+ 
++        // The words a constant-buffer load with a computed index can read, for a load built as EmitLoadConstant builds
++        // it: Load.ConstantBuffer(binding, 0, ShiftRightU32(w, 2), BitwiseAnd(w, 3)) with one word index w. w is
++        // evaluated over phis and constant integer arithmetic. A phi source that has no bounded value set (a thread
++        // ID, a loaded value) is left out: an address built from it matches no candidate, so the guarded access does
++        // nothing, as for any other unknown address. A phi that depends on itself (a loop counter) is not bounded.
++        private static bool TryGetIndexedConstantBufferWords(ResourceManager resourceManager, Operand value, out int slot, out List<uint> words)
++        {
++            slot = 0;
++            words = null;
++
++            static bool IsConstantValue(Operand operand, int expected)
++            {
++                return operand.Type == OperandType.Constant && operand.Value == expected;
++            }
++
++            if (value.AsgOp is not Operation load || load.Inst != Instruction.Load ||
++                load.StorageKind != StorageKind.ConstantBuffer || load.SourcesCount != 4 ||
++                load.GetSource(0).Type != OperandType.Constant || !IsConstantValue(load.GetSource(1), 0) ||
++                load.GetSource(2).AsgOp is not Operation vector || vector.Inst != Instruction.ShiftRightU32 ||
++                !IsConstantValue(vector.GetSource(1), 2) ||
++                load.GetSource(3).AsgOp is not Operation element || element.Inst != Instruction.BitwiseAnd ||
++                !IsConstantValue(element.GetSource(1), 3) || vector.GetSource(0) != element.GetSource(0) ||
++                vector.GetSource(0).Type == OperandType.Constant ||
++                !resourceManager.TryGetConstantBufferSlot(load.GetSource(0).Value, out slot))
++            {
++                return false;
++            }
++
++            HashSet<uint> set = EvaluateBounded(vector.GetSource(0), 0, [], out _);
++            if (set == null)
++            {
++                return false;
++            }
++
++            words = set.Where(word => word < 0x3fff).OrderBy(word => word).ToList();
++            return words.Count != 0;
++        }
++
++        // The values an integer expression can take, or null when they are not few and known. cyclic: the expression
++        // reached a value that is still being evaluated (a loop-carried phi).
++        private static HashSet<uint> EvaluateBounded(Operand value, int depth, HashSet<Operand> active, out bool cyclic)
++        {
++            const int MaxValues = 64;
++            cyclic = false;
++            if (value.Type == OperandType.Constant)
++            {
++                return [(uint)value.Value];
++            }
++            if (depth > 32)
++            {
++                return null;
++            }
++            if (!active.Add(value))
++            {
++                cyclic = true;
++                return null;
++            }
++
++            HashSet<uint> result = null;
++            if (value.AsgOp is PhiNode phi)
++            {
++                result = [];
++                for (int index = 0; index < phi.SourcesCount && result != null; index++)
++                {
++                    HashSet<uint> source = EvaluateBounded(phi.GetSource(index), depth + 1, active, out bool sourceCyclic);
++                    if (sourceCyclic)
++                    {
++                        cyclic = true;
++                        result = null;
++                    }
++                    else if (source != null)
++                    {
++                        result.UnionWith(source);
++                    }
++                }
++                if (result != null && (result.Count == 0 || result.Count > MaxValues))
++                {
++                    result = null;
++                }
++            }
++            else if (value.AsgOp is Operation operation && operation.SourcesCount == 2)
++            {
++                Func<uint, uint, uint> apply = operation.Inst switch
++                {
++                    Instruction.Add => (a, b) => a + b,
++                    Instruction.Subtract => (a, b) => a - b,
++                    Instruction.Multiply => (a, b) => a * b,
++                    Instruction.ShiftLeft => (a, b) => a << (int)(b & 31),
++                    Instruction.ShiftRightU32 => (a, b) => a >> (int)(b & 31),
++                    Instruction.BitwiseAnd => (a, b) => a & b,
++                    Instruction.BitwiseOr => (a, b) => a | b,
++                    _ => null,
++                };
++                if (apply != null)
++                {
++                    HashSet<uint> x = EvaluateBounded(operation.GetSource(0), depth + 1, active, out bool xCyclic);
++                    HashSet<uint> y = xCyclic ? null : EvaluateBounded(operation.GetSource(1), depth + 1, active, out cyclic);
++                    cyclic |= xCyclic;
++                    if (!cyclic && x != null && y != null)
++                    {
++                        result = [];
++                        foreach (uint a in x)
++                        {
++                            foreach (uint b in y)
++                            {
++                                result.Add(apply(a, b));
++                            }
++                        }
++                        if (result.Count > MaxValues)
++                        {
++                            result = null;
++                        }
++                    }
++                }
++            }
++
++            active.Remove(value);
++            return result;
++        }
++
+         private static uint PackCbSlotAndOffset(int cbSlot, int cbOffset)
+         {
+             return (uint)((ushort)cbSlot | ((ushort)cbOffset << 16));

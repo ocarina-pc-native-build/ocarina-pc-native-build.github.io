@@ -7,6 +7,7 @@
 #include "nvn_obj.h"
 
 #define NVN2_C0_BYTES 0x800u
+#define NVN2_C0_DISPATCH 4u   // driver head words 1-3: the workgroup counts of the dispatch (vk_c0_fill)
 #define NVN2_ROOT_TABLES 8
 #define NVN2_ROOT_WORDS 64
 

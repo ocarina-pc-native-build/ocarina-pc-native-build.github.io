@@ -274,6 +274,35 @@ static void flip_locked(void) {
         if (accepted == 1 || accepted % 600 == 0)
             rt_log("gfx progress: vkQueuePresentKHR accepted %llu images (last result %d)",
                    (unsigned long long)accepted, (int)r);
+        // DKB_WATCH_ADDR=<addr>[,<addr>...] (diagnostic): every 10th script frame from 3000 on, the first four words and
+        // the four at +0x1030 of each guest address as the CPU sees them, to tell an accumulation that grows from one
+        // that is reset every frame.
+        static int nwatch = -1;
+        static uint64_t watch[4];
+        if (nwatch < 0) {
+            int k = 0;
+            for (const char *e = getenv("DKB_WATCH_ADDR"); e && *e && k < 4;) {
+                char *q;
+                watch[k++] = strtoull(e, &q, 0);
+                if (q == e) break;
+                e = *q == ',' ? q + 1 : q;
+            }
+            nwatch = k;
+        }
+        uint64_t frame = __atomic_load_n(&gfx_counters.frames, __ATOMIC_RELAXED);
+        static uint64_t last_watch;
+        if (nwatch && frame >= 3000 && frame % 10 == 0 && frame != last_watch) {
+            last_watch = frame;
+            for (int i = 0; i < nwatch; i++) {
+                VkMemSpan sp;
+                if (!vk_mem_resolve(watch[i], 0x1040, &sp)) continue;
+                float f[4], t[4];
+                memcpy(f, (const void *)(uintptr_t)watch[i], 16);
+                memcpy(t, (const void *)(uintptr_t)(watch[i] + 0x1030), 16);
+                rt_log("watch frame %llu %#llx: %g %g %g %g | +0x1030: %g %g %g %g", (unsigned long long)frame,
+                       (unsigned long long)watch[i], f[0], f[1], f[2], f[3], t[0], t[1], t[2], t[3]);
+            }
+        }
     }
     vk_device_fault_report(r);
     if (r == VK_ERROR_OUT_OF_DATE_KHR || r == VK_SUBOPTIMAL_KHR) plat_xchg32(&g_dirty, 1);

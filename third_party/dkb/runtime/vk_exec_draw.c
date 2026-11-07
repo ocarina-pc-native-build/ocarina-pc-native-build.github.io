@@ -895,6 +895,31 @@ static void answers_for(VkExec *ex, int st, const uint8_t *ctl, uint32_t mask, G
     if (locked) vk_texture_unlock();
 }
 
+// DKB_SKIP_NATIVE=<hex>[,<hex>...]: a stage lowered from one of these NVN 2 shaders (the "native" hash of the
+// translator messages) counts as a failed translation, so its draws and dispatches are skipped. Diagnostic: which of
+// several shaders changes the image.
+static int skip_native(const uint8_t *code) {
+    static uint64_t list[32];
+    static int n = -1;
+    if (__atomic_load_n(&n, __ATOMIC_ACQUIRE) < 0) {
+        int k = 0;
+        const char *s = getenv("DKB_SKIP_NATIVE");
+        while (s && *s && k < 32) {
+            char *end;
+            uint64_t v = strtoull(s, &end, 16);
+            if (end == s) break;
+            list[k++] = v;
+            s = *end ? end + 1 : end;
+        }
+        if (k) rt_log("vk: DKB_SKIP_NATIVE skips %d native shaders", k);
+        __atomic_store_n(&n, k, __ATOMIC_RELEASE);
+    }
+    if (!n) return 0;
+    uint64_t o = nvn2_origin(code);
+    for (int i = 0; i < n; i++) if (list[i] == o) return 1;
+    return 0;
+}
+
 // *present: the program has this stage. Returns NULL when it has not or the translation failed. pending (graphics
 // stages, vk_pipeline_async_on): a shader not translated yet is queued and NULL returned with *pending = 1. await: a
 // shader queued earlier is waited for (gfx_shader_await) instead.
@@ -910,6 +935,7 @@ static const GfxShader *shader_for(VkExec *ex, int st, int *present, int *pendin
             __atomic_load_n(&gfx_counters.frames,__ATOMIC_RELAXED));
         return NULL;
     }
+    if (skip_native(code)) return NULL;
     GfxShaderAnswers a;
     uint64_t serial = ex->prog->serial;
     answers_for(ex, st, ctl, slot_mask_of(serial, st), &a);
@@ -947,6 +973,12 @@ static const GfxShader *shader_for(VkExec *ex, int st, int *present, int *pendin
             if (nseen < 1024) seen[nseen++] = (typeof(seen[0])){serial, st};
             rt_log("vk: stage %d of program %llu (native %016llx) failed to translate: its draws and dispatches are "
                    "skipped", st, (unsigned long long)serial, (unsigned long long)nvn2_origin(code));
+            // Its bound constant buffers (a program that reads pointers from a cbuf table with a register index,
+            // LDC.64 c[n][Rx], has no static storage candidate in the translator).
+            for (int b = 1; b < 18; b++) {
+                const p_bind_buf *u = &ex->ubo[st][b];
+                if (u->addr) rt_log("vk:   c%d = %#llx+%#llx", b, (unsigned long long)u->addr, (unsigned long long)u->size);
+            }
         }
     }
     else if (set) {   // in front, the least recently used way drops out
@@ -995,7 +1027,15 @@ static int bind_range(VkExec *ex, uint64_t addr, uint64_t size, uint64_t align, 
     if (sp.offset % align == 0) {
         VK_MEM_USE(sp);
         *out = (VkDescriptorBufferInfo){sp.buffer, sp.offset, n};
-        if (written) vk_mem_gpu_wrote(&sp, n), vk_usnap_drop(addr, n);
+        // DKB_GUARDED_WRITEBACK=0 (diagnostic): a guarded candidate's binding reaches to the end of its pool, so a
+        // written one sends that whole remainder from the mirror back to guest memory after the submission, over
+        // whatever the CPU wrote there meanwhile. This switch leaves guarded bindings out of the write-back.
+        static int guarded_wb = -1;
+        if (guarded_wb < 0) {
+            const char *e = getenv("DKB_GUARDED_WRITEBACK");
+            guarded_wb = !e || *e != '0';
+        }
+        if (written && (!direct_only || guarded_wb)) vk_mem_gpu_wrote(&sp, n), vk_usnap_drop(addr, n);
         count_use(sp.cls, use, n);
         VK_MEM_BOUND(sp);
         return 1;
@@ -1031,6 +1071,11 @@ void vk_c0_fill(uint8_t bank[VK_C0_BYTES], int stage, const p_bind_buf ssbo[16],
     if (stage == NVN_STAGE_CS && c0_lay) {
         if (!nvn2_c0_pack(bank, VK_C0_BYTES, c0_lay, c0_push, ssbo, ubo))
             rt_fatal("vk: invalid NVN 2 compute parameter-block layout");
+        // Driver head words 1-3: the dispatch's workgroup counts (gl_NumWorkGroups). Of the 127 compute shaders of a
+        // forest run, six read the head and only words 1, 1-2 or 1-3. The sky SH projection 499dbfd0721d2858 divides
+        // by (c0[1] * 32) * (c0[2] * 32) samples; with the head left zero that was 1/0, its SH coefficients turned
+        // NaN and the lit image white. An indirect dispatch copies its counts here on the GPU (op_dispatch_ind).
+        memcpy(bank + NVN2_C0_DISPATCH, dispatch, 12);
         return;
     }
     memset(bank, 0, VK_C0_BYTES);
@@ -1274,6 +1319,40 @@ static VkDescriptorBufferInfo ssbo_info(VkExec *ex, int st, const GfxShaderRes *
     if (guarded) up = guarded_storage_binding(ex, st, r), b = &up;
     else if (slot >= 0 && slot < 16) b = ubo ? &ex->ubo[st][slot] : &ex->ssbo[st][slot];
     else if (ubo_ptr_res(r)) up.addr = ubo_ptr(ex, st, r), b = &up;   // size 0: up to the end of the backing
+    // DKB_TRACE_ADDR=<addr>[,<addr>...]: log each storage binding whose resolved range covers one of these guest
+    // addresses (who can write an indirect record), once per program, stage, binding and candidate.
+    static int ntrace = -1;
+    static uint64_t trace_addr[8];
+    if (ntrace < 0) {
+        ntrace = 0;
+        for (const char *e = getenv("DKB_TRACE_ADDR"); e && *e && ntrace < 8;) {
+            char *q;
+            trace_addr[ntrace++] = strtoull(e, &q, 0);
+            e = *q == ',' ? q + 1 : q;
+            if (q == e && *q != ',') break;
+        }
+    }
+    for (int t = 0; b && t < ntrace; t++) {
+        uint64_t end = b->size ? b->addr + b->size : b->addr + 0x1000000;
+        if (b->addr > trace_addr[t] || trace_addr[t] >= end) continue;
+        static struct { uint64_t prog; int st, binding; uint32_t cand; } seen[256];
+        static unsigned nseen;
+        uint64_t prog = ex->prog ? ex->prog->serial : 0;
+        uint32_t cand = (uint32_t)r->cbuf_slot << 16 | (uint32_t)r->handle;
+        unsigned k = 0;
+        while (k < nseen && !(seen[k].prog == prog && seen[k].st == st && seen[k].binding == r->binding && seen[k].cand == cand)) k++;
+        if (k < nseen) break;
+        if (nseen < 256) seen[nseen++] = (typeof(seen[0])){prog, st, r->binding, cand};
+        const uint8_t *tctl, *tcode;
+        uint32_t tlen;
+        uint64_t native = ex->prog && find_stage(ex->prog, st, &tctl, &tcode, &tlen) ? nvn2_origin(tcode) : 0;
+        rt_log("trace: %#llx is in %s storage binding %u (c%d+%#x) of program %llu stage %d (native %016llx): %#llx+%#llx%s, frame %llu",
+               (unsigned long long)trace_addr[t], guarded ? "guarded" : "plain", (unsigned)r->binding, r->cbuf_slot,
+               (unsigned)r->handle * 4, (unsigned long long)prog, st, (unsigned long long)native,
+               (unsigned long long)b->addr, (unsigned long long)b->size, written ? ", written" : "",
+               (unsigned long long)__atomic_load_n(&gfx_counters.frames, __ATOMIC_RELAXED));
+        break;
+    }
     if (b) {
         // vk_caps.c: shaders translated for sbuf_align address the buffer from its address rounded down to it.
         uint64_t lead = vk_caps.sbuf_align ? b->addr & (vk_caps.sbuf_align - 1) : 0;
@@ -1283,6 +1362,23 @@ static VkDescriptorBufferInfo ssbo_info(VkExec *ex, int st, const GfxShaderRes *
                 note_written(ex, b->addr - lead, bi.range);
                 const uint8_t *ctl, *code;
                 uint32_t len;
+                // DKB_TRACE_GUARDED_WRITES=1: each distinct written guarded binding once (what the write-back covers).
+                static int trace_gw = -1;
+                if (trace_gw < 0) trace_gw = getenv("DKB_TRACE_GUARDED_WRITES") != NULL;
+                if (trace_gw && guarded) {
+                    static struct { uint64_t addr, size; } seen[256];
+                    static unsigned nseen;
+                    unsigned k = 0;
+                    while (k < nseen && !(seen[k].addr == b->addr - lead && seen[k].size == bi.range)) k++;
+                    if (k == nseen && nseen < 256) {
+                        seen[nseen++] = (typeof(seen[0])){b->addr - lead, bi.range};
+                        uint64_t native = ex->prog && find_stage(ex->prog, st, &ctl, &code, &len) ? nvn2_origin(code) : 0;
+                        rt_log("vk: guarded written binding %#llx+%#llx (c%d+%#x) of native %016llx, frame %llu",
+                               (unsigned long long)(b->addr - lead), (unsigned long long)bi.range, r->cbuf_slot,
+                               (unsigned)r->handle * 4, (unsigned long long)native,
+                               (unsigned long long)__atomic_load_n(&gfx_counters.frames, __ATOMIC_RELAXED));
+                    }
+                }
                 if (vk_sync_noting() && ex->prog && find_stage(ex->prog, st, &ctl, &code, &len))
                     vk_sync_note_write(b->addr - lead, bi.range, nvn2_origin(code));
             }
@@ -2922,8 +3018,8 @@ static void op_dispatch(VkExec *ex, const p_dispatch *d) {
 }
 
 // DispatchComputeIndirect: vkCmdDispatchIndirect from the pool buffer. NVN 1 shaders read the group counts at c0+0x200,
-// so they are copied there on the GPU before dispatch. That NVN 1 offset can hold declared roots or resource tables
-// in NVN 2; leave its packed bank unchanged rather than overwrite it with the legacy copy.
+// NVN 2 shaders in the driver head at c0+0x4 (NVN2_C0_DISPATCH), so they are copied there on the GPU before dispatch.
+// In NVN 2, 0x200 can hold declared roots or resource tables, which the copy to the head leaves alone.
 static void op_dispatch_ind(VkExec *ex, const p_dispatch_ind *d) {
     if (!ex->prog) return warn_once(W_PROGRAM, "a dispatch without a bound program is skipped");
     VkMemSpan ip;
@@ -2953,8 +3049,8 @@ static void op_dispatch_ind(VkExec *ex, const p_dispatch_ind *d) {
     twin_dispatch = 1;
     bind_resources(ex, info);
     twin_dispatch = 0;
-    if (!c0_lay && B.c0_valid[2]) {   // the NVN 1 shader binds c0
-        VkBufferCopy cp = {ip.offset, B.c0_off[2] + 0x200, sizeof(VkDispatchIndirectCommand)};
+    if (B.c0_valid[2]) {   // the shader binds c0: NVN 1 reads the counts at 0x200, NVN 2 in its driver head
+        VkBufferCopy cp = {ip.offset, B.c0_off[2] + (c0_lay ? NVN2_C0_DISPATCH : 0x200), sizeof(VkDispatchIndirectCommand)};
         vkCmdCopyBuffer(ex->cb, ip.buffer, B.c0_buf[2], 1, &cp);
         ex->recorded++;
         vk_exec_barrier(ex);

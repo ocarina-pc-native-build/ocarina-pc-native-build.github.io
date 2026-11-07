@@ -47,6 +47,11 @@ GfxStats gfx_counters;
 static unsigned checks, dependencies;
 void rt_log(const char *fmt, ...) { va_list ap; va_start(ap, fmt); vfprintf(stderr, fmt, ap); va_end(ap); }
 void rt_fatal(const char *fmt, ...) { va_list ap; va_start(ap, fmt); vfprintf(stderr, fmt, ap); va_end(ap); exit(2); }
+// Format translation and caller names live in tex.c and the loader, which this fixture does not link; the registry
+// paths under test never reach them.
+int tex_vk_format(int nvn_format, TexVkFormat *out) { (void)nvn_format; (void)out; rt_fatal("unexpected tex_vk_format\n"); return 0; }
+int tex_vk_color_view_compatible(VkFormat image, VkFormat view) { (void)image; (void)view; rt_fatal("unexpected view check\n"); return 0; }
+const char *ldr_describe(uint64_t a, char *buf, int n) { snprintf(buf, (size_t)n, "%#llx", (unsigned long long)a); return buf; }
 #define CHECK(c) do { checks++; if (!(c)) { fprintf(stderr, "descriptor check line %d: %s\n", __LINE__, #c); return 1; } } while (0)
 // Deterministic single-thread primitives. Actual recursive-mutex/once implementations below enforce their nesting.
 uint32_t plat_thread_id(void) { return 1; }
