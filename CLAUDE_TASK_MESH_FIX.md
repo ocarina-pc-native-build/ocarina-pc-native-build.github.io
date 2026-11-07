@@ -232,6 +232,41 @@ Changes in the branch (`git diff 68f5d8e..fix/mesh-foliage`):
     - **Licensing:** these notes describe behaviour, so write our own code. Where a fix credits a project, name it in
       the commit and in `THIRD_PARTY_NOTICES.md` if code is reused.
 
+13. **Design for pointers loaded from memory (the 9 `No bounded cbuf-pair candidate` failures, including culling
+    shader `383a566958350efe`): how Lichii v13 does it.** Lichii's branch `nx2` was read for this. Port the behaviour
+    into our code; Lichii is GPL-3.0, so if code is copied into the GPL parts, keep the header, add a notices row and
+    name the commit.
+    - **Translator.** In Lichii, `shader_recompiler/ir_opt/global_memory_to_storage_buffer_pass.cpp`,
+      `NativePointerCandidates` covers a `LoadGlobal64` whose address is a tracked cbuf-pair *holder* plus an 8-aligned
+      immediate. The 64-bit value loaded there becomes a candidate with `indirect = holder_offset`.
+      - It follows phis and selects of up to 8 holders, and dynamic pointer arrays of up to 16 slots.
+      - It binds table candidates only for compute, within a budget of free storage slots.
+      - The general tracker itself never follows a loaded pointer back to its own cbuf.
+      - Our equivalent: in `GlobalToStorage.cs`, when the candidate search reaches a 64-bit global `Load` (or its
+        two 32-bit halves) at `(cbuf pair) + imm`, add a candidate `(slot, offset, indirect = imm)` instead of giving up.
+      - Make the `ResourceManager` slot key include `indirect`, and emit it in the storage-buffer reflection
+        (`tools/xlate/Program.cs`).
+    - **Runtime bind, one CPU hop.** In Lichii, `buffer_cache.h` `Bind*StorageBuffer`: `holder = Read<u64>(cbuf
+      address)`. A 0 holder binds the null binding. Otherwise it binds a range starting at `holder + indirect`, sized by
+      the memory layout:
+      - at most 64 MiB for graphics and 256 MiB for compute (PR #292)
+      - clamped to `maxStorageBufferRange`
+      - Ours: parse the new field in `gfx_shader.c`, and in `vk_exec_draw.c` `guarded_storage_binding` read the u64 at
+        the cbuf-pair address + `indirect` from guest memory and bind from there.
+      - The holder is often written by the GPU, so the CPU read must see completed GPU writes (`vk_sync` fence
+        rules, like report values).
+    - **Shader side.**
+      - Lichii reads the pointer again **in the shader**: an "indirect" descriptor's base address is loaded from
+        the bound table word.
+      - When several candidates exist, Lichii leaves the access global and routes it at run time to the bound buffer
+        whose base is closest at or below the address (`native_global_bounds`). It uses no buffer device address.
+      - For us: the guarded check must compare the access address with the base the shader itself loaded from the
+        holder, not with a cbuf word.
+    - **Range cap:** their exposure/fog probes read 104-122 MiB past a table pointer. A smaller cap returns 0, which
+      gives a pale wash or exposure stuck at 2^-10. Use at least 256 MiB for compute, bounded by the mapping.
+    - **Order:** do this after 0028/0029 have been measured. Then count the remaining `cbuf-pair` failures, check that
+      `383a566958350efe` runs, and look at exposure and fog again.
+
 Known and not fixed: an indirect mesh draw's group count is not clamped to `maxMeshWorkGroupCount[0]`/
 `maxTaskWorkGroupCount[0]`. A GPU-side clamp would need a small compute pass.
 
