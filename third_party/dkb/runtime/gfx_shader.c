@@ -1993,6 +1993,10 @@ static const GfxShader *translate_one(const Req *r, int stage, const uint8_t *co
     if (!ok) return fail("translator unavailable", hex);
     if (strncmp(reply, "ok ", 3)) {
         plat_file_delete(spv_path), plat_file_delete(res_path);
+        // The NVN 2 stage the lowered code came from (0 for an NVN 1 stage), so a blocked draw or dispatch, which the
+        // frame dump names by that hash, can be matched to the translator's reason below.
+        rt_log("gfx_shader: translation of native stage %016llx (%s) failed, key %s",
+               (unsigned long long)nvn2_origin(code), r->stage_name, hex);
         return fail(reply, hex);
     }
     plat_file_flush(spv_path), plat_file_flush(res_path);   // the translator wrote them; on disk before use or rename

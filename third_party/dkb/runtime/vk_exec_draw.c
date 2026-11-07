@@ -935,8 +935,19 @@ static const GfxShader *shader_for(VkExec *ex, int st, int *present, int *pendin
                                                            : gfx_shader_get(gs, ctl, code, len, NULL, &a);
     if (pending && *pending) return NULL;
     if (s) slot_mask_learn(serial, st, s);
-    if (!s) warn_once(W_SHADER, "a stage %d shader of program %llu failed to translate: draws with it are skipped", st,
-                      (unsigned long long)serial);
+    if (!s) {
+        // Every program and stage once (not only the first of the run), with the NVN 2 stage the code came from, so
+        // each skipped draw or dispatch can be matched to its translator message (gfx_shader.c translate_one).
+        static struct { uint64_t serial; int st; } seen[1024];
+        static unsigned nseen;
+        unsigned k = 0;
+        while (k < nseen && !(seen[k].serial == serial && seen[k].st == st)) k++;
+        if (k == nseen) {
+            if (nseen < 1024) seen[nseen++] = (typeof(seen[0])){serial, st};
+            rt_log("vk: stage %d of program %llu (native %016llx) failed to translate: its draws and dispatches are "
+                   "skipped", st, (unsigned long long)serial, (unsigned long long)nvn2_origin(code));
+        }
+    }
     else if (set) {   // in front, the least recently used way drops out
         memmove(&set[1], &set[0], (SHADER_WAYS - 1) * sizeof *set);
         set[0] = (ShaderEnt){.serial = serial, .stage = st, .used = 1, .a = a, .s = s};
@@ -2966,6 +2977,47 @@ static void mesh_skip(VkExec *ex, const p_draw_mesh *draw, const char *why) {
 }
 
 // Native mesh dispatches (with or without a task stage) share the ordinary render pass and descriptor machinery.
+// DKB_MESH_TRACE_INDIRECT: the group count an indirect mesh draw actually uses. The record is read on the GPU after the
+// conversion above, so the culling dispatches earlier in the same submission have written it (a CPU read at recording
+// time sees the value before them). Up to 64 draws per run, each logged once its submission completes.
+typedef struct { uint64_t native, addr; VkBuffer buf; VmaAllocation alloc; const uint32_t *map; } MeshTrace;
+
+static void mesh_trace_done(void *arg) {   // completion thread
+    MeshTrace *t = arg;
+    rt_log("mesh: indirect native %016llx record %#llx on the GPU: groups %u %u %u, first %u", (unsigned long long)t->native,
+           (unsigned long long)t->addr, t->map[0], t->map[1], t->map[2], t->map[3]);
+    vmaDestroyBuffer(vk_ctx()->vma, t->buf, t->alloc);
+    free(t);
+}
+
+static void mesh_trace_gpu(VkExec *ex, uint64_t native, uint64_t addr, VkBuffer src, VkDeviceSize off) {
+    static unsigned traced;
+    static long long from = -1;   // DKB_MESH_TRACE_FROM: first frame traced (default 0)
+    if (from < 0) { const char *e = getenv("DKB_MESH_TRACE_FROM"); from = e ? atoll(e) : 0; }
+    if (traced >= 64 || (long long)__atomic_load_n(&gfx_counters.frames, __ATOMIC_RELAXED) < from) return;
+    MeshTrace *t = calloc(1, sizeof *t);
+    if (!t) return;
+    VkBufferCreateInfo bi = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = 16, .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT};
+    VmaAllocationCreateInfo ai = {.usage = VMA_MEMORY_USAGE_AUTO,
+                                  .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT};
+    VmaAllocationInfo info;
+    if (vmaCreateBuffer(vk_ctx()->vma, &bi, &ai, &t->buf, &t->alloc, &info) != VK_SUCCESS || !info.pMappedData) {
+        free(t);
+        return;
+    }
+    traced++;
+    t->native = native, t->addr = addr, t->map = info.pMappedData;
+    VkBufferCopy c = {off, 0, 16};
+    vkCmdCopyBuffer(ex->cb, src, t->buf, 1, &c);
+    ex->recorded++;
+    VkMemoryBarrier2 mb = {.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2, .srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT,
+                           .srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT, .dstStageMask = VK_PIPELINE_STAGE_2_HOST_BIT,
+                           .dstAccessMask = VK_ACCESS_2_HOST_READ_BIT};
+    VkDependencyInfo di = {.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO, .memoryBarrierCount = 1, .pMemoryBarriers = &mb};
+    vkCmdPipelineBarrier2(ex->cb, &di);
+    vk_completion_add(ex->fence, mesh_trace_done, t);
+}
+
 static void op_draw_mesh(VkExec *ex, const p_draw_mesh *draw) {
     if (ex->render_disabled) return;
     const uint8_t *ctl, *code; uint32_t len;
@@ -3027,6 +3079,7 @@ static void op_draw_mesh(VkExec *ex, const p_draw_mesh *draw) {
         vkCmdCopyBuffer(ex->cb,source.buffer,buf,2,copy);ex->recorded++;
         vk_exec_barrier(ex);
         mesh_arguments=(VkDescriptorBufferInfo){buf,off,16};
+        if(getenv("DKB_MESH_TRACE_INDIRECT")) mesh_trace_gpu(ex, nvn2_origin(code), draw->args[0], buf, off);
         VK_MEM_BOUND(source);vk_mem_count(source.cls,VK_MUSE_IND,8);
     }
     B.res_valid=0; // the wrapper's argument descriptor is draw-specific

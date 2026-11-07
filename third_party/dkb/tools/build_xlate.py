@@ -112,14 +112,20 @@ def prepare_sources(*, defined_float_minmax: bool = False) -> Path:
     shutil.copytree(VENDOR, src)
     for junk in list(src.glob("src/*/obj")) + list(src.glob("src/*/bin")):
         shutil.rmtree(junk)
+    # build/ lies inside this repository. There `git apply` takes the paths of a `diff --git` patch relative to the
+    # repository root, skips every file outside it with "Skipped patch" and still exits 0, so such patches were never
+    # applied while the plain unified diffs were. The ceiling keeps git from finding the repository, so every patch
+    # applies relative to BUILD; -v lets a skip that slips through anyway stop the build.
+    env = dict(os.environ, GIT_CEILING_DIRECTORIES=str(BUILD.parent))
     for patch in selected_patches(defined_float_minmax=defined_float_minmax):
-        # git apply works outside a repository when given a directory; --check first so a failure names the patch.
+        # --check first so a failure names the patch.
         for extra in (["--check"], []):
             r = subprocess.run(
-                ["git", "apply", *extra, "--whitespace=nowarn", "--directory", str(src.relative_to(BUILD)), str(patch)],
-                cwd=BUILD, capture_output=True, text=True,
+                ["git", "apply", "-v", *extra, "--whitespace=nowarn", "--directory", str(src.relative_to(BUILD)),
+                 str(patch)],
+                cwd=BUILD, capture_output=True, text=True, env=env,
             )
-            if r.returncode != 0:
+            if r.returncode != 0 or "Skipped patch" in r.stdout + r.stderr:
                 sys.exit(f"patch does not apply: {patch.name}\n{r.stdout}{r.stderr}")
         print(f"applied {patch.name}")
     return src

@@ -947,3 +947,58 @@ precedes the culling dispatches of the same submission, so the GPU-side group
 count is not yet known. Next: read the indirect records back after execution
 (`TOTK_DUMP_BUF` on the record address) to tell an empty cull result from a
 mesh output that produces no primitives.
+
+### Translator patches 0023-0027 were not applied; the crown culling (task point 10, 2026-11-07)
+
+`tools/build_xlate.py` applies the patches with `git apply --directory` from
+`build/xlate`, which lies inside this repository. There git takes the paths of a
+`diff --git` patch relative to the repository root, prints "Skipped patch" for
+every file outside it and exits 0. Patches 0001-0022 are plain unified diffs and
+applied; 0023-0027 carry `diff --git` headers and were silently left out of
+every translator built with git on the PATH (on this machine since the evening
+of 2026-11-06; before that a Python fallback applied them). The script now sets
+`GIT_CEILING_DIRECTORIES` so git does not find the repository, applies with `-v`
+and stops on any "Skipped patch". The patched tree then equals the same patches
+applied outside the repository.
+
+Consequences for the earlier entries: the `test2` runs since then had no 0023,
+0024, 0025, 0026 or 0027. Their image was not white because 0023 and 0024 were
+missing, not because 0026 fixed the store race. With all 27 patches the forest
+image is white again (8-bit screenshot mean 251), so 0024 (float RED through a
+CAS loop) still whitens it; 0026 does not prevent that. The lowering results of
+points 7-9 run in the runtime and are unaffected.
+
+With all patches the translation failures fall from 71 to 41: the unaligned
+loads (30) and non-32-bit atomics (20) are gone. The rest, with 0027's messages:
+32x `Storage candidates exceed the descriptor resource limit (N candidates;
+failed at cbuf slot S offset X)` with N from 19 to 103, and 9x `No bounded
+cbuf-pair candidate found for global operation (Load, GlobalMemory)`.
+
+The runtime now logs every failed translation with its NVN 2 stage
+(`gfx_shader: translation of native stage H (stage) failed, key K`) and every
+skipped program and stage (`vk: stage S of program P (native H) failed to
+translate`). The eight dispatches still blocked at the start of frame 3900:
+
+| Native stage | Program | Indirect args | Translator message |
+| --- | --- | --- | --- |
+| `383a566958350efe` | 13681 | - | no bounded cbuf pair (Load, GlobalMemory) |
+| `4247f1b4c3ce6cf3` | 13512 | `0x29bb8a000` | descriptor limit, 40 candidates, slot 6 +0x8E |
+| `6344c53d07706e30` | 13708 | `0x29bb4c010` | descriptor limit, 37 candidates, slot 3 +0x160 |
+| `3de6d86ec7e6720e` | 13709 | `0x2a18ce000` | descriptor limit, 103 candidates, slot 3 +0xC2 |
+| `abccf81b45c5eb50` | 13711 | `0x29bb8a010` | descriptor limit, 52 candidates, slot 5 +0xE8 |
+| `7650519f88e59b19` | 13712 | `0x29f9aa000` | descriptor limit, 55 candidates, slot 3 +0x58 |
+| `cb2e06ddfb9d7d27` | 13545 | `0x29bb4c020` | descriptor limit, 19 candidates, slot 3 +0x1A |
+| `f0fed2bbccae7bdc` | 13549 | `0x29bb8a020` | descriptor limit, 37 candidates, slot 3 +0x20 |
+
+`44511d69b52282ad` and `102f5b0abb0f1e63`, blocked before, now translate.
+
+`DKB_MESH_TRACE_INDIRECT` now reads each indirect mesh record back on the GPU
+after its conversion (after the culling dispatches of the same submission), up
+to 64 draws from host frame `DKB_MESH_TRACE_FROM`. `TOTK_DUMP_BUF` over the
+crown records gave nothing, since one snapshot must lie in one pool. From host
+frame 3880 all 64 traced indirect mesh draws read 0 groups on the GPU,
+including the crowns (`907e1e206a9b2c8d` at `0x29bc68000`, `10eff7e5af4f0329`
+at `0x29bc50000`, `be221d3fcf0326ab` at `0x29bd6c000`) and the leaves
+(`abc92fb8fa764c57`, `740d7951f6393207`). The crowns draw nothing because their
+group counts stay 0; the blocked culling dispatches above are the next target:
+a storage-candidate limit above the largest count (103) and the cbuf-pair load.
