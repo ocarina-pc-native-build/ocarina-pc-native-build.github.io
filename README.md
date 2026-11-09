@@ -1,20 +1,20 @@
-# Ocarina of Time — PC Native Build
+# Ocarina Reborn
 
-## Gameplay Update
+## Gameplay Update 02
 
-**[▶ Watch the full gameplay video — 4:07](https://ocarina-pc-native-build.github.io/#gameplay)**
+**[▶ Watch the new gameplay video — 2:36](https://ocarina-reborn.github.io/#gameplay)**
 
-[![Watch the latest gameplay video](gameplay-poster.jpg)](https://ocarina-pc-native-build.github.io/#gameplay)
+[![Watch the latest gameplay video](gameplay-02-poster.jpg)](https://ocarina-reborn.github.io/#gameplay)
 
-I’ve now tested a bit of actual gameplay. **As you can see, there are still graphical glitches, but gameplay runs smoothly overall in the sections I’ve tested so far.**
+Here is a new gameplay recording. **Since the last update I fixed a frame-rate problem in the forest scenes, so the tested sections now run at close to 60 fps.**
 
-The biggest issues remain **flickering, overexposure and other rendering errors**. I’m continuing to work on those fixes, but it’s encouraging to see the game running beyond the menus and into actual gameplay!
+There are still graphical glitches and rendering errors, and I’m continuing to work on them.
 
-[Open the MP4 video directly](https://ocarina-pc-native-build.github.io/gameplay.mp4)
+[Open the MP4 video directly](https://ocarina-reborn.github.io/gameplay-02.mp4) · [Previous gameplay update (4:07)](https://ocarina-reborn.github.io/#gameplay-01)
 
 ---
 
-![Ocarina of Time Native 2026 project artwork](project-artwork.png)
+![Ocarina Reborn title artwork](ocarina-reborn-artwork.jpg)
 
 ### Native Windows x64 recompilation · Switch 2 → PC
 
@@ -24,12 +24,12 @@ I’m working on a native Windows x64 recompilation of the Switch 2 version of *
 
 This project page documents my current development progress and the next steps. **There is no playable release yet.**
 
-**Project website:** [ocarina-pc-native-build.github.io](https://ocarina-pc-native-build.github.io/)  
+**Project website:** [ocarina-reborn.github.io](https://ocarina-reborn.github.io/)  
 **Discord:** [Join our Discord](https://discord.gg/vDPAcc6JnY)  
 **Maintainer:**  https://github.com/HotDevilSauce
 **Status updated:** November 5, 2026  
 **Latest documented commit:** `e6125e6`  
-**Latest report:** [Gameplay Update](https://ocarina-pc-native-build.github.io/#gameplay)  
+**Latest report:** [Gameplay Update](https://ocarina-reborn.github.io/#gameplay)  
 **Earlier detailed report:** [Development Update #01](UPDATE-01.md)
 
 ## Earlier Development Update #01 — we’re now in-game!
@@ -70,7 +70,7 @@ This remains an **experimental development build**, not a finished playable rele
 
 ## Earlier development video
 
-[Watch the development video on the project website](https://ocarina-pc-native-build.github.io/#video) · [Open the MP4 recording](https://ocarina-pc-native-build.github.io/development-video.mp4) (14.7 MB)
+[Watch the development video on the project website](https://ocarina-reborn.github.io/#video) · [Open the MP4 recording](https://ocarina-reborn.github.io/development-video.mp4) (14.7 MB)
 
 Earlier startup/menu footage recorded November 5, 2026. This video does not show the new 3D milestone in Update #01. The banner above is project artwork.
 
