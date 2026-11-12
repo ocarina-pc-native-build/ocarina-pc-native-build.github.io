@@ -1,33 +1,42 @@
-# Publishing and maintenance
+# Website and release maintenance
 
-Website: https://ocarina-pc-native-build.github.io/
+Website: <https://ocarina-pc-native-build.github.io/>
 
-Repository: https://github.com/ocarina-pc-native-build/ocarina-pc-native-build.github.io
+Repository: <https://github.com/ocarina-pc-native-build/ocarina-pc-native-build.github.io>
 
-The website is static HTML and CSS. It requires no build step, dependencies, analytics service, or API keys.
+## Repository contents
 
-## GitHub Pages
+The `main` branch contains the static GitHub Pages website and current project information:
 
-1. Place this package in the root of `ocarina-pc-native-build/ocarina-pc-native-build.github.io`.
-2. In the repository, open **Settings → Pages**.
-3. Choose **Deploy from a branch**, select the branch containing these files and **/ (root)**, then save.
-4. Use the published URL shown by GitHub after deployment succeeds.
+- `index.html`: website markup, styles and JavaScript.
+- `assets/`: images used by the website.
+- `.nojekyll`: keeps the site served as static files.
+- `README.md`: current release, installation steps, features and support links.
+- `PUBLISHING.md`: maintenance notes.
 
-Reference: [GitHub Pages publishing documentation](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site).
+There is no build step for the website. Preserve the existing GitHub Pages configuration. Website edits are published from `main`.
 
-Keep `index.html`, `README.md`, `ROADMAP.md`, `CHANGELOG.md`, and `.nojekyll` together so that local links resolve.
+## Updating project information
 
-## Support link
+Keep the current version in the README consistent with the hero badge and latest-update section in `index.html`. Use the published release notes as the source for release changes. Link to GitHub Releases for the full release history and checksums.
 
-The website and README link to [HotDevilSauce on Buy Me a Coffee](https://buymeacoffee.com/hotdevilsauce). If the profile URL changes, update both files together.
+Before removing an asset, check all HTML, CSS, JavaScript and Markdown references, including `srcset` and CSS `url()` values. Keep the favicon and responsive image variants used by the website. Check relative links and fragment targets after edits.
 
-## Project media
+## Installer releases
 
-- `project-artwork.png`: artwork supplied by the maintainer, displayed on the website and in the README.
-- `development-video.mp4`: the original recording supplied by the maintainer, with player controls and no autoplay.
+The launcher checks this repository's `releases/latest` endpoint. The website also links to these releases.
 
-Keep both media files in the repository root. The website links directly to the MP4 as a playback fallback.
+- Keep the installer asset named **`Ocarina-Reborn-Alpha-Setup.exe`** so existing download and update clients continue to work.
+- Use a new three-part version for each installer release, a tag such as `v0.0.10` and a title such as `Ocarina Reborn v0.0.10`.
+- Include the uploaded installer's **SHA-256** in the release notes; the launcher uses it to verify the download.
+- Publish the installer release as the latest release, without the prerelease flag.
+- Mirror the same installer and notes to [misterrageguy-cyber/OoT2026-PC-Recomp](https://github.com/misterrageguy-cyber/OoT2026-PC-Recomp/releases), which supplies the RecompStore listing.
 
-## Update project progress
+Website or documentation cleanup does not require a new installer version. Keep existing releases, tags and download URLs intact when maintaining the site.
 
-Update the website and README together. Preserve the scope of each test, separate measured results from targets, and add new development milestones to the changelog. Only mark roadmap items complete after the corresponding functionality has been tested.
+## Community links
+
+- Discord: <https://discord.gg/vDPAcc6JnY>
+- Optional support: <https://buymeacoffee.com/hotdevilsauce>
+
+Update the website and README together if these links change. Do not add game files, Nintendo keys, private signing material or generated game binaries to this repository.

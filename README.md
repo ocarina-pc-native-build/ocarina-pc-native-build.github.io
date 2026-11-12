@@ -1,105 +1,53 @@
 # Ocarina Reborn
 
-## Gameplay Update 02
+A native Windows x64 version of **The Legend of Zelda: Ocarina of Time (Switch 2)**, built on your PC from your own `.nup` game file.
 
-**[▶ Watch the new gameplay video — 2:36](https://ocarina-reborn.github.io/#gameplay)**
+**Current release: v0.0.9 · November 11, 2026**
 
-[![Watch the latest gameplay video](gameplay-02-poster.jpg)](https://ocarina-reborn.github.io/#gameplay)
+[Download the latest release](https://github.com/ocarina-pc-native-build/ocarina-pc-native-build.github.io/releases/latest) · [Website](https://ocarina-pc-native-build.github.io/) · [Discord](https://discord.gg/vDPAcc6JnY)
 
-Here is a new gameplay recording. **Since the last update I fixed a frame-rate problem in the forest scenes, so the tested sections now run at close to 60 fps.**
+## Get started
 
-There are still graphical glitches and rendering errors, and I’m continuing to work on them.
+1. Download `Ocarina-Reborn-Alpha-Setup.exe` from the latest release and install it.
+2. Open Ocarina Reborn and read the development-build notice.
+3. Select your own supported `.nup` game file in the launcher and build the game.
+4. Connect and turn on your controller before starting the game, then launch it from the launcher.
 
-[Open the MP4 video directly](https://ocarina-reborn.github.io/gameplay-02.mp4) · [Previous gameplay update (4:07)](https://ocarina-reborn.github.io/#gameplay-01)
+You need Windows x64, a Vulkan-capable graphics card and your own supported game file. The installer does not include the game, ROMs or Nintendo keys. This is an early development release; compatibility, performance and stability vary by hardware and game area.
 
----
+## Included features
 
-![Ocarina Reborn title artwork](ocarina-reborn-artwork.jpg)
+- **Native rendering:** Vulkan graphics, resolution and display settings, widescreen and ultrawide support.
+- **Controller support:** Xbox, PlayStation and Switch controllers, with matching button prompts.
+- **Graphics options:** AMD FSR 3.1, FSR 4 on supported AMD hardware, and optional NVIDIA DLSS/DLAA through the launcher's separate setup.
+- **Launcher tools:** local game building, update checks, save management and settings.
+- **Performance tools:** quality, balanced and performance presets, FPS display and diagnostics.
+- **Gameplay options:** difficulty and enemy-damage adjustments, cheat tools and control settings.
 
-### Native Windows x64 recompilation · Switch 2 → PC
+NVIDIA's DLSS files are downloaded separately through the launcher after accepting NVIDIA's license.
 
-**Experimental build · Gameplay tested in some sections · Graphics fixes in progress**
+## What's new in v0.0.9
 
-I’m working on a native Windows x64 recompilation of the Switch 2 version of **Ocarina of Time**. The goal is to run the translated game code with a Windows runtime and a Vulkan graphics backend.
+The installer now includes the Python packages needed to generate controller-specific textures during the local game build. These textures cover ocarina notes, button letters and the controller shown in the pause menu.
 
-This project page documents my current development progress and the next steps. **There is no playable release yet.**
+**After installing this update, rebuild the game once in the launcher.** Turn your controller on before starting: the game selects the prompt set at startup. A controller connected later may leave Switch icons on screen until the game is restarted.
 
-**Project website:** [ocarina-reborn.github.io](https://ocarina-reborn.github.io/)  
-**Discord:** [Join our Discord](https://discord.gg/vDPAcc6JnY)  
-**Maintainer:**  https://github.com/HotDevilSauce
-**Status updated:** November 5, 2026  
-**Latest documented commit:** `e6125e6`  
-**Latest report:** [Gameplay Update](https://ocarina-reborn.github.io/#gameplay)  
-**Earlier detailed report:** [Development Update #01](UPDATE-01.md)
+[Full release notes and SHA-256](https://github.com/ocarina-pc-native-build/ocarina-pc-native-build.github.io/releases/tag/v0.0.9) · [All releases](https://github.com/ocarina-pc-native-build/ocarina-pc-native-build.github.io/releases)
 
-## Earlier Development Update #01 — we’re now in-game!
+## Feedback and troubleshooting
 
-**November 5, 2026 · Latest documented commit: `e6125e6`**
+For help or bug reports, join the [Discord](https://discord.gg/vDPAcc6JnY). Include your installed version, CPU/GPU, the steps that reproduce the issue and a fresh debug package created by the launcher. For controller-icon issues, also mention the controller model and whether you rebuilt the game after updating.
 
-The build has progressed beyond the menus and now reaches an actual **3D in-game scene**, including the Deku Tree and dialogue. Basic movement appears possible, but the rendering problems need attention before we can properly assess gameplay.
+## Project and credits
 
-**The next priority is fixing the overexposure, flickering and other graphical errors.**
+Ocarina Reborn combines its own launcher, installer, settings and interface customizations with the [Hookshot v2.1.0 engine](https://github.com/NotRexed/Hookshot/tree/v2.1.0), licensed under GPL-3.0. The engine's copyright and license notices are retained in the distribution.
 
-![Link in an early 3D in-game scene with heavy overexposure and a performance overlay](in-game-update-01.png)
+This repository hosts the public website, project information and installer releases. It does not contain the current launcher and engine build sources on `main`.
 
-*In-game development screenshot · November 5, 2026. Heavy overexposure is visible; graphics fixes are still in progress.*
+Ocarina Reborn is an unofficial community project and is not affiliated with Nintendo.
 
-### Latest recorded test results
+## Support
 
-Testing used an **AMD Radeon RX 7900 XTX**.
+[Buy Me a Coffee](https://buymeacoffee.com/hotdevilsauce) — optional support for development tools, testing and ongoing work. Support does not purchase a game, early access or a guaranteed feature.
 
-| Metric | Latest recorded result |
-| :--- | :--- |
-| Vulkan errors in the tested menu/options path | **0** |
-| Shader error reports | **111**, down from **464** |
-| Runtime checks passed | **15** |
-| Project tests passed | **17** |
-| GPU checks passed | **245** |
-
-The zero Vulkan error count applies to the tested menu/options path. Shader report counts do not necessarily represent distinct shaders or root causes.
-
-### Current focus and development status
-
-- **Graphics first:** correct lighting and colour output, eliminate flickering, and fix the shader and rendering errors affecting the visible scene. The overexposure and other rendering defects **are not fixed yet**.
-- **Gameplay and stability:** the latest follow-up reports smooth gameplay overall in the sections tested so far. Broader playability, longer-run stability and saving/loading still need verification.
-- **Earlier CPU crash:** the previously reported longer-run crash has **not been confirmed resolved**. The earlier report recorded a stop around frame **23,250** at `main+0x1661690`.
-
-This remains an **experimental development build**, not a finished playable release.
-
-[Read the full Development Update #01](UPDATE-01.md) for the runtime, AV1, PACGA and menu fixes · [Detailed roadmap](ROADMAP.md) · [Development changelog](CHANGELOG.md)
-
-## Earlier development video
-
-[Watch the development video on the project website](https://ocarina-reborn.github.io/#video) · [Open the MP4 recording](https://ocarina-reborn.github.io/development-video.mp4) (14.7 MB)
-
-Earlier startup/menu footage recorded November 5, 2026. This video does not show the new 3D milestone in Update #01. The banner above is project artwork.
-
-## Join the community
-
-[Join our Discord](https://discord.gg/vDPAcc6JnY) to discuss development progress, share feedback, and connect with other project followers.
-
-## Support the project
-
-I’m developing this project independently. Voluntary support helps cover **development tools, testing, and ongoing development work**, including investigating bugs and documenting progress.
-
-**[Buy Me a Coffee](https://buymeacoffee.com/hotdevilsauce)** — support independent development.
-
-Support is optional and does not purchase a game, early access, or a guaranteed release. Following the project and sharing useful feedback also help.
-
-## Development platform
-
-The target platform is **Windows x64 with Vulkan**. The reported graphics test was performed on a **Radeon RX 7900 XTX**. The intended development PC uses a Ryzen 7 9800X3D and 32 GB RAM.
-
-These details describe the development machine, **not minimum system requirements**. 1440p and 60 FPS are targets, not achieved or guaranteed performance figures.
-
-## Release
-
-This package contains only the project description and status website. It contains **no ROMs, Nintendo keys, extracted game assets, generated game code, or game binaries**. No download sources for these are provided here.
-
-A public source-code release, installer, and release date have not been announced. The local commit identifiers document the reported development state; this status site does not automatically include the associated code history.
-
-This is an unofficial project and is not affiliated with Nintendo.
-
----
-
-*All progress claims refer to local development reports. The latest gameplay report applies to the sections tested so far. Broader playability, longer-run stability and saving/loading still need verification.*
+For website and release maintenance, see [PUBLISHING.md](PUBLISHING.md).
