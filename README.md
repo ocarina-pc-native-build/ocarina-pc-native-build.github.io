@@ -2,7 +2,7 @@
 
 A native Windows x64 version of **The Legend of Zelda: Ocarina of Time (Switch 2)**, built on your PC from your own `.nup` game file.
 
-**Current release: v0.0.9 · November 11, 2026**
+**Current release: v1.0.0 · November 12, 2026**
 
 [Download the latest release](https://github.com/ocarina-pc-native-build/ocarina-pc-native-build.github.io/releases/latest) · [Website](https://ocarina-pc-native-build.github.io/) · [Discord](https://discord.gg/vDPAcc6JnY)
 
@@ -26,13 +26,16 @@ You need Windows x64, a Vulkan-capable graphics card and your own supported game
 
 NVIDIA's DLSS files are downloaded separately through the launcher after accepting NVIDIA's license.
 
-## What's new in v0.0.9
+## What's new in v1.0.0
 
-The installer now includes the Python packages needed to generate controller-specific textures during the local game build. These textures cover ocarina notes, button letters and the controller shown in the pause menu.
+- **Performance reports:** actual game FPS, frame-time spikes, renderer CPU/GPU times and VRAM usage. Reports exclude menu samples and distinguish frame generation from game frames.
+- **Revised presets:** CPU and RAM inform recommendations; the performance preset leaves frame generation off and supports lower output resolutions for integrated graphics.
+- **Experimental texture saving:** Off / 1024 / 512 for selected large texture arrays. Off by default; restart the game after changing it. Performance gains on low-end hardware are not yet verified.
+- **Reviewed adjustments:** the launcher explains suggested setting changes before applying them and backs up previous settings.
 
-**After installing this update, rebuild the game once in the launcher.** Turn your controller on before starting: the game selects the prompt set at startup. A controller connected later may leave Switch icons on screen until the game is restarted.
+**After installing this update, rebuild the game once in the launcher.** To try texture saving, start with 1024 in Settings > Memory and restart the game. Switch back to Off and restart if you notice visual issues.
 
-[Full release notes and SHA-256](https://github.com/ocarina-pc-native-build/ocarina-pc-native-build.github.io/releases/tag/v0.0.9) · [All releases](https://github.com/ocarina-pc-native-build/ocarina-pc-native-build.github.io/releases)
+[Full release notes and SHA-256](https://github.com/ocarina-pc-native-build/ocarina-pc-native-build.github.io/releases/tag/v1.0.0) · [All releases](https://github.com/ocarina-pc-native-build/ocarina-pc-native-build.github.io/releases)
 
 ## Feedback and troubleshooting
 
