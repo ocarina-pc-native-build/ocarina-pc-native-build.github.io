@@ -2,7 +2,7 @@
 
 A native Windows x64 version of **The Legend of Zelda: Ocarina of Time (Switch 2)**, built on your PC from your own `.nup` game file.
 
-**Current release: v1.0.0 · November 12, 2026**
+**Current release: v1.0.1 · November 12, 2026**
 
 [Download the latest release](https://github.com/ocarina-pc-native-build/ocarina-pc-native-build.github.io/releases/latest) · [Website](https://ocarina-pc-native-build.github.io/) · [Discord](https://discord.gg/vDPAcc6JnY)
 
@@ -26,16 +26,18 @@ You need Windows x64, a Vulkan-capable graphics card and your own supported game
 
 NVIDIA's DLSS files are downloaded separately through the launcher after accepting NVIDIA's license.
 
-## What's new in v1.0.0
+## What's new in v1.0.1 — Big Update
 
-- **Performance reports:** actual game FPS, frame-time spikes, renderer CPU/GPU times and VRAM usage. Reports exclude menu samples and distinguish frame generation from game frames.
-- **Revised presets:** CPU and RAM inform recommendations; the performance preset leaves frame generation off and supports lower output resolutions for integrated graphics.
-- **Experimental texture saving:** Off / 1024 / 512 for selected large texture arrays. Off by default; restart the game after changing it. Performance gains on low-end hardware are not yet verified.
-- **Reviewed adjustments:** the launcher explains suggested setting changes before applying them and backs up previous settings.
+- **Fixes:** Xbox, PlayStation and Steam Deck button icons are generated again; all 16 game languages can be selected (incl. Português (Brasil)); the launcher's enemy damage applies with the debug tools on; out-of-memory crashes are softened (the game waits for Windows to grow the page file, and the launcher explains the fix).
+- **Lower-end PCs (Settings > Memory):** RAM guard (on by default), largest-texture limit (1024 for 4-6 GB cards), low-spec mode and compact video memory (test).
+- **Reborn Auto:** measure a short route, review a suggestion, then compare a second run. **Prepare shaders** rebuilds the shader cache without rebuilding the game.
+- **Reborn look:** six colour grades in F1 > Graphics or the launcher (not with HDR).
+- **Gameplay:** One-hit mode (Settings > Difficulty) and a Speedrun timer (F1 > Gameplay).
+- **Mods:** a Mods page in the launcher to turn RomFS mods on and off and add them from a ZIP or folder.
 
-**After installing this update, rebuild the game once in the launcher.** To try texture saving, start with 1024 in Settings > Memory and restart the game. Switch back to Off and restart if you notice visual issues.
+**The launcher rebuilds the game once after installing this update** (about 5 minutes on our test PC). The low-end options still need testing on weaker hardware; no FPS gains are promised.
 
-[Full release notes and SHA-256](https://github.com/ocarina-pc-native-build/ocarina-pc-native-build.github.io/releases/tag/v1.0.0) · [All releases](https://github.com/ocarina-pc-native-build/ocarina-pc-native-build.github.io/releases)
+[Full release notes and SHA-256](https://github.com/ocarina-pc-native-build/ocarina-pc-native-build.github.io/releases/tag/v1.0.1) · [All releases](https://github.com/ocarina-pc-native-build/ocarina-pc-native-build.github.io/releases)
 
 ## Feedback and troubleshooting
 
