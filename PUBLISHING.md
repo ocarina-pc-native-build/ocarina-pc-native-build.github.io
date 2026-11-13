@@ -1,44 +1,15 @@
-> Public downloads are paused after the distribution review. Old release links and checksums below are historical; do not re-upload previous installers or media. Use the current main source and its distribution guard.
+# Publishing Ocarina Reborn
 
-# Website and release maintenance
+The launcher checks `https://api.github.com/repos/ocarina-pc-native-build/ocarina-pc-native-build.github.io/releases/latest`. Preserve that repository and the exact asset name `Ocarina-Reborn-Alpha-Setup.exe` so existing installations can update.
 
-Website: <https://ocarina-pc-native-build.github.io/>
+1. Increase the numeric version in `tools/alpha/VERSION` (v1.0.6 follows v1.0.5); keep build-info and installer resources consistent.
+2. Build a fresh installer from the cleaned source. Both staging recipes must pass the distribution guard. Keep the installer AppId and per-user installation path unchanged.
+3. Run the project tests, native build/smoke checks and upgrade checks. Verify no game files, private keys, bundled recordings or unverified project media enter the source archive or installer.
+4. Publish the corresponding launcher/engine/build source and source archive. Tag that source commit in both the source repository and the website repository (source/vX.Y.Z branch); the release tag must identify actual project source, not only website files.
+5. Create draft releases in BOTH repositories. Upload the installer, its SHA-256 text file, the source ZIP and its SHA-256 file. Verify uploaded sizes and SHA-256 digests.
+6. Keep exactly one 64-character lowercase checksum in the release body: the installer's SHA-256. Old launchers read the first such value. Source hashes belong in the separate checksum file.
+7. Publish as a stable, non-prerelease release and mark it latest. Update the website and confirm the previous launcher offers the new version and verifies the same installer checksum.
 
-Repository: <https://github.com/ocarina-pc-native-build/ocarina-pc-native-build.github.io>
+The source repository is `misterrageguy-cyber/OoT2026-PC-Recomp`. The update/website repository is `ocarina-pc-native-build/ocarina-pc-native-build.github.io`. Never push to unrelated remotes.
 
-## Repository contents
-
-The `main` branch contains the static GitHub Pages website and current project information:
-
-- `index.html`: website markup, styles and JavaScript.
-- `assets/`: images used by the website.
-- `.nojekyll`: keeps the site served as static files.
-- `README.md`: current release, installation steps, features and support links.
-- `PUBLISHING.md`: maintenance notes.
-
-There is no build step for the website. Preserve the existing GitHub Pages configuration. Website edits are published from `main`.
-
-## Updating project information
-
-Keep the current version in the README consistent with the hero badge and latest-update section in `index.html`. Use the published release notes as the source for release changes. Link to GitHub Releases for the full release history and checksums.
-
-Before removing an asset, check all HTML, CSS, JavaScript and Markdown references, including `srcset` and CSS `url()` values. Keep the favicon and responsive image variants used by the website. Check relative links and fragment targets after edits.
-
-## Installer releases
-
-The launcher checks this repository's `releases/latest` endpoint. The website also links to these releases.
-
-- Keep the installer asset named **`Ocarina-Reborn-Alpha-Setup.exe`** so existing download and update clients continue to work.
-- Use a new three-part version for each installer release, a tag such as `v0.0.10` and a title such as `Ocarina Reborn v0.0.10`.
-- Include the uploaded installer's **SHA-256** in the release notes; the launcher uses it to verify the download.
-- Publish the installer release as the latest release, without the prerelease flag.
-- Mirror the same installer and notes to [misterrageguy-cyber/OoT2026-PC-Recomp](https://github.com/misterrageguy-cyber/OoT2026-PC-Recomp/releases), which supplies the RecompStore listing.
-
-Website or documentation cleanup does not require a new installer version. Keep existing releases, tags and download URLs intact when maintaining the site.
-
-## Community links
-
-- Discord: <https://discord.gg/vDPAcc6JnY>
-- Optional support: <https://buymeacoffee.com/hotdevilsauce>
-
-Update the website and README together if these links change. Do not add game files, Nintendo keys, private signing material or generated game binaries to this repository.
+Older releases withdrawn during the media cleanup remain withdrawn. Do not republish old installers, restore old assets or merge history from pre-cleanup clones. User game files, saves, settings and local imports stay outside the installer and public source.

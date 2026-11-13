@@ -1,11 +1,9 @@
-# Ocarina Reborn
+# Ocarina Reborn website
 
-Public installer downloads are temporarily paused during a distribution cleanup. Bundled voice recordings and media with unverified provenance have been withdrawn.
+Static website with original project artwork and links to the v1.0.6 installer, project source and upstream credits.
 
-[Website](https://ocarina-pc-native-build.github.io/) · [Project source](https://github.com/misterrageguy-cyber/OoT2026-PC-Recomp) · [Credits and licenses](CREDITS.md)
+Website: https://ocarina-pc-native-build.github.io/
 
-The engine, renderer and build pipeline are based on Hookshot by NotRexed and its contributors (GPL-3.0-or-later). Original copyright and license notices are preserved. No game files or keys are provided.
+Project source: https://github.com/misterrageguy-cyber/OoT2026-PC-Recomp
 
-This website uses an original geometric SVG symbol, CSS and system fonts. Previous artwork has been removed.
-
-Existing installations are unaffected by the download pause. There is currently no public installer; status updates will appear on the website.
+Existing launchers use this repository's latest stable GitHub release. Preserve the repository and `Ocarina-Reborn-Alpha-Setup.exe` asset name. See PUBLISHING.md for release checks. Older media-bearing releases remain withdrawn.
