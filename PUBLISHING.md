@@ -1,3 +1,5 @@
+> Public downloads are paused after the distribution review. Old release links and checksums below are historical; do not re-upload previous installers or media. Use the current main source and its distribution guard.
+
 # Website and release maintenance
 
 Website: <https://ocarina-pc-native-build.github.io/>

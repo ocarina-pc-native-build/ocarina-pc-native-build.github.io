@@ -1,3 +1,5 @@
+> Public downloads are paused after the distribution review. Old release links and checksums below are historical; do not re-upload previous installers or media. Use the current main source and its distribution guard.
+
 # Source & credits
 
 Ocarina Reborn builds on **[Hookshot](https://github.com/NotRexed/Hookshot), created by NotRexed and its contributors**. Hookshot provides the native recompilation engine, console runtime, Vulkan renderer and game-build pipeline. Credit for that foundation belongs to the Hookshot team and its upstream contributors.
