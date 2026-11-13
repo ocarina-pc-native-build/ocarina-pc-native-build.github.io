@@ -4,13 +4,13 @@
 
 A native Windows x64 version of **The Legend of Zelda: Ocarina of Time (Switch 2)**, built on your PC from your own `.nup` game file.
 
-**Current release: v1.0.3 · November 13, 2026**
+**Current release: v1.0.4 · November 13, 2026**
 
 [Download the latest release](https://github.com/ocarina-pc-native-build/ocarina-pc-native-build.github.io/releases/latest) · [Website](https://ocarina-pc-native-build.github.io/) · [Discord](https://discord.gg/vDPAcc6JnY)
 
 ## Get started
 
-The **engine, builder tools and launcher source** are public: [Ocarina Reborn source repository](https://github.com/misterrageguy-cyber/OoT2026-PC-Recomp), [build instructions](https://github.com/misterrageguy-cyber/OoT2026-PC-Recomp/blob/main/BUILDING.md) and [v1.0.3 source on this repository](https://github.com/ocarina-pc-native-build/ocarina-pc-native-build.github.io/tree/source/v1.0.3). This repository's `main` branch hosts the website.
+The **engine, builder tools and launcher source** are public: [Ocarina Reborn source repository](https://github.com/misterrageguy-cyber/OoT2026-PC-Recomp), [build instructions](https://github.com/misterrageguy-cyber/OoT2026-PC-Recomp/blob/main/BUILDING.md) and [v1.0.4 source on this repository](https://github.com/ocarina-pc-native-build/ocarina-pc-native-build.github.io/tree/source/v1.0.4). This repository's `main` branch hosts the website.
 
 1. Download `Ocarina-Reborn-Alpha-Setup.exe` from the latest release and install it.
 2. Open Ocarina Reborn and read the development-build notice.
@@ -30,18 +30,16 @@ You need Windows x64, a Vulkan-capable graphics card and your own supported game
 
 NVIDIA's DLSS files are downloaded separately through the launcher after accepting NVIDIA's license.
 
-## What's new in v1.0.3
+## What's new in v1.0.4
 
-- **Included classic Link voices:** in Settings > Audio, choose Default or Classic (N64) independently for Young and Adult Link, then save and restart. Preparation is automatic; no separate voice download or import is needed. Dedicated cutscene voices remain unchanged.
-- **Classic counters (N64):** a bottom-left rupee counter after loading a save, with pickup counters above Link hidden.
-- **Graphics:** FXAA, view distance, grass density and shadow distance.
-- **Engine v2.2.0-rc.1:** expanded FPS/frame-time displays, camera and control options, V-Sync Auto/On/Off, FSR 4 with native HDR and multiple engine fixes.
-- **Stability:** stronger physical-RAM/VRAM protection, an automatic texture-memory limit of 40% of RAM and Compute mesh shaders on AMD RX 6000 cards.
-- **Fixes:** fairy revivals no longer increase the death counter; localized startup text, corrected presets and accessible settings categories.
+- **Memory protection:** an emergency reserve remains active, Auto texture memory stays capped, and cache growth waits after memory pressure.
+- **Diagnostics:** Windows memory exhaustion is reported even when average FPS is good; Reborn Auto can recommend Strong RAM protection.
+- **Graphics:** upstream Hookshot light-table patch for shadow-map selection on water and glossy floors (YakuzaFanA, PR #3047).
+- **Performance:** preset resets scene detail and the 60 FPS cap; CPU-bound advice targets scene settings instead of resolution.
 
-**Updating from 1.0.2 rebuilds the game once for the new engine**, with updated shaders prepared on first launch. Saves and settings stay. Selecting a classic voice only prepares its audio files and does not rebuild the engine or shaders.
+Update over the existing installation. Game data and saves stay; updated components and the shader cache rebuild once. 75 tests and a full renderer build passed. Long-session stability and visual results still require in-game confirmation.
 
-[Full release notes and SHA-256](https://github.com/ocarina-pc-native-build/ocarina-pc-native-build.github.io/releases/tag/v1.0.3) · [All releases](https://github.com/ocarina-pc-native-build/ocarina-pc-native-build.github.io/releases)
+[Full release notes and SHA-256](https://github.com/ocarina-pc-native-build/ocarina-pc-native-build.github.io/releases/tag/v1.0.4) · [All releases](https://github.com/ocarina-pc-native-build/ocarina-pc-native-build.github.io/releases)
 
 ## Feedback and troubleshooting
 
