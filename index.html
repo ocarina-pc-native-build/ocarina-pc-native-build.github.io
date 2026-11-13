@@ -116,6 +116,7 @@ h2{font-family:Cinzel,Georgia,serif;font-size:clamp(30px,3.4vw,52px);line-height
 .update .more{margin-top:20px;display:flex;gap:12px;flex-wrap:wrap}
 
 /* support */
+#source .update{grid-template-columns:minmax(0,1fr)}
 #support{text-align:center;background:radial-gradient(ellipse 60% 70% at 50% 40%,rgba(244,200,74,.12),transparent 70%),radial-gradient(ellipse 80% 60% at 50% 60%,rgba(47,123,255,.12),transparent 70%)}
 .big-triforce{position:absolute;left:50%;top:50%;width:min(620px,80vw);transform:translate(-50%,-50%);opacity:.07;z-index:-1;filter:blur(1px)}
 .support-btns{display:flex;flex-wrap:wrap;justify-content:center;gap:14px;margin-top:30px}
@@ -164,7 +165,7 @@ footer nav{display:flex;gap:20px;flex-wrap:wrap}footer a{color:var(--sub);text-d
   <div class="wrap">
     <a class="brand" href="#top"><img src="assets/ocarina-560.webp" width="560" height="423" alt=""><span>Ocarina Reborn</span></a>
     <nav class="links" id="links" aria-label="Main navigation">
-      <a href="#top" class="on">Home</a><a href="#features">Features</a><a href="#updates">Updates</a><a href="#support">Community</a>
+      <a href="#top" class="on">Home</a><a href="#features">Features</a><a href="#updates">Updates</a><a href="#source">Source &amp; Credits</a><a href="#support">Community</a>
     </nav>
     <div class="nav-cta">
       <a class="btn small" href="https://discord.gg/vDPAcc6JnY" aria-label="Discord"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M19.6 5.3A16.6 16.6 0 0 0 15.5 4l-.5 1a15 15 0 0 0-6 0l-.5-1a16.6 16.6 0 0 0-4.1 1.3C1.8 9.2 1.1 13 1.4 16.7a16.8 16.8 0 0 0 5 2.6l1.1-1.7a11 11 0 0 1-1.7-.8l.4-.3a12 12 0 0 0 11.6 0l.4.3-1.7.8 1.1 1.7a16.7 16.7 0 0 0 5-2.6c.4-4.3-.6-8-3-11.4ZM8.9 14.4c-1 0-1.8-.9-1.8-2s.8-2 1.8-2 1.8.9 1.8 2-.8 2-1.8 2Zm6.2 0c-1 0-1.8-.9-1.8-2s.8-2 1.8-2 1.8.9 1.8 2-.8 2-1.8 2Z"/></svg>Discord</a>
@@ -241,6 +242,29 @@ footer nav{display:flex;gap:20px;flex-wrap:wrap}footer a{color:var(--sub);text-d
 </section>
 
 <!-- SUPPORT: a dark hall lit by the Triforce -->
+<section id="source" aria-labelledby="source-h">
+  <div class="wrap">
+    <div class="head center">
+      <p class="kicker">Source &amp; Credits</p>
+      <h2 id="source-h">Built on Hookshot</h2>
+      <p class="lead">Ocarina Reborn uses <a href="https://github.com/NotRexed/Hookshot">Hookshot by NotRexed and its contributors</a> for the recompilation engine, Vulkan renderer and game-build pipeline. Thank you to the Hookshot team and its upstream contributors.</p>
+    </div>
+    <div class="panel update">
+      <div>
+        <h3>Open project source</h3>
+        <p class="lead">Our v1.0.3 release is based on Hookshot v2.2.0-rc.1 under GPL-3.0-or-later. Ocarina Reborn adds its own launcher, installer, settings and custom changes. This is an independently maintained project, not an official Hookshot release.</p>
+        <div class="more">
+          <a class="btn small" href="https://github.com/misterrageguy-cyber/OoT2026-PC-Recomp/tree/main/engine">Engine &amp; renderer</a>
+          <a class="btn small" href="https://github.com/misterrageguy-cyber/OoT2026-PC-Recomp/tree/main/engine/nx2">Game-build tools</a>
+          <a class="btn small" href="https://github.com/misterrageguy-cyber/OoT2026-PC-Recomp/tree/main/tools/alpha/launcher">Our launcher</a>
+          <a class="btn small" href="https://github.com/misterrageguy-cyber/OoT2026-PC-Recomp/blob/main/CREDITS.md">All credits &amp; licenses</a>
+        </div>
+        <p><a href="https://github.com/NotRexed/Hookshot/tree/v2.2.0-rc.1/builder">Original Hookshot Builder</a> · <a href="https://github.com/misterrageguy-cyber/OoT2026-PC-Recomp/blob/main/BUILDING.md">Build from source</a> · <a href="LICENSE-HOOKSHOT">Hookshot GPL license</a></p>
+      </div>
+    </div>
+  </div>
+</section>
+
 <section id="support" aria-labelledby="s-h">
   <svg class="big-triforce" viewBox="0 0 120 104" aria-hidden="true"><g fill="#f4c84a"><path d="M60 2 89 52H31Z"/><path d="M30 54 59 104H1Z"/><path d="M90 54 119 104H61Z"/></g></svg>
   <div class="wrap">
@@ -257,7 +281,7 @@ footer nav{display:flex;gap:20px;flex-wrap:wrap}footer a{color:var(--sub);text-d
 <footer>
   <div class="wrap">
     <span>Ocarina Reborn · An unofficial community project, not affiliated with Nintendo. No ROMs, keys or game files are provided.</span>
-    <nav aria-label="Footer"><a href="https://github.com/ocarina-pc-native-build/ocarina-pc-native-build.github.io/releases/latest">Download</a><a href="https://buymeacoffee.com/hotdevilsauce">Buy Me a Coffee</a><a href="https://discord.gg/vDPAcc6JnY">Discord</a><a href="https://github.com/ocarina-pc-native-build/ocarina-pc-native-build.github.io">GitHub</a></nav>
+    <nav aria-label="Footer"><a href="https://github.com/ocarina-pc-native-build/ocarina-pc-native-build.github.io/releases/latest">Download</a><a href="#source">Source &amp; Credits</a><a href="https://github.com/NotRexed/Hookshot">Hookshot</a><a href="https://buymeacoffee.com/hotdevilsauce">Buy Me a Coffee</a><a href="https://discord.gg/vDPAcc6JnY">Discord</a><a href="https://github.com/ocarina-pc-native-build/ocarina-pc-native-build.github.io">GitHub</a></nav>
   </div>
 </footer>
 
