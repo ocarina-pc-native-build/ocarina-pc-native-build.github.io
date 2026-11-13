@@ -2,7 +2,7 @@
 
 A native Windows x64 version of **The Legend of Zelda: Ocarina of Time (Switch 2)**, built on your PC from your own `.nup` game file.
 
-**Current release: v1.0.1 · November 12, 2026**
+**Current release: v1.0.3 · November 13, 2026**
 
 [Download the latest release](https://github.com/ocarina-pc-native-build/ocarina-pc-native-build.github.io/releases/latest) · [Website](https://ocarina-pc-native-build.github.io/) · [Discord](https://discord.gg/vDPAcc6JnY)
 
@@ -26,18 +26,18 @@ You need Windows x64, a Vulkan-capable graphics card and your own supported game
 
 NVIDIA's DLSS files are downloaded separately through the launcher after accepting NVIDIA's license.
 
-## What's new in v1.0.1 — Big Update
+## What's new in v1.0.3
 
-- **Fixes:** Xbox, PlayStation and Steam Deck button icons are generated again; all 16 game languages can be selected (incl. Português (Brasil)); the launcher's enemy damage applies with the debug tools on; out-of-memory crashes are softened (the game waits for Windows to grow the page file, and the launcher explains the fix).
-- **Lower-end PCs (Settings > Memory):** RAM guard (on by default), largest-texture limit (1024 for 4-6 GB cards), low-spec mode and compact video memory (test).
-- **Reborn Auto:** measure a short route, review a suggestion, then compare a second run. **Prepare shaders** rebuilds the shader cache without rebuilding the game.
-- **Reborn look:** six colour grades in F1 > Graphics or the launcher (not with HDR).
-- **Gameplay:** One-hit mode (Settings > Difficulty) and a Speedrun timer (F1 > Gameplay).
-- **Mods:** a Mods page in the launcher to turn RomFS mods on and off and add them from a ZIP or folder.
+- **Included classic Link voices:** in Settings > Audio, choose Default or Classic (N64) independently for Young and Adult Link, then save and restart. Preparation is automatic; no separate voice download or import is needed. Dedicated cutscene voices remain unchanged.
+- **Classic counters (N64):** a bottom-left rupee counter after loading a save, with pickup counters above Link hidden.
+- **Graphics:** FXAA, view distance, grass density and shadow distance.
+- **Engine v2.2.0-rc.1:** expanded FPS/frame-time displays, camera and control options, V-Sync Auto/On/Off, FSR 4 with native HDR and multiple engine fixes.
+- **Stability:** stronger physical-RAM/VRAM protection, an automatic texture-memory limit of 40% of RAM and Compute mesh shaders on AMD RX 6000 cards.
+- **Fixes:** fairy revivals no longer increase the death counter; localized startup text, corrected presets and accessible settings categories.
 
-**The launcher rebuilds the game once after installing this update** (about 5 minutes on our test PC). The low-end options still need testing on weaker hardware; no FPS gains are promised.
+**Updating from 1.0.2 rebuilds the game once for the new engine**, with updated shaders prepared on first launch. Saves and settings stay. Selecting a classic voice only prepares its audio files and does not rebuild the engine or shaders.
 
-[Full release notes and SHA-256](https://github.com/ocarina-pc-native-build/ocarina-pc-native-build.github.io/releases/tag/v1.0.1) · [All releases](https://github.com/ocarina-pc-native-build/ocarina-pc-native-build.github.io/releases)
+[Full release notes and SHA-256](https://github.com/ocarina-pc-native-build/ocarina-pc-native-build.github.io/releases/tag/v1.0.3) · [All releases](https://github.com/ocarina-pc-native-build/ocarina-pc-native-build.github.io/releases)
 
 ## Feedback and troubleshooting
 
@@ -45,7 +45,7 @@ For help or bug reports, join the [Discord](https://discord.gg/vDPAcc6JnY). Incl
 
 ## Project and credits
 
-Ocarina Reborn combines its own launcher, installer, settings and interface customizations with the [Hookshot v2.1.0 engine](https://github.com/NotRexed/Hookshot/tree/v2.1.0), licensed under GPL-3.0. The engine's copyright and license notices are retained in the distribution.
+Ocarina Reborn combines its own launcher, installer, settings and interface customizations with the [Hookshot v2.2.0-rc.1 engine](https://github.com/NotRexed/Hookshot/tree/v2.2.0-rc.1), licensed under GPL-3.0. The engine's copyright and license notices are retained in the distribution.
 
 This repository hosts the public website, project information and installer releases. It does not contain the current launcher and engine build sources on `main`.
 
