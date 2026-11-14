@@ -1,3 +1,4 @@
+import ast
 import sys
 import tempfile
 import unittest
@@ -20,6 +21,80 @@ def sample(*, frames=200, seconds=5, cpu=8, gpu=23, used=2, budget=4, known=True
 
 
 class Measurements(unittest.TestCase):
+    def test_auto_texture_memory_offers_relief_for_sustained_pressure(self):
+        lines = [sample(cpu=14, gpu=14, used=6.6, budget=6.7)] * 6
+        settings = {'texture_memory': 0, 'resolution': 1, 'quality_preset': 3,
+                    'volume': 75, 'key_a': '69,0'}
+        changes, _ = performance.suggest(performance.summarize(lines), settings,
+                                         performance.signature(settings), de=False)
+        self.assertEqual(changes, {'texture_memory': 1, 'quality_preset': 0})
+        with tempfile.TemporaryDirectory() as d:
+            game_settings.write(d, settings)
+            game_settings.write(d, changes)
+            saved = game_settings.read(d)
+            self.assertEqual(saved['texture_memory'], '1')
+            self.assertEqual((saved['resolution'], saved['volume'], saved['key_a']), ('1', '75', '69,0'))
+        self.assertTrue(any(kind == 'warn' and '90%' in text
+                            for kind, text in advisor.diagnose(lines, settings, de=False)))
+
+    def test_auto_memory_does_not_react_to_unknown_brief_or_excluded_pressure(self):
+        normal = sample(cpu=6, gpu=6)
+        cases = ([sample(cpu=6, gpu=6, used=3.9)] * 2 + [normal] * 4,
+                 [sample(cpu=6, gpu=6, used=8, known=False)] * 6,
+                 [normal] * 6 + [sample(used=8, menu=1)] * 6,
+                 [normal] * 6 + [sample(used=8, draws=1)] * 6)
+        for lines in cases:
+            s = performance.summarize(lines)
+            changes, _ = performance.suggest(s, {}, performance.signature({}))
+            self.assertNotIn('texture_memory', changes)
+            self.assertFalse(any('90%' in text for _, text in performance.describe(s, False)))
+
+    def test_cache_evidence_survives_launcher_session_filter(self):
+        # Exercise the actual production collector without starting its GUI/import side effects.
+        source = Path(__file__).resolve().parents[1] / 'launcher' / 'launcher.py'
+        tree = ast.parse(source.read_text(encoding='utf-8'))
+        nodes = [n for n in tree.body if
+                 (isinstance(n, ast.FunctionDef) and n.name == 'session_from_game_log') or
+                 (isinstance(n, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 'SESSION_KEEP' for t in n.targets))]
+        namespace = {'Path': Path, 'performance': performance}
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), str(source), 'exec'), namespace)
+        cache = ['[hos host] vk: pipeline cache C:/game/mkw_vk_pipelines.bin (1229749 KB)',
+                 '[hos host] vk: program cache C:/game/ocarina_reborn_programs.bin: 47866 program keys kept, 7582059 KB']
+        with tempfile.TemporaryDirectory() as d:
+            Path(d, 'ocarina_reborn_log.txt').write_text('\n'.join(cache + [sample()] * 6 +
+                ['[hos Presentation Thread] vk: batched submit 42 failed (-2)']), encoding='utf-8')
+            session = namespace['session_from_game_log'](d)
+        summary = performance.summarize(session)
+        self.assertEqual(summary['pipeline_cache_kb'], 1229749)
+        self.assertEqual(summary['program_cache_keys'], 47866)
+        self.assertEqual(summary['device_memory_errors'], 1)
+        self.assertTrue(any('existing shader/pipeline caches' in text
+                            for _, text in advisor.diagnose(session, de=False)))
+
+    def test_absent_empty_or_failed_cache_does_not_claim_cache_exists(self):
+        cache = ['vk: pipeline cache C:/game/mkw_vk_pipelines.bin (0 KB)',
+                 'vk: program cache C:/game/ocarina_reborn_programs.bin: another Ocarina Reborn is using it: this one runs without it',
+                 'vk: pipeline cache: 12 play files merged (33247 KB)',
+                 'vk: program cache C:/game/cache.bin: invalid program keys kept, 7582059 KB']
+        for lines in ([sample()] * 6, cache + [sample()] * 6):
+            summary = performance.summarize(lines)
+            self.assertEqual(summary['pipeline_cache_kb'], 0)
+            self.assertEqual(summary['program_cache_keys'], 0)
+            self.assertFalse(any('existing shader/pipeline caches' in text
+                                 for _, text in performance.describe(summary, False)))
+
+    def test_low_base_fps_framegen_advice_without_claiming_it_for_native_frames(self):
+        for fg in (0, 8):
+            desc = performance.describe(performance.summarize([sample(fg=fg)] * 6), False)
+            self.assertEqual(any('Turn frame generation off' in text for _, text in desc), bool(fg))
+
+    def test_virtual_driver_does_not_prove_application_is_active_or_shader_failure(self):
+        facts = {'gpus': [('Meta Virtual Monitor', None), ('NVIDIA GeForce RTX 3060 Ti', 8)]}
+        text = ' '.join(advisor.pc_warnings(facts, active_gpu='NVIDIA GeForce RTX 3060 Ti', de=False))
+        self.assertIn('If its application', text)
+        self.assertNotIn('is active', text)
+        self.assertNotIn('preparing the shaders', text)
+
     def test_device_memory_errors_are_not_host_memory_or_device_loss(self):
         lines = [sample()] * 6 + ['[hos Presentation Thread] vk: submit 92402 failed (-2)']
         s = performance.summarize(lines)

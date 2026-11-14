@@ -12,6 +12,8 @@ DETAIL = re.compile(r'stats2 seconds ([\d.]+) frames (\d+) p95 ([\d.]+) p99 ([\d
                     r'menu ([01]) complete ([01]) fg (\d+)')
 DRAW = re.compile(r'\| draws ([\d.]+)')
 PIPELINE = re.compile(r'new pipelines (\d+), waits [\d.]+ \(([\d.]+) ms\)')
+CACHE_PIPELINE = re.compile(r'vk: pipeline cache .+ \((\d+) KB\)')
+CACHE_PROGRAM = re.compile(r'vk: program cache .+: (\d+) program keys kept, (\d+) KB')
 DEFAULTS = dict(output_res='2048x1152', resolution=0, dlss=0, frame_generation=0, frame_rate_cap=0,
                 texture_memory=0, texture_saving=0, texture_detail=1, texture_filtering=0,
                 shader_threads=0, shader_cache=1, pipeline_precompile=1, soft_shadows=1,
@@ -83,6 +85,19 @@ def memory_advice(de=True):
             'Set RAM guard to Strong, close background programs and keep the Windows page file system-managed.')
 
 
+def cache_status(lines):
+    """Presence reported at startup, not a promise that every driver pipeline is reusable."""
+    result = dict(pipeline_cache_kb=0, program_cache_keys=0, program_cache_kb=0)
+    for line in lines:
+        pipeline, program = CACHE_PIPELINE.search(line), CACHE_PROGRAM.search(line)
+        if pipeline:
+            result['pipeline_cache_kb'] = max(result['pipeline_cache_kb'], int(pipeline[1]))
+        if program:
+            result['program_cache_keys'] = max(result['program_cache_keys'], int(program[1]))
+            result['program_cache_kb'] = max(result['program_cache_kb'], int(program[2]))
+    return result
+
+
 def summarize(lines):
     lines = list(lines)
     host_memory_events = memory_events(lines)
@@ -125,7 +140,7 @@ def summarize(lines):
     # loading/compilation pauses above are excluded, and no CPU model is used as a proxy for measured pressure.
     cpu_slow = sum(r['seconds'] for r in steady if r['fps'] < 55 and r['cpu'] >= 12 and
                    r['gpu'] > .1 and r['cpu'] > 1.2 * r['gpu'])
-    return dict(schema=2, **gpu_failures(lines), host_memory_events=host_memory_events, seconds=seconds, frames=int(frames), fps=frames / seconds,
+    return dict(schema=2, **gpu_failures(lines), **cache_status(lines), host_memory_events=host_memory_events, seconds=seconds, frames=int(frames), fps=frames / seconds,
                 p95_worst_window=max(r['p95'] for r in rows), p99_worst_window=max(r['p99'] for r in rows),
                 worst_ms=max(r['worst'] for r in rows), over50=int(sum(r['h50'] for r in rows)),
                 over100=int(sum(r['h100'] for r in rows)),
@@ -172,6 +187,24 @@ def describe(summary, de=True):
             'Sichtweite und Gras reduzieren; ein 60-FPS-Limit testen.',
             f"During {s['cpu_slow_seconds']:.0f} s below 55 fps, renderer CPU time was clearly higher than GPU time. "
             'Reduce view distance and grass; test a 60 fps limit.')))
+    if s.get('vram_pressure_seconds', 0) >= 15:
+        lines.insert(-1, ('warn', t(
+            f"Grafikspeicher über 90 % des gemeldeten Budgets für {s['vram_pressure_seconds']:.0f} s. "
+            'Das kann Ruckler verursachen. Einen kleineren Texturcache testen (auch bei Auto) und GPU-intensive Hintergrundprogramme schließen.',
+            f"Video memory exceeded 90% of the reported budget for {s['vram_pressure_seconds']:.0f} s. "
+            'This can cause stutter. Test a smaller texture cache (including when set to Auto) and close GPU-intensive background programs.')))
+    if s.get('frame_generation') and s['fps'] < 55:
+        lines.insert(-1, ('tip', t(
+            'Frame Generation war bei niedrigen echten Spiel-FPS aktiv. Hohe Faktoren können die echte Bildrate zusätzlich begrenzen. '
+            'Zum Vergleich Frame Generation ausschalten; mehr Zwischenbilder beheben die niedrige Basisbildrate nicht.',
+            'Frame generation was active with low actual game fps. High multipliers can further limit the base frame rate. '
+            'Turn frame generation off for comparison; more generated frames do not fix a low base frame rate.')))
+    if s.get('pipeline_cache_kb', 0) or s.get('program_cache_keys', 0):
+        lines.insert(-1, ('tip', t(
+            'Das Log meldet vorhandene Shader-/Pipeline-Caches. Nicht zum Beheben von FPS-Einbrüchen löschen: '
+            'neue Pipelines und Nachladen können trotzdem Ruckler verursachen.',
+            'The log reports existing shader/pipeline caches. Do not clear them to fix low fps: '
+            'new pipelines and asset loading can still cause stutter.')))
     return lines
 
 
@@ -243,9 +276,9 @@ def suggest(summary, current, measured_settings, de=True):
             reasons.append(t('Das bisherige FPS-Limit liegt über 60: zum Vergleich auf 60 begrenzen.',
                              'The current frame-rate limit is above 60: cap it at 60 for the comparison.'))
     if summary.get('device_memory_errors', 0) or summary['vram_pressure_seconds'] >= 15:
-        lower_budget = {'2': 1, '3': 2, '4': 3, '5': 4, '6': 5}
-        if summary.get('device_memory_errors', 0):
-            lower_budget['0'] = 1
+        # Auto also needs an actionable suggestion when the measured budget stays full.
+        # This is an upper limit; the renderer still enforces its lower hardware budget.
+        lower_budget = {'0': 1, '2': 1, '3': 2, '4': 3, '5': 4, '6': 5}
         if values['texture_memory'] in lower_budget:
             changes['texture_memory'] = lower_budget[values['texture_memory']]
             reasons.append(t('GPU-Speicherfehler oder anhaltend knappes Speicherbudget: kleineren Texturcache testen.',

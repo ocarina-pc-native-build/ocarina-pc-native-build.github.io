@@ -189,7 +189,9 @@ def session_from_game_log(game):
         for line in f.read_text(encoding='utf-8', errors='replace').splitlines():
             if gpu is None and ', Vulkan ' in line and 'vk: ' in line and 'device ' not in line:
                 gpu = line.split('vk: ', 1)[1].split(', Vulkan ')[0]
-            if any(k in line for k in SESSION_KEEP) or performance.HOST_MEMORY_ERROR.search(line):
+            if (any(k in line for k in SESSION_KEEP) or performance.HOST_MEMORY_ERROR.search(line) or
+                    performance.GPU_SUBMIT_ERROR.search(line) or performance.CACHE_PIPELINE.search(line) or
+                    performance.CACHE_PROGRAM.search(line)):
                 out.append(line.split('] ', 1)[-1] if line.startswith('[hos') else line)
     except OSError as e:
         return [f'game log not read: {e}']

@@ -228,14 +228,14 @@ def pc_warnings(facts, active_gpu=None, de=True):
                    'Only 16 GB of RAM: the game needs a lot of memory. Close other programs (browser, Discord), set Settings → '
                    'Memory → RAM guard to "Strong" and "Largest textures" to 1024, and let Windows manage the page file '
                    'automatically.'))
-    # (a virtual display driver, e.g. Virtual Desktop's monitor: it runs beside the game and costs CPU, and the build's
-    # shader step found no usable Vulkan with it: "no usable Vulkan here". RX 6600 tester, 2026-11-12)
+    # Adapter enumeration proves the driver is installed, not that its application is running
+    # or that shader preparation failed. Ask for a comparison only if it is in use.
     virtual = [n for n, _ in facts.get('gpus', []) if any(k in n.lower() for k in VIRTUAL)]
     if virtual:
-        w.append(T(f'„{virtual[0]}“ ist aktiv: Ein virtueller Monitor kostet CPU-Zeit und kann das Vorbereiten der Shader '
-                   f'stören. Beende das Programm dazu (z. B. Virtual Desktop) vor dem Bauen und Spielen.',
-                   f'"{virtual[0]}" is active: a virtual monitor costs CPU time and can disturb preparing the shaders. Quit '
-                   f'its program (e.g. Virtual Desktop) before building and playing.'))
+        w.append(T(f'Virtueller Bildschirmtreiber „{virtual[0]}“ erkannt. Falls das zugehörige Programm '
+                   f'(z. B. Virtual Desktop) läuft, teste zum Vergleich ohne dieses Programm.',
+                   f'Virtual display driver "{virtual[0]}" detected. If its application '
+                   f'(e.g. Virtual Desktop) is running, test with that application closed for comparison.'))
     dedicated = [n for n, _ in facts.get('gpus', []) if not is_integrated(n)]
     if active_gpu and is_integrated(active_gpu) and dedicated:
         w.append(T(f'Das Spiel lief auf „{active_gpu}“ statt auf „{dedicated[0]}“. Stell in Windows → Grafikeinstellungen '
