@@ -2,11 +2,11 @@
 
 The project website: **https://ocarina-pc-native-build.github.io/**
 
-**Current release: v1.0.7 · November 14, 2026**
+**Current release: v1.0.8 · November 14, 2026**
 
 [Download / Releases](https://github.com/ocarina-pc-native-build/ocarina-pc-native-build.github.io/releases/latest) · [Discord](https://discord.gg/vDPAcc6JnY)
 
-The website includes the forest background, feature cards, update section and community links. The current launcher and downloadable installer are v1.0.7, with restored Ocarina artwork, animated Navi and the previous build/loading-screen design.
+The website includes the forest background, feature cards, update section and community links. The current launcher and downloadable installer are v1.0.8, with photo mode, rupee debug tools, memory improvements and expanded diagnostics.
 
 ## Updating
 
@@ -14,12 +14,14 @@ Restart the launcher and click **Update**, then install over your existing insta
 
 ## Latest update
 
-- Restored Ocarina artwork and animated Navi in the launcher.
-- Restored the previous artwork on the build screen and the game's shader/pipeline loading screen.
-- Updated the website preview image and simplified its title to **Ocarina Reborn**.
-- No bundled voice recordings or launcher music. Your local imports, saves and settings stay.
+- Photo mode with a free camera, adjustable field of view and HUD-free PNG screenshots.
+- Add rupees or fill the current wallet in the Debug menu.
+- Reduced unused VRAM reservations and improved memory-related performance advice.
+- Frame Generation pauses during dialogue/cutscenes to help prevent text-box artifacts.
+- Detailed diagnostic timelines, Ctrl+F8 problem markers and matching crash function names.
+- Better reporting of GPU submission failures and less memory used for log analysis.
 
-[Full v1.0.7 patch notes and checksums](https://github.com/ocarina-pc-native-build/ocarina-pc-native-build.github.io/releases/tag/v1.0.7)
+[Full v1.0.8 patch notes and checksums](https://github.com/ocarina-pc-native-build/ocarina-pc-native-build.github.io/releases/tag/v1.0.8)
 
 ## Licenses
 
