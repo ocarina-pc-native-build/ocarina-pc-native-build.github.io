@@ -31,6 +31,8 @@ import ui  # noqa: E402
 import advisor  # noqa: E402
 import performance  # noqa: E402
 import diagnostics  # noqa: E402
+import debug_package as debug_export  # noqa: E402
+import trace_capture  # noqa: E402
 import mods_manager  # noqa: E402
 import classic_voices  # noqa: E402
 import tunic_colors  # noqa: E402
@@ -1422,7 +1424,7 @@ class App(tk.Tk):
             ctx.text(x + 4 * s, mid, T('DIAGNOSE', 'DIAGNOSTICS'), 15, 'semibold', ui.MUTED, anchor='w')
             tx = x + 4 * s + ctx.text_width(T('DIAGNOSE', 'DIAGNOSTICS'), 15, 'semibold') + 20 * s
             for icon, text, cmd in (('logs', T('Logs öffnen', 'Open logs'), lambda: os.startfile(DIRS['Logs'])),
-                                    ('folder', T('Shader-Dumps', 'Shader dumps'), lambda: os.startfile(DIRS['ShaderDumps'])),
+                                    ('wrench', T('Diagnose-Tools', 'Diagnostic tools'), self.diagnostic_tools),
                                     ('bug', T('Debug-Paket erstellen', 'Create debug package'), self.debug_package)):
                 bw = ctx.text_width(text, 17) + 60 * s
                 ctx.button(tx, mid - 21 * s, bw, 42 * s, text, cmd, kind='quiet', icon=icon, size=17, weight='regular')
@@ -2445,6 +2447,7 @@ class App(tk.Tk):
                 self.cfg['last_performance'] = None
                 if summary:
                     record = dict(summary=summary, settings=measured_settings, hardware=measured_hardware,
+                                  run_id=run['record']['run_id'] if run else None,
                                   build=INFO.get('stamp'), game=str(game.resolve()),
                                   at=datetime.datetime.now().isoformat(timespec='seconds'))
                     if performance.signature(opts) != measured_settings:
@@ -2496,27 +2499,109 @@ class App(tk.Tk):
                 'system settings > Performance > Advanced > Virtual memory choose "Automatically manage paging file size" '
                 '(or at least 32 GB as the maximum).')))
 
+    def diagnostic_tools(self):
+        win = tk.Toplevel(self, bg=BG)
+        win.title(T('Diagnose', 'Diagnostics'))
+        win.geometry('620x390')
+        text = T(
+            'Strg+F8 im Spiel markiert eine Problemstelle. Auch F1 → Bug report setzt einen Marker.\n\n'
+            'Ruckler und längere Phasen ohne neue Bilder werden automatisch erfasst. Danach das Spiel schließen und ein Debug-Paket erstellen. '
+            'Bitte Raum, Boss oder Okarina-Lied und die Schritte zum Problem angeben.\n\n'
+            'Die optionale Windows-Aufzeichnung dauert 30 Sekunden und kann zusätzliche Last erzeugen. Sie enthält auch Aktivitäten anderer Programme und Dateipfade. '
+            'Sie wird separat gespeichert und nicht automatisch ins Debug-Paket aufgenommen.',
+            'Ctrl+F8 in game marks a problem. F1 → Bug report also adds a marker.\n\n'
+            'Stutters and extended periods without new frames are recorded automatically. Afterwards, close the game and create a Debug Package. '
+            'Please describe the room, boss or ocarina song and the steps that triggered the problem.\n\n'
+            'The optional Windows trace lasts 30 seconds and may add overhead. It also contains other programs’ activity and file paths. '
+            'It is saved separately and is not automatically included in the Debug Package.')
+        tk.Label(win, text=text, wraplength=570, justify='left', fg=TEXT, bg=BG, font=('Segoe UI', 10)).pack(padx=20, pady=18)
+        status = tk.StringVar(value='')
+        tk.Label(win, textvariable=status, wraplength=570, fg=TEXT, bg=BG).pack(padx=20, pady=4)
+        actions = tk.Frame(win, bg=BG); actions.pack(pady=8)
+        ttk.Button(actions, text=T('Shader-Dumps öffnen', 'Open shader dumps'), command=lambda: os.startfile(DIRS['ShaderDumps'])).pack(side='left', padx=5)
+
+        def capture():
+            if getattr(self, '_diagnostic_trace_running', False):
+                return
+            executable, error = trace_capture.available()
+            if error:
+                return messagebox.showinfo('Windows trace', error, parent=win)
+            if not messagebox.askyesno('Windows trace', T(
+                    '30 Sekunden Systemaktivität aufzeichnen? Die Datei kann Programmnamen und Dateipfade enthalten. '
+                    'Wechsle nach dem Start innerhalb von 5 Sekunden ins laufende Spiel und wiederhole das Problem.',
+                    'Record 30 seconds of system activity? The file can contain program names and file paths. '
+                    'After starting, switch to the running game within 5 seconds and reproduce the problem.'), parent=win):
+                return
+            self._diagnostic_trace_running = True
+            capture_button.configure(state='disabled')
+            messages = queue.Queue()
+
+            def work():
+                try:
+                    path = trace_capture.record(executable, DIRS['Reports'], messages.put)
+                    messages.put(('done', str(path)))
+                except Exception as exc:
+                    messages.put(('error', str(exc)))
+            threading.Thread(target=work, daemon=False).start()
+
+            def poll():
+                try:
+                    while True:
+                        item = messages.get_nowait()
+                        if isinstance(item, tuple):
+                            self._diagnostic_trace_running = False
+                            if win.winfo_exists():
+                                capture_button.configure(state='normal'); status.set(item[1])
+                            return
+                        if win.winfo_exists():
+                            status.set(item)
+                except queue.Empty:
+                    self.after(200, poll)
+            poll()
+
+        capture_button = ttk.Button(actions, text=T('Windows-Aufzeichnung (30 s)', 'Windows trace (30 s)'), command=capture)
+        capture_button.pack(side='left', padx=5)
+        ttk.Button(win, text=T('Debug-Paket erstellen', 'Create Debug Package'), command=self.debug_package).pack(pady=8)
+        win.update_idletasks()
+        win.geometry(f'{max(620, win.winfo_reqwidth())}x{max(390, win.winfo_reqheight())}')
+
     def debug_package(self):
+        if getattr(self, '_debug_export_running', False):
+            return
         game = Path(self.cfg['game_dir'])
+        note = simpledialog.askstring(T('Problembeschreibung (optional)', 'Problem details (optional)'), T(
+            'Was ist passiert? Raum/Boss/Lied, Schritte und ungefährer Zeitpunkt. Leer lassen ist möglich.',
+            'What happened? Room/boss/song, steps and approximate time. You can leave this blank.'), parent=self)
+        if note is None:
+            return
         out = Path.home() / 'Desktop' / f'OcarinaReborn-Debug-{tester_id()}-{datetime.datetime.now():%Y%m%d-%H%M%S}.zip'
         if not out.parent.is_dir():
             out = DIRS['Reports'] / out.name
-        with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as z:
-            z.writestr('build-info.json', json.dumps(INFO, indent=2))
-            z.writestr('system.txt', '\n'.join(system_info() + [f'tester: {tester_id()}']))
-            for f in sorted(DIRS['Logs'].glob('*.log'))[-10:]:
-                z.write(f, f'launcher-logs/{f.name}')
-            for f in sorted(game.glob('ocarina_reborn_log*.txt')) + sorted(game.glob('hookshot_log*.txt')) + sorted(game.glob('*.log')):
-                z.write(f, f'game-logs/{f.name}')
-            for f in sorted(DIRS['PrepareLogs'].glob('*.log')):
-                z.write(f, f'prepare-logs/{f.name}')
-            for f, name in diagnostics.package_files(DIRS['CrashDumps'], game):
-                z.write(f, name)
-            for f in DIRS['ShaderDumps'].rglob('*.txt'):
-                z.write(f, f'shader-dumps/{f.relative_to(DIRS["ShaderDumps"]).as_posix()}')
-        log(f'debug package {out.name}')
-        messagebox.showinfo('Ocarina Reborn', T('Debug-Paket erstellt:', 'Debug package created:') + f'\n\n{out}\n\n' + T('Schicke diese Datei dem Entwickler.', 'Send this file to the developer.'))
-        os.startfile(out.parent)
+        self._debug_export_running = True
+        done = queue.Queue()
+
+        def work():
+            try:
+                settings = game_settings.read(game)
+                debug_export.create(out, game, DIRS, INFO, system_info() + [f'tester: {tester_id()}'], settings, note,
+                                    [(Path.home(), '%USERPROFILE%'), (game, '%GAME_DIR%'), (APP, '%APP_DIR%')])
+                done.put(None)
+            except Exception as exc:
+                done.put(str(exc))
+        threading.Thread(target=work, daemon=True).start()
+
+        def poll():
+            try:
+                error = done.get_nowait()
+            except queue.Empty:
+                return self.after(150, poll)
+            self._debug_export_running = False
+            if error:
+                return messagebox.showerror('Debug Package', error)
+            log(f'debug package {out.name}')
+            messagebox.showinfo('Ocarina Reborn', T('Debug-Paket erstellt:', 'Debug package created:') + f'\n\n{out}\n\n' + T('Schicke diese Datei dem Entwickler.', 'Send this file to the developer.'))
+            os.startfile(out.parent)
+        poll()
 
 
 if __name__ == '__main__':

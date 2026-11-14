@@ -1096,6 +1096,7 @@ def main():
     if LINUX:
         host_deps += b"".join(open(os.path.join(POSIX, f), "rb").read() for f in sorted(os.listdir(POSIX)) if f.endswith(".h"))
     host_deps += open(os.path.join(GPU, "vk", "vk_api.h"), "rb").read()   # (the renderer ABI used by host/rx_backend.c)
+    host_deps += open(os.path.join(GPU, "vk", "ocr_diag_types.h"), "rb").read()
     host_deps += open(os.path.join(GPU, "vk", "dlss_math.h"), "rb").read()   # (host/rx_backend.c's DLSS jitter)
     host_deps += open(os.path.join(GPU, "vk", "compat", "ocarina_reborn_env.h"), "rb").read()   # (env_on: the switches' one rule)
     host_deps += ffmpeg_version_key()
@@ -1420,6 +1421,16 @@ def main():
         if LINUX and not check_vk_symbols(vdll):
             return 1
         print("linked %s: %d MB (%.0fs)" % (vdll, os.path.getsize(vdll) >> 20, time.time() - t))
+    if a.standalone and not LINUX:
+        import diagnostic_symbols
+        for name in ("ocarina_reborn.exe", "ocarina_reborn_vk.dll"):
+            binary = os.path.join(out, name)
+            if os.path.isfile(binary):
+                try:
+                    index = diagnostic_symbols.export(binary)
+                    print("diagnostics: retained function index " + str(index), flush=True)
+                except (OSError, ValueError) as error:
+                    print("diagnostics: function index unavailable: " + str(error), flush=True)
     if a.dll:
         dll = os.path.join(out, "ocarina_reborn_game.dll")   # (+ ocarina_reborn_game.map: crash offsets -> f_<guest address>)
         t = time.time()

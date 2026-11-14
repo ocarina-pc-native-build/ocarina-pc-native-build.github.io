@@ -11,6 +11,7 @@
    while one of the game's own menus is open (host/oot_menu.c: hos_mouse_game_menu each frame it runs), its clicks and
    wheel for that menu (hos_mouse_game_pointer). */
 #include "hos.h"
+#include "ocr_diagnostics.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -359,6 +360,10 @@ static LRESULT CALLBACK wndproc(HWND w, UINT msg, WPARAM wp, LPARAM lp) {
         else if (renderer && !mouse_captured) mouse_capture(w, 1);
         return 0;
     case WM_KEYDOWN: {
+        if (wp == VK_F8 && (GetKeyState(VK_CONTROL) & 0x8000)) {
+            if (!(lp & (1 << 30))) { ocr_diag_mark(); hos_log("[diagnostics] problem marked (Ctrl+F8)"); }
+            return 0;
+        }
         extern void hos_vk_note_key_press(unsigned key);
         if (!(lp & (1 << 30))) hos_vk_note_key_press((unsigned)wp);
         if (wp == VK_ESCAPE) {   /* (it may open the Insert menu too: a capture let go here comes back) */
@@ -392,10 +397,12 @@ static LRESULT CALLBACK wndproc(HWND w, UINT msg, WPARAM wp, LPARAM lp) {
         pointer_update(w, 0, 0);
         return 0;
     case WM_SETFOCUS:
+        ocr_diag_event("window_focus", "foreground");
         pointer_update(w, 0, 0);
         break;
     case WM_KILLFOCUS:
     case WM_CANCELMODE:
+        ocr_diag_event("window_focus", "background or capture cancelled");
         esc_had_capture = 0;
         mouse_capture(w, 0);
         hos_pointer_reset(&pointer);

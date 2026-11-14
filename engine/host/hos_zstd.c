@@ -33,6 +33,7 @@
        decodes it), and a raw block with a NULL output fails as dstBuffer_null (-1) where the game's says dstSize_tooSmall
        (-2). A zstd compressor makes neither. */
 #include "hos.h"
+#include "ocr_diagnostics.h"
 #ifndef HOOKSHOT_ENV_H   /* (env_on: the switches' one rule) */
 #include "../gpu/vk/compat/ocarina_reborn_env.h"
 #endif
@@ -223,7 +224,9 @@ static void zs_drop(uint64_t g) {   /* (stream object g's context, if it has one
 static size_t zs_continue(ZSTD_DCtx *z, uint64_t g, uint64_t src, size_t n) {
     const uint64_t dst = S_DST(g);
     const size_t room = (size_t)(int64_t)(int32_t)S_ROOM(g);
+    OcrDiagSpan decode_span = ocr_diag_begin(OCR_DIAG_ZSTD);
     const size_t r = ZSTD_decompressContinue(z, GP(dst), room, GP(src), n);
+    ocr_diag_end(decode_span, ZSTD_isError(r) ? 0 : r);
     /* (marked also when it fails: a block that ran out of room was partly written. libzstd may keep a block's literals in
        the output room past the block, up to two blocks on: marked too) */
     const size_t out = ZSTD_isError(r) ? 0 : r, span = out > (2u << 17) + 64 ? out : (2u << 17) + 64;

@@ -18,6 +18,7 @@
    HOS_AUDIO_CHANNELS=2 or 6: stereo or 5.1 whatever the default output has and the Insert menu's Audio output say
    (see au_speakers). */
 #include "hos.h"
+#include "ocr_diagnostics.h"
 #include "../gpu/vk/vk_api.h"   /* (the Audio tab's options: HOS_OPT_VOLUME, HOS_OPT_MUTE_BACKGROUND) */
 #include <math.h>
 #include <stdio.h>
@@ -1147,6 +1148,10 @@ static void apply(const Cmd *k) {   /* (with the lock held) */
             memcpy(v->bq_a[k->i0], k->a, sizeof k->a);
             break;
         case OP_VOICE_STATE:
+            if (v->state != k->i0) {
+                char note[100];snprintf(note,sizeof note,"voice=%d applied_state=%d queued_buffers_before=%d",k->idx,k->i0,v->nwb);
+                ocr_diag_event("audio_voice_applied",note);
+            }
             if (k->i0 == PLAY_STOPPED) {   /* every stop cancels queued buffers, including a primed stopped voice */
                 for (int i = 0; i < v->nwb; i++) release_wb(v, v->wb[i]);
                 v->nwb = 0;
@@ -1772,6 +1777,11 @@ HLE(_ZN2nn5audio17SetVoicePlayStateEPNS0_9VoiceTypeENS1_9PlayStateE) {
     if (v) {
         const int s = (int)ARG(1);
         if (v->state != s) AUT("audio: voice %d %s", (int)(v - voices), s == 0 ? "start" : s == 1 ? "stop" : "pause");
+        if (v->state != s) {
+            char note[120];
+            snprintf(note,sizeof note,"voice=%d requested_state=%d; voice ID is not a song ID",(int)(v-voices),s);
+            ocr_diag_event("audio_voice_request",note);
+        }
         const Cmd k = {.op = OP_VOICE_STATE, .idx = (int)(v - voices), .i0 = s};
         submit(&k);
     }

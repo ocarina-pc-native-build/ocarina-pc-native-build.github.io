@@ -9,6 +9,7 @@
    Environment: HOS_TRACE=1 (log HLE calls), HOS_MEMORY_MB (memory the game is told it has),
                 HOS_NVN_CONTINUE=1 (go on past nvnBootstrapLoader). */
 #include "hos.h"
+#include "ocr_diagnostics.h"
 #ifndef HOOKSHOT_ENV_H   /* (env_on: the switches' one rule) */
 #include "../gpu/vk/compat/ocarina_reborn_env.h"
 #endif
@@ -1142,6 +1143,7 @@ static void oot_teleport_followup(Ctx *c) {
 static SRWLOCK oot_map_lock = SRWLOCK_INIT;
 static char oot_map[80];
 static int oot_flags = -1;   /* (1 an event playing, 2 a map loading, 4 the child; -1 not read yet) */
+static int64_t oot_map_sample_at;
 static void oot_map_refresh(Ctx *c, int64_t now) {
     static int64_t next;
     if (now < next) return;
@@ -1156,6 +1158,7 @@ static void oot_map_refresh(Ctx *c, int64_t now) {
     AcquireSRWLockExclusive(&oot_map_lock);
     memcpy(oot_map, map, sizeof oot_map);
     oot_flags = flags;
+    oot_map_sample_at = now;
     ReleaseSRWLockExclusive(&oot_map_lock);
 }
 /* (with the map) whether an event (a cutscene, a map change's) is playing, a map is loading, Link is the child: 0 before any */
@@ -1173,6 +1176,20 @@ int hos_oot_current_map(char *out, size_t cap) {
     if (have) snprintf(out, cap, "%s", oot_map);
     ReleaseSRWLockShared(&oot_map_lock);
     return have;
+}
+int ocr_diag_context(OcrDiagContext *out) {
+#ifdef _WIN32
+    if (!TryAcquireSRWLockShared(&oot_map_lock)) return 0;
+#else
+    AcquireSRWLockShared(&oot_map_lock);
+#endif
+    int have = oot_flags >= 0 && oot_map_sample_at > 0;
+    if (have) {
+        snprintf(out->map,sizeof out->map,"%s",oot_map);
+        out->event=oot_flags&1;out->loading=(oot_flags>>1)&1;out->child=(oot_flags>>2)&1;
+        out->age_ms=(hos_now_ns()-oot_map_sample_at)/1e6;
+    }
+    ReleaseSRWLockShared(&oot_map_lock);return have;
 }
 int hos_oot_destination(int index, const char **child, const char **adult) {
     if (index < 0 || index >= (int)(sizeof oot_destinations / sizeof oot_destinations[0])) return 0;
@@ -1823,6 +1840,7 @@ static int game_main(int argc, char **argv) {
         }
     }
     hos_log("ocarina_reborn %s", HOOKSHOT_VERSION);   /* (the log's first line: which build a report comes from) */
+    ocr_diag_init();
     removed_switch_notes();
     void hos_control_start(const char *version);
     hos_control_start(HOOKSHOT_VERSION);   /* (HOS_CONTROL=<socket>: the control bridge, host/control.c) */
@@ -2035,7 +2053,9 @@ static int game_argc;
 static char **game_argv;
 static DWORD WINAPI game_thread(void *p) {
     (void)p;
-    ExitProcess((UINT)game_main(game_argc, game_argv));
+    UINT code=(UINT)game_main(game_argc, game_argv);
+    ocr_diag_stop();
+    ExitProcess(code);
 }
 /* (hookshot, linux) Room in the drivers' own shader caches for what the preparation builds. The pipelines the notes predict (~43,000
    in OoT, vk_draw.cpp predict_run) are built into the driver's disk cache alone, not into mkw_vk_pipelines.bin, which is read in whole

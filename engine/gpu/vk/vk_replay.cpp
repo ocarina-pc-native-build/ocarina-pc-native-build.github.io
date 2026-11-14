@@ -3293,6 +3293,36 @@ void status_tick() {
     static int64_t last_ns = 0, slowest_ns = 0;
     const int64_t now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
     if (last_ns) slowest_ns = std::max(slowest_ns, now_ns - last_ns);
+    // Bounded host recorder, including low-draw loading/cutscene frames. No per-frame disk writes.
+    if (host && host->diagnostics_frame) {
+        static int64_t previous_prof[PROF_COUNT], previous_cpu, previous_gpu, previous_rb, previous_tf;
+        static int64_t previous_draws, previous_upload, previous_pipelines, previous_not_ready;
+        static double previous_translate, previous_pipe_wait;
+        static uint64_t used, budget; static bool known; static int64_t memory_at;
+        int64_t draws=0, skipped=0, dispatch=0, pipelines=0, uploads=0, astc=0, upload_bytes=0, not_ready=0, waits=0;
+        double wait_ms=0;
+        draw_stats(&draws,&skipped,&dispatch,&pipelines);
+        draw_stats3(&not_ready,&waits,&wait_ms); texture_stats(&uploads,&astc,&upload_bytes);
+        double translated=shader_translate_ms(); int64_t rb=texture_readback_wait_ns(), tf=texture_frame_ns();
+        if (!memory_at || now_ns-memory_at>=1000000000) { known=vram_usage(&used,&budget);memory_at=now_ns; }
+        const auto dp=[&](int i) {return std::max<int64_t>(0,prof_ns[i]-previous_prof[i])/1e6;};
+        if(last_ns) {
+            OcrDiagFrame f{};
+            f.frame_ms=(now_ns-last_ns)/1e6;f.renderer_ms=std::max<int64_t>(0,prof_ns[PROF_SUBMIT]-previous_cpu)/1e6;
+            f.gpu_ms=std::max<int64_t>(0,st_gpu_ns-previous_gpu)/1e6;
+            f.pipeline_ms=dp(PROF_PIPE);f.program_ms=dp(PROF_PROGRAM);f.upload_ms=dp(PROF_UPLOAD);
+            f.memory_sync_ms=dp(PROF_MEMSYNC);f.slot_wait_ms=dp(PROF_SLOTWAIT);
+            f.readback_ms=std::max<int64_t>(0,rb-previous_rb)/1e6;f.texture_frame_ms=std::max<int64_t>(0,tf-previous_tf)/1e6;
+            f.translate_ms=std::max(0.0,translated-previous_translate);f.pipeline_wait_ms=std::max(0.0,wait_ms-previous_pipe_wait);
+            f.draws=std::max<int64_t>(0,draws-previous_draws);f.upload_bytes=std::max<int64_t>(0,upload_bytes-previous_upload);
+            f.new_pipelines=std::max<int64_t>(0,pipelines-previous_pipelines);f.not_ready=std::max<int64_t>(0,not_ready-previous_not_ready);
+            f.menu=menu_is_open();f.frame_generation=opts.framegen;f.vram_known=known;f.vram_used=used;f.vram_budget=budget;
+            host->diagnostics_frame(&f);
+        }
+        std::memcpy(previous_prof,prof_ns,sizeof previous_prof);previous_cpu=prof_ns[PROF_SUBMIT];previous_gpu=st_gpu_ns;
+        previous_rb=rb;previous_tf=tf;previous_draws=draws;previous_upload=upload_bytes;previous_pipelines=pipelines;
+        previous_not_ready=not_ready;previous_translate=translated;previous_pipe_wait=wait_ms;
+    }
     // (RX_VK_FRAME_TRACE=1: every frame a line of ocarina_reborn_frames.csv beside the game, present to present and what the frame did,
     // so that each stutter can be matched to its cause: waits for shaders or pipelines, translation, uploads, the memory sync,
     // pipeline compiles, the GPU behind. RX_VK_FRAME_LOG has the frame times alone)

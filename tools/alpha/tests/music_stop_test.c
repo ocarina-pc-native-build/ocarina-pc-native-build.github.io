@@ -15,6 +15,7 @@ static int failures;
 #define RET(v) (c->x[0] = (uint64_t)(v))
 #define HLE(sym) void imp_##sym(Ctx *c)
 #define AUT(...) ((void)0)
+#define ocr_diag_event(kind, detail) ((void)0)
 #define env_on(name) 0
 static void hos_log(const char *format, ...) { (void)format; }
 static void au_lock(void) {}

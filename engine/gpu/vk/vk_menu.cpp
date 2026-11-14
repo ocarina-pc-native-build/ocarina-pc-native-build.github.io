@@ -1882,6 +1882,11 @@ void save() {
     // (one writer at a time: the present's thread, the game's (menu_option_set) and the control bridge's, menu_setting_set)
     static std::mutex save_mu;
     std::lock_guard lk(save_mu);
+    if (host && host->diagnostics_event) {
+        char state[320];
+        snprintf(state,sizeof state,"resolution=%d upscaler=%d frame_generation=%d hdr=%d texture_budget=%d; saved choices; restart-only changes may not be active yet",opts.resolution,opts.dlss,opts.framegen,opts.hdr,opts.budget);
+        host->diagnostics_event("settings_saved",state);
+    }
     // (hookshot) the lines that are not the menu's are kept: the controls, pad_ and key_ (host/nn_hid.c)
     // (and every other line the menu does not write, such as discord_app_id=: they were dropped at the next save)
     std::string kept, others;
@@ -2962,6 +2967,7 @@ bool bug_report_picture(const char* path, uint64_t ticket) {
 /// A or Enter on the Bug report: the report gathered here (the menu's part) and written on a thread of its own
 void bug_report_save() {
     if (bug_report::state() == bug_report::kSaving) return;
+    if (host && host->diagnostics_event) host->diagnostics_event("user_marker", "Player requested the F1 Bug report; correlate its picture and time with the diagnostic timeline.");
     if (host && host->log_flush) host->log_flush();   // (the log's queued lines into the file first)
     bug_report::Inputs in;
     bug_report::fill_here(in);
@@ -2987,9 +2993,9 @@ const char* bug_report_cell() {
 /// Under its help once saved: where the report is and what to do with it (the game opens nothing: no browser or file manager is
 /// sure to be there, as on a Steam Deck in Game Mode)
 std::string bug_report_saved_text(const std::string& folder) {
-    return "Saved in the game folder as " + folder + ". To send it, open github.com/NotRexed/Hookshot/issues, choose New issue and "
-           "Game problem, copy report.txt's answers into the form and drag the folder's files into it: on Windows from File "
-           "Explorer, on Linux from a file manager (on a Steam Deck, in Desktop Mode).";
+    return "Saved in the game folder as " + folder + ". A problem marker was added to the diagnostic timeline on Windows. "
+           "Close the game and choose Create Debug Package in the Ocarina Reborn launcher. Describe the room, boss or song "
+           "and the steps that triggered the issue when sharing the package with the developer. Nothing is sent automatically.";
 }
 /// Under its help once pressed: how the report goes
 const char* bug_report_hint() {

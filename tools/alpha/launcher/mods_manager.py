@@ -19,7 +19,7 @@ def _is_mod(d):
     return (d / 'romfs').is_dir() or (d / 'exefs').is_dir()
 
 
-def list_mods(root):
+def list_mods(root, count_files=True):
     """[dict(name, path, enabled, romfs, exefs, files, bytes)], sorted by path as the engine orders them (the last wins)"""
     root = Path(root)
     found = []
@@ -35,7 +35,7 @@ def list_mods(root):
             enabled = on and not p.name.startswith(OFF)
             if _is_mod(p):
                 files = size = 0
-                for base, _, names in os.walk(p / 'romfs'):
+                for base, _, names in os.walk(p / 'romfs') if count_files else ():
                     for n in names:
                         files += 1
                         try:

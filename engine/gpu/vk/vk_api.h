@@ -8,6 +8,7 @@
 #pragma once
 
 #include <stdint.h>
+#include "ocr_diag_types.h"
 
 #include "../render/rx_nvn.h"   /* (the NVN objects and command records: C) */
 
@@ -15,7 +16,7 @@
 extern "C" {
 #endif
 
-#define MKWVK_API_VERSION 21
+#define MKWVK_API_VERSION 22
 enum { HOS_OPT_CHEAT_HEARTS = 32, HOS_OPT_CHEAT_FLIGHT, HOS_OPT_CHEAT_ACTION, HOS_OPT_CHEAT_CAMERA, HOS_OPT_CHEAT_SPEED,
        HOS_OPT_ENEMY_DAMAGE /* (Ocarina Reborn) */ };
 /* (hookshot) the Gameplay tab's Text size (host/oot_text_size.c): 0 the game's, 1 110%, 2 125%, 3 150%, 4 175% */
@@ -196,6 +197,9 @@ typedef struct MkwVkHost {
     /* (version 20, hookshot) the main screen's size in pixels, as host/hos_main.c takes its shape at the start (Windows: the
        primary's; Linux: SDL's primary desktop), for the Insert menu's Aspect ratio and Output resolution rows: 0 when not known */
     int (*screen_size)(int *width, int *height);
+    /* Ocarina Reborn v22: bounded diagnostics; callbacks never write files on the rendering thread. */
+    void (*diagnostics_frame)(const OcrDiagFrame *frame);
+    void (*diagnostics_event)(const char *kind, const char *detail);
 } MkwVkHost;
 
 /* One completed temporal-upscale sample; all zero while inactive. */

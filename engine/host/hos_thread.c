@@ -5,6 +5,7 @@
    there. TPIDRRO_EL0 (thread-local region): 0x200 bytes; the SDK's nn::os keeps the current ThreadType* at
    +0x1F8, so lifted SDK code that reads it inline finds the same thread the HLE knows. */
 #include "hos.h"
+#include "ocr_diagnostics.h"
 #ifndef HOOKSHOT_ENV_H   /* (env_on: the switches' one rule) */
 #include "../gpu/vk/compat/ocarina_reborn_env.h"
 #endif
@@ -376,6 +377,27 @@ int hos_thread_handles(HANDLE *out, const char **names, int max) {
     return n;
 }
 
+/* Sample handles while their registry lock is held; never suspend a game thread.
+   Skip a busy registry rather than hold up the diagnostic writer. */
+int ocr_diag_cpu_threads(OcrDiagCpuThread *out, int max) {
+#ifdef _WIN32
+    if (!TryAcquireSRWLockShared(&threads_lock)) return 0;
+    int n=0;
+    for (int i=0;i<nthreads && n<max;++i) {
+        FILETIME create,exit,kernel,user;
+        HANDLE h=threads[i]->handle;
+        if (!h || !GetThreadTimes(h,&create,&exit,&kernel,&user)) continue;
+        out[n].tid=GetThreadId(h);
+        out[n].cpu_100ns=(((uint64_t)kernel.dwHighDateTime<<32)|kernel.dwLowDateTime)+
+                         (((uint64_t)user.dwHighDateTime<<32)|user.dwLowDateTime);
+        snprintf(out[n].name,sizeof out[n].name,"%s",threads[i]->name); ++n;
+    }
+    ReleaseSRWLockShared(&threads_lock); return n;
+#else
+    (void)out;(void)max;return 0;
+#endif
+}
+
 /* (mkw-recomp) Every guest thread's name and guest registers as of its last call out of lifted code, with its
    frame chain from x29: what each thread of a stalled game waits in (mkw_glue.c, HOS_STATS_AFTER). */
 void hos_thread_dump(void) {
@@ -447,7 +469,9 @@ void hos_thread_wait(HosThread *t, int64_t timeout_ns, int *timed_out) {
     DWORD ms = timeout_ns < 0 ? INFINITE : (DWORD)((timeout_ns + 999999) / 1000000);
     HOS_CHAIN(HOS_CHAIN_WAIT, wake_chain_key(t));
     const int away = hos_vcore_away();
+    OcrDiagSpan wait_span = ocr_diag_begin(OCR_DIAG_WAIT);
     *timed_out = WaitForSingleObject(t->wake, ms) == WAIT_TIMEOUT;
+    ocr_diag_end(wait_span, 0);
     if (away) hos_vcore_back();
     HOS_CHAIN(HOS_CHAIN_WOKE, wake_chain_key(t));
 }
