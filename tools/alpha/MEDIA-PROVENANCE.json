@@ -36,12 +36,12 @@
     "tools/alpha/launcher/assets/ocarina-72.png": "18ce37e82bf971f7b50098bea1e4c17b8c098a3da86350adf41036bce7d2a4d8",
     "tools/alpha/launcher/assets/ocarina-80.png": "24b1ae8767608340d75c1688a3a26532d38bffc4e8ffc0b02131d69f03887ccd",
     "tools/alpha/launcher/assets/ocarina-96.png": "e4b1a1369612aea3d8865179e935870acf176442202a72f6079c1d5346dde3d5",
-    "tools/alpha/ocarina-icon.png": "1ac441c8fae91c91d5d75dbd9b1aa1ac5cca350d50015ebe889dc06ac59c4b71",
+    "tools/alpha/ocarina-icon.png": "07a64a72a007a8a3977c360a51606c3d38cd782626facc21ef427942a04082aa",
     "tools/alpha/startup-logo.png": "938a139e0dcb826927dc6335157bc64fd225e7080c5a18e82ecd044294b38bb5"
   },
   "restored_launcher_media": {
-    "source": "Local authoring-before backup of tools/alpha/launcher/assets and tools/alpha/OcarinaReborn.ico; exact original files, no image modifications. Startup logo also copied unchanged from authoring-before/tools/alpha/startup-logo.png.",
-    "request": "2026-11-14: restore Ocarina and Navi in the launcher. Follow-up: restore the matching old Ocarina image on the game shader/pipeline loading screen as well.",
+    "source": "Local authoring-before backup of tools/alpha/launcher/assets and tools/alpha/OcarinaReborn.ico; exact original files, no image modifications. Startup logo also copied unchanged from authoring-before/tools/alpha/startup-logo.png. Game icon copied unchanged from authoring-before/tools/alpha/ocarina-icon.png.",
+    "request": "2026-11-14: restore Ocarina and Navi in the launcher. Follow-up: restore the matching old Ocarina image on the game shader/pipeline loading screen as well. Follow-up: restore the Ocarina icon on the actual game EXE and taskbar, not only the launcher.",
     "rights_status": "Original authorship and redistribution permission not established.",
     "files": {
       "OcarinaReborn.ico": "da82281ceb385d082c1c9d476e4c5df5e1606d5129362cbbd69f210665e664cd",
@@ -66,7 +66,8 @@
       "tools/alpha/launcher/assets/ocarina-80.png": "24b1ae8767608340d75c1688a3a26532d38bffc4e8ffc0b02131d69f03887ccd",
       "tools/alpha/launcher/assets/ocarina-96.png": "e4b1a1369612aea3d8865179e935870acf176442202a72f6079c1d5346dde3d5",
       "tools/alpha/startup-logo.png": "938a139e0dcb826927dc6335157bc64fd225e7080c5a18e82ecd044294b38bb5",
-      "engine/assets/ocarina_reborn.png": "938a139e0dcb826927dc6335157bc64fd225e7080c5a18e82ecd044294b38bb5"
+      "engine/assets/ocarina_reborn.png": "938a139e0dcb826927dc6335157bc64fd225e7080c5a18e82ecd044294b38bb5",
+      "tools/alpha/ocarina-icon.png": "07a64a72a007a8a3977c360a51606c3d38cd782626facc21ef427942a04082aa"
     }
   }
 }
