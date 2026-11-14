@@ -760,6 +760,8 @@ static Seen *screen_seen(uint64_t screen, int64_t now) {
 
 void hos_oot_menu_tick(Ctx *c, uint64_t screen) {
     if (!screen) return;
+    void ocr_photo_hud(Ctx *, uint64_t);
+    ocr_photo_hud(c, screen);
     if (trace < 0) trace = env_on("HOS_MENU_TRACE");
     const int64_t now = hos_now_ns();
     AcquireSRWLockExclusive(&seen_lock);

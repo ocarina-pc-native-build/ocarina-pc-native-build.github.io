@@ -17,6 +17,7 @@
 #include "hos_wide_size.h"   /* (the widescreen picture's size, shared with the Insert menu) */
 #include "../gpu/vk/vk_api.h"
 #include "../gpu/vk/oot_cheat_items.h"
+#include "ocr_tools.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -658,6 +659,35 @@ static int oot_pouch_count(Ctx *c, const char *name) {
     const int n = (int)(int32_t)c->x[0];
     *c = saved;
     return n;
+}
+
+/* OneshotIncreaseRupee: use the game's pending-wallet change, notification and
+   wallet limit. Event parameters live on our guest stack; no save bytes edited. */
+static void oot_add_rupees(Ctx *c, int choice) {
+    A64Fn read = a64_lookup(0x80a87c30ULL), limit = a64_lookup(0x80a876a0ULL);
+    A64Fn add = a64_lookup(0x82982fc0ULL);
+    const uint64_t slot = recomp_load64(c, 0x84c9e0d0ULL);
+    const uint64_t manager = slot ? recomp_load64(c, slot) : 0;
+    if (!manager || !read || !limit || !add || !recomp_load64(c, 0x84ea42a8ULL)) return;
+    const Ctx saved = *c;
+    c->x[0] = manager, c->x[1] = 1, c->x[30] = 0;
+    read(c);
+    const int before = (int)(int32_t)c->x[0];
+    *c = saved;
+    c->x[0] = manager, c->x[30] = 0;
+    limit(c);
+    const int capacity = (int)(int32_t)c->x[0];
+    *c = saved;
+    const int amount = ocr_rupee_delta(choice, before, capacity);
+    if (!amount) return;
+    const uint64_t event = (c->x[31] - 0x40) & ~0xfULL;
+    memset(A64_PTR(event), 0, 0x40);
+    recomp_store64_sp(c, event + 0x20, event + 0x30);
+    recomp_store32_sp(c, event + 0x30, (uint32_t)amount);
+    c->x[31] = event, c->x[0] = event, c->x[30] = 0;
+    add(c);
+    *c = saved;
+    hos_log("[OcarinaReborn/TOOLS] rupees +%d requested (wallet %d/%d)", amount, before, capacity);
 }
 
 static void oot_edit_pouch(Ctx *c, int action) {
@@ -1379,6 +1409,8 @@ static void oot_update_player_cheats(Ctx *c, uint64_t actor, uint64_t components
     } else if (action >= OOT_TELEPORT_ACTION) {
         const int sent = oot_teleport(c, actor, (unsigned)(action - OOT_TELEPORT_ACTION));
         if (bridge_ticket) oot_bridge_teleport_done(bridge_ticket, sent);
+    } else if (action >= OCR_RUPEE_ACTION && action < OCR_RUPEE_ACTION + OCR_RUPEE_CHOICES) {
+        if (!story_event) oot_add_rupees(c, action - OCR_RUPEE_ACTION);
     } else if (action >= 200) {
         oot_edit_pouch(c, action);
     } else if (action >= 100 && action < 124) {

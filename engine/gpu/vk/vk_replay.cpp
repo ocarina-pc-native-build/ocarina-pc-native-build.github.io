@@ -3435,6 +3435,7 @@ struct ShotAsk {
     int64_t after = -1;
     void (*done)(void* ctx, int64_t present, int ok) = nullptr;
     void* ctx = nullptr;
+    bool native_size = false;
 };
 std::mutex shot_ask_mu;
 std::deque<ShotAsk> shot_asks;   // (shot_ask_mu)
@@ -3443,6 +3444,7 @@ VkImage ask_image = VK_NULL_HANDLE;
 VmaAllocation ask_image_alloc = nullptr, ask_buf_alloc = nullptr;
 VkBuffer ask_buf = VK_NULL_HANDLE;
 void* ask_map = nullptr;
+uint32_t ask_width = 0, ask_height = 0;
 
 int shot_ask(const char* path, int64_t after, void (*done)(void*, int64_t, int), void* ctx) {
     if (!path || !*path || !done) return 0;
@@ -3451,9 +3453,10 @@ int shot_ask(const char* path, int64_t after, void (*done)(void*, int64_t, int),
     shot_asks.push_back({path, after, done, ctx});
     return 1;
 }
-bool shot_ask_init() {
-    if (ask_image) return true;
-    if (!shot_dimensions_ready()) return false;   // (RX_VK_SHOT_W/H out of bounds: no shots of either kind)
+bool shot_ask_init(uint32_t width, uint32_t height) {
+    if (ask_image) return ask_width == width && ask_height == height;
+    const uint32_t limit = dev.props.limits.maxImageDimension2D;
+    if (!width || !height || width > limit || height > limit || (uint64_t)width * height > 64 * 1024 * 1024) return false;   // (RX_VK_SHOT_W/H out of bounds: no shots of either kind)
     VkImage image = VK_NULL_HANDLE;
     VmaAllocation image_alloc = nullptr, buf_alloc = nullptr;
     VkBuffer buf = VK_NULL_HANDLE;
@@ -3461,16 +3464,17 @@ bool shot_ask_init() {
     VkImageCreateInfo ci{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
     ci.imageType = VK_IMAGE_TYPE_2D;
     ci.format = VK_FORMAT_R8G8B8A8_UNORM;
-    ci.extent = {kShotW, kShotH, 1};
+    ci.extent = {width, height, 1};
     ci.mipLevels = ci.arrayLayers = 1;
     ci.samples = VK_SAMPLE_COUNT_1_BIT;
     ci.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
     if (!create_image(ci, image, image_alloc)) return false;
-    if (!create_buffer((uint64_t)kShotW * kShotH * 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT, true, buf, buf_alloc, &map)) {
+    if (!create_buffer((uint64_t)width * height * 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT, true, buf, buf_alloc, &map)) {
         destroy_image(image, image_alloc);
         return false;
     }
     ask_image = image, ask_image_alloc = image_alloc, ask_buf = buf, ask_buf_alloc = buf_alloc, ask_map = map;
+    ask_width = width, ask_height = height;
     return true;
 }
 /// (do_present, replay_mu) the copy of this present for the first shot asked for before it, unless one is being read back
@@ -3483,30 +3487,40 @@ void shot_ask_record(VkCommandBuffer cmd, VkImage src, uint32_t sw, uint32_t sh,
         a = std::move(shot_asks.front());
         shot_asks.pop_front();
     }
-    if (!shot_ask_init()) {
+    const bool cropped = crop && crop[2] > 0 && crop[3] > 0;
+    const uint32_t width = a.native_size ? (cropped ? (uint32_t)crop[2] : sw) : kShotW;
+    const uint32_t height = a.native_size ? (cropped ? (uint32_t)crop[3] : sh) : kShotH;
+    if (!shot_ask_init(width, height)) {
         a.done(a.ctx, presents, 0);
         return;
     }
     image_barrier(cmd, ask_image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-    blit_crop(cmd, src, sw, sh, crop, ask_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, kShotW, kShotH);
+    blit_crop(cmd, src, sw, sh, crop, ask_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, width, height);
     image_barrier(cmd, ask_image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-    const VkBufferImageCopy c{0, 0, 0, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {0, 0, 0}, {kShotW, kShotH, 1}};
+    const VkBufferImageCopy c{0, 0, 0, {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, {0, 0, 0}, {width, height, 1}};
     vkCmdCopyImageToBuffer(cmd, ask_image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, ask_buf, 1, &c);
-    capture_host_read_barrier(cmd, ask_buf, (VkDeviceSize)kShotW * kShotH * 4);
+    capture_host_read_barrier(cmd, ask_buf, (VkDeviceSize)width * height * 4);
     shot_asked.on = true, shot_asked.value = value, shot_asked.present = presents, shot_asked.ask = std::move(a);
 }
 /// (do_present, replay_mu) the shot being read back, once the GPU is past it: never waited for
 void shot_ask_take() {
     if (!shot_asked.on || completed() < shot_asked.value) return;
-    invalidate_mapped(ask_buf_alloc, (uint64_t)kShotW * kShotH * 4);   // (non-coherent host memory: what the GPU wrote)
-    auto px = std::make_shared<std::vector<uint8_t>>((const uint8_t*)ask_map, (const uint8_t*)ask_map + (size_t)kShotW * kShotH * 4);
+    const uint32_t width = ask_width, height = ask_height;
+    invalidate_mapped(ask_buf_alloc, (uint64_t)width * height * 4);   // (non-coherent host memory: what the GPU wrote)
+    auto px = std::make_shared<std::vector<uint8_t>>((const uint8_t*)ask_map, (const uint8_t*)ask_map + (size_t)width * height * 4);
     ShotAsk a = std::move(shot_asked.ask);
     const int64_t at = shot_asked.present;
     shot_asked.on = false;
-    std::thread([px, a, at] {
+    // The GPU copy has completed and the CPU owns the pixels. A photo should not
+    // permanently retain a full-resolution image and readback buffer in VRAM.
+    destroy_buffer(ask_buf, ask_buf_alloc);
+    destroy_image(ask_image, ask_image_alloc);
+    ask_buf = VK_NULL_HANDLE, ask_image = VK_NULL_HANDLE, ask_map = nullptr;
+    ask_buf_alloc = nullptr, ask_image_alloc = nullptr;
+    std::thread([px, a, at, width, height] {
         // (through a file of its own and a rename: whoever is told the path never reads half a picture)
         const std::string part = a.path + ".part";
-        bool ok = write_png(part.c_str(), px->data(), kShotW, kShotH);
+        bool ok = write_png(part.c_str(), px->data(), width, height);
         if (ok) {
             std::remove(a.path.c_str());
             ok = std::rename(part.c_str(), a.path.c_str()) == 0;
@@ -3936,6 +3950,13 @@ void do_present(const nvn_tex* t, const int crop[4]) {
 } // namespace
 
 int shot_ask_next(const char* path, void (*done)(void* ctx, int64_t present, int ok), void* ctx) { return shot_ask(path, -1, done, ctx); }
+int photo_ask_next(const char* path, void (*done)(void*, int64_t, int), void* ctx) {
+    if (!path || !*path || !done) return 0;
+    std::lock_guard lk(shot_ask_mu);
+    if (shot_asks.size() >= 16) return 0;
+    shot_asks.push_back({path, -1, done, ctx, true});
+    return 1;
+}
 
 // (hookshot) RX_VK_FRAMELOG=<file>: every frame shown, the game's and the made ones, as they go to the screen, 320x180, while
 // <file>.go exists (scripts/framelog.py finds the flashes). Taken at the last step and written on a thread of its own, so
@@ -5167,6 +5188,7 @@ void fill_replay_table(MkwVkRenderer& t) {
     t.option = [](int id) -> int {
         if (id == 4088) return (int)(::mkwvk::ocr_ov_gpu.load(std::memory_order_relaxed) * 1000.0f);   // (Ocarina Reborn: the GPU's time a frame in us, for the FPS target, host/nn_vi.c)   // (3: the fixed path's scale in 1/10000, vk_menu.cpp; DLAA: full scale, vk_dlss.cpp)
         if (id == 11) return opts.stick_dead_zone;
+        if (id == 4200) return menu_photo_mode(); // host/ocr_tools.h
         if (id == 4083) return ocr_counters;   // (Ocarina Reborn: Classic counters, host/ocr_counters.c)
         if (id == OCR_OPT_VIEW) return ocr_view;   // (Ocarina Reborn: host/ocr_view.c)
         if (id == OCR_OPT_GRASS) return ocr_grass;
@@ -5188,7 +5210,7 @@ void fill_replay_table(MkwVkRenderer& t) {
         if (id == HOS_OPT_TEXT_SIZE) return opts.text_size;
         if (id == HOS_OPT_CAMERA_SPEED) return opts.camera_speed;
         if (id == HOS_OPT_PROMPTS) return opts.prompts;
-        if (id == HOS_OPT_FOV) return opts.fov;
+        if (id == HOS_OPT_FOV) return menu_photo_fov();
         if (id == HOS_OPT_SKIP_OPENING) return opts.skip_opening;
         return id == 0 ? opts.realtime : id == 1 ? menu_is_open() : id == 2 ? resolution_auto() && !temporal_full_scale() : id == 3 ? (temporal_full_scale() ? 10000 : resolution_scale()) : id == 4 ? opts.pad_background : id == 5 ? opts.text_speed : id == 6 ? opts.mouse_native :
                id == 7 ? opts.mouse_sens : id == 8 ? opts.mouse_invert : id == 9 ? opts.rumble : id == 16 ? opts.invert_cam_x : id == 17 ? opts.invert_cam_y : id == HOS_OPT_GYRO ? opts.gyro : id == HOS_OPT_GYRO_SENS_X ? opts.gyro_sens_x : id == HOS_OPT_GYRO_SENS_Y ? opts.gyro_sens_y : id == HOS_OPT_GYRO_INV_X ? opts.gyro_inv_x : id == HOS_OPT_GYRO_INV_Y ? opts.gyro_inv_y : id == HOS_OPT_GYRO_DEADZONE ? opts.gyro_deadzone :

@@ -13,6 +13,7 @@
    Found with the UI diagnostics of 2026-11-13 (tools/alpha/hud/ocr_uidiag.*) and Hookshot's own notes on f_80a87e50
    (nx2/oot_patches.py WHOLE_SITES). */
 #include "hos.h"
+#include "ocr_tools.h"
 #include <windows.h>
 #include <string.h>
 
@@ -23,14 +24,26 @@ extern void f_802f8ac0(Ctx *c);
 enum { OCR_OPT_COUNTERS = 4083, OCR_OPT_RUPEES = 4084 };   /* (the same in vk_replay.cpp / vk_menu.cpp: engine_v21.py apply_counters) */
 
 static int on(void) { return rx_option(OCR_OPT_COUNTERS, 0) == 1; }
+static int photo(void) { return rx_option(OCR_OPT_PHOTO, 0) == 1; }
+int hos_oot_story_event_active(void);
 
 typedef struct { uint64_t owner, root; uint32_t alpha; int hidden; } Pickup;
 static Pickup pickups[32];
 static SRWLOCK pickup_lock = SRWLOCK_INIT;
 static _Thread_local int setting_alpha;
 
+/* Verified UI screen types; pause, inventory, dialogue and cutscene screens stay
+   outside this list. All use the same layout root chain. */
+static int photo_hud_vtable(uint64_t vt) {
+    return vt == 0x84c08300ull /* minimap */ || vt == 0x84c0b710ull /* PlayerStatus */ ||
+           vt == 0x84c0afe0ull /* PlayerStatus3D */ || vt == 0x84c07ec8ull /* location */ ||
+           vt == 0x84c042e8ull; /* floating balloon messages */
+}
+
 static uint64_t pickup_root(Ctx *c, uint64_t owner) {
-    if (!owner || recomp_load64(c, owner) != 0x84c0ac28ull) return 0;
+    if (!owner) return 0;
+    const uint64_t vt = recomp_load64(c, owner);
+    if (vt != 0x84c0ac28ull && !photo_hud_vtable(vt)) return 0;
     const uint64_t layout = recomp_load64(c, owner + 0x28);
     const uint64_t instance = layout ? recomp_load64(c, layout + 0x80) : 0;
     return instance ? recomp_load64(c, instance + 0x100) : 0;
@@ -48,10 +61,9 @@ static void set_alpha(Ctx *c, uint64_t root, uint32_t alpha) {
 }
 
 /* Before the pickup update's stack frame. Never skips the update. */
-void ocr_counters_pickup(Ctx *c) {
-    const uint64_t owner = c->x[0], root = pickup_root(c, owner);
+static void mask_layout(Ctx *c, uint64_t owner, int enabled) {
+    const uint64_t root = pickup_root(c, owner);
     if (!root) return;
-    const int enabled = on();
     const uint32_t current = (uint32_t)recomp_load32(c, root + 0x74);
     uint32_t alpha = current;
     int write = 0, logged = 0;
@@ -80,19 +92,28 @@ void ocr_counters_pickup(Ctx *c) {
     if (logged) {
         static LONG lines;
         if (InterlockedIncrement(&lines) <= 8)
-            hos_log("[OcarinaReborn/COUNTERS] pickup layout masked (owner %#llx, root %#llx)",
+            hos_log("[OcarinaReborn/COUNTERS] UI layout masked (owner %#llx, root %#llx)",
                     (unsigned long long)owner, (unsigned long long)root);
     }
+}
+
+void ocr_counters_pickup(Ctx *c) { mask_layout(c, c->x[0], on() || photo()); }
+
+/* The normal HUD's update still runs: hiding panes never skips game UI logic. */
+void ocr_photo_hud(Ctx *c, uint64_t screen) {
+    if (screen && photo_hud_vtable(recomp_load64(c, screen))) mask_layout(c, screen, photo());
 }
 
 /* After the alpha setter's first ldr s1, before its comparison: remember the
    animation's requested s0, but force 0 only on the verified pickup root. */
 void ocr_counters_alpha(Ctx *c) {
-    if (setting_alpha || !on()) return;
+    if (setting_alpha || (!on() && !photo())) return;
     AcquireSRWLockExclusive(&pickup_lock);
     for (unsigned i = 0; i < sizeof pickups / sizeof pickups[0]; i++) {
         Pickup *p = &pickups[i];
         if (p->hidden && p->root == c->x[0]) {
+            const int is_pickup = recomp_load64(c, p->owner) == 0x84c0ac28ull;
+            if (!(photo() || (is_pickup && on()))) break;
             if (pickup_root(c, p->owner) == p->root) {
                 memcpy(&p->alpha, &c->vreg[0][0], sizeof p->alpha);
                 const uint32_t zero = 0;
@@ -110,6 +131,7 @@ void ocr_counters_alpha(Ctx *c) {
    around the call: it runs inside the game's own frame */
 void ocr_counters_frame(Ctx *c) {
     extern void f_80a87c30(Ctx *c);
+    rx_option_set(OCR_OPT_PHOTO_READY, hos_oot_flight_shortcut_ready() && !hos_oot_story_event_active());
     static unsigned frames;
     static int sent = -2;
     if (!on() || !hos_oot_flight_shortcut_ready()) {

@@ -125,6 +125,8 @@ int menu_heart_protection();
 int menu_enemy_damage();   // (Ocarina Reborn) 1 to 5
 int menu_player_flight();
 int menu_free_camera();
+int menu_photo_mode();
+int menu_photo_fov();
 int menu_link_speed();   // (Movement speed in percent, 100 while the tools are off)
 int menu_take_cheat_action();
 void menu_note_frame(bool game_frame, int shown = 1);   // (the frame rates the FPS counter shows)

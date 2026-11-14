@@ -25,6 +25,7 @@
    Npad states share one layout (NpadCommonState): { s64 sampling; u64 buttons; s32 lx, ly; s32 rx, ry; u32 attributes;
    pad } = 0x28 bytes. */
 #include "hos.h"
+#include "ocr_tools.h"
 #include "hos_paths.h"
 #include "control.h"
 #include <math.h>
@@ -1096,6 +1097,12 @@ static void npad_states(Ctx *c) {
         }
         __atomic_store_n(&flight_input, flight, __ATOMIC_RELAXED);
         __atomic_store_n(&move_stick_held, abs(stick[0]) > 4096 || abs(stick[1]) > 4096, __ATOMIC_RELAXED);
+        // Keep camera axes, but never send attacks/items/pause to Link in photo mode.
+        // F1 and the controller menu chord use raw host input independently.
+        if (rx_option(OCR_OPT_PHOTO, 0)) {
+            memset(stick, 0, sizeof stick);
+            buttons = 0;
+        }
         __atomic_store_n(&free_camera_axes, axes, __ATOMIC_RELAXED);
         __atomic_store_n(&free_camera_height, height, __ATOMIC_RELAXED);
     }
