@@ -36,7 +36,7 @@ def hardware_signature(facts):
 
 # VK_ERROR_OUT_OF_HOST_MEMORY (-1) and a confirmed Windows commit retry are specific
 # evidence; failed shader translation and VK_ERROR_UNKNOWN (-13) are not.
-HOST_MEMORY_ERROR = re.compile(r"vk: submit \d+ failed \(-1\)|mem: commit .*Windows grew the page file")
+HOST_MEMORY_ERROR = re.compile(r"vk: (?:batched |segment )?submit \d+ failed \(-1\)|VK_ERROR_OUT_OF_HOST_MEMORY|mem: commit .*Windows grew the page file")
 GPU_SUBMIT_ERROR = re.compile(r'vk: (?:batched |segment )?submit \d+ failed \((-2|-4)\)')
 
 

@@ -49,6 +49,9 @@ static int16_t adpcm_sample(Voice *v, const WB *w, int64_t s) { (void)v; (void)w
         'static WB read_wb(', 'static void release_wb(', 'static int next_source_frame(',
         'static void biquad_frame(', 'static void render_voice('))
     code.append(source[source.index('enum { OP_VOICE_RELEASE'):source.index('static int64_t last_update_ns;')])
+    code.append('static int64_t last_update_ns;')
+    for marker in ('static void audio_voice_diagnostic(', 'static void audio_status_diagnostic('):
+        code.append(helper.block(source, marker))
     for name in ('apply', 'submit', 'apply_pending', 'commit'):
         if 'static void ' + name + '(' in source:
             code.append(helper.block(source, 'static void ' + name + '('))

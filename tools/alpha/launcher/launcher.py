@@ -179,28 +179,38 @@ def display_info():
 
 
 SESSION_KEEP = ('[perf]', '[Performance Warning]', 'VRAM full', 'over budget', '[HDR]', '[OcarinaReborn/GFX]', 'swapchain ',
-                'allocation fail', 'import fail', 'translation fail', 'rejected', 'device lost', 'DEVICE_LOST')
+                'allocation fail', 'import fail', 'translation fail', 'rejected', 'device lost', 'DEVICE_LOST',
+                'GPU queue submission failed')
 
 
 def session_from_game_log(game):
     """the game's own performance lines of the last run, for the launcher's session log: the Vulkan GPU it renders on, its
     swapchains, the [perf] summaries (every 5 s), the warnings and memory/shader failures. Real renderer values only"""
+    from collections import deque
     f = Path(game) / 'ocarina_reborn_log.txt'
-    out, gpu = [], None
+    first, tail, gpu, kept = [], deque(maxlen=1200), None, 0
     try:
-        for line in f.read_text(encoding='utf-8', errors='replace').splitlines():
-            if gpu is None and ', Vulkan ' in line and 'vk: ' in line and 'device ' not in line:
-                gpu = line.split('vk: ', 1)[1].split(', Vulkan ')[0]
-            if (any(k in line for k in SESSION_KEEP) or performance.HOST_MEMORY_ERROR.search(line) or
-                    performance.GPU_SUBMIT_ERROR.search(line) or performance.CACHE_PIPELINE.search(line) or
-                    performance.CACHE_PROGRAM.search(line)):
-                out.append(line.split('] ', 1)[-1] if line.startswith('[hos') else line)
+        # Long sessions can produce hundreds of MB. Keep the same first/last
+        # evidence without loading and splitting the entire log in RAM.
+        with f.open(encoding='utf-8', errors='replace') as stream:
+            for line in stream:
+                line = line.rstrip('\r\n')
+                if gpu is None and ', Vulkan ' in line and 'vk: ' in line and 'device ' not in line:
+                    gpu = line.split('vk: ', 1)[1].split(', Vulkan ')[0]
+                if (any(k in line for k in SESSION_KEEP) or performance.HOST_MEMORY_ERROR.search(line) or
+                        performance.GPU_SUBMIT_ERROR.search(line) or performance.CACHE_PIPELINE.search(line) or
+                        performance.CACHE_PROGRAM.search(line)):
+                    line = line.split('] ', 1)[-1] if line.startswith('[hos') else line
+                    kept += 1
+                    if kept <= 300:
+                        first.append(line)
+                    else:
+                        tail.append(line)
     except OSError as e:
         return [f'game log not read: {e}']
     head = [f'Active GPU (Vulkan): {gpu or "not in the game log"}']
-    if len(out) > 1500:   # (about two hours of summaries; the rest stays in the game's log)
-        out = out[:300] + [f'... {len(out) - 1500} lines left out (in the game log) ...'] + out[-1200:]
-    return head + out
+    omitted = [f'... {kept - 1500} lines left out (in the game log) ...'] if kept > 1500 else []
+    return head + first + omitted + list(tail)
 
 
 def game_exe(game):
@@ -2479,7 +2489,10 @@ class App(tk.Tk):
     def crash_info(self, code):
         tail = ''
         try:
-            tail = ''.join(next((Path(self.cfg['game_dir']) / n for n in ('ocarina_reborn_log.txt', 'hookshot_log.txt') if (Path(self.cfg['game_dir']) / n).is_file()), Path(self.cfg['game_dir']) / 'ocarina_reborn_log.txt').read_text(errors='replace').splitlines(True)[-150:])
+            game = Path(self.cfg['game_dir'])
+            runtime_log = next((game / n for n in ('ocarina_reborn_log.txt', 'hookshot_log.txt')
+                                if (game / n).is_file()), game / 'ocarina_reborn_log.txt')
+            tail = ''.join(diagnostics.tail(runtime_log, limit=256 * 1024).splitlines(True)[-150:])
         except OSError:
             pass
         (DIRS['CrashDumps'] / f'crash-info-{datetime.datetime.now():%Y%m%d-%H%M%S}.txt').write_text(

@@ -15,7 +15,14 @@ static int failures;
 #define RET(v) (c->x[0] = (uint64_t)(v))
 #define HLE(sym) void imp_##sym(Ctx *c)
 #define AUT(...) ((void)0)
-#define ocr_diag_event(kind, detail) ((void)0)
+static int diag_on = 1, diag_events;
+static char diag_kind[64], diag_detail[400];
+static int ocr_diag_enabled(void) { return diag_on; }
+static void ocr_diag_event(const char *kind, const char *detail) {
+    ++diag_events;
+    snprintf(diag_kind, sizeof diag_kind, "%s", kind);
+    snprintf(diag_detail, sizeof diag_detail, "%s", detail);
+}
 #define env_on(name) 0
 static void hos_log(const char *format, ...) { (void)format; }
 static void au_lock(void) {}
@@ -134,6 +141,21 @@ int main(void) {
         CHECK(call(RELEASED, i, 0) == 0);
     }
     CHECK(call(COUNT, 0, 0) == 1);
+    /* Diagnostic snapshots describe looping/empty voices without consuming them,
+       and are throttled; disabled diagnostics emit nothing. */
+    reset(); start(0); consume(0, 12);
+    const int before = diag_events;
+    audio_status_diagnostic(10000000000LL);
+    CHECK(diag_events == before + 1 && !strcmp(diag_kind, "audio_status"));
+    CHECK(strstr(diag_detail, "voices=6 playing=1 looping=1 empty_playing=0"));
+    CHECK(voices[0].played == 12 && voices[0].nwb == 1);
+    audio_status_diagnostic(11000000000LL);
+    CHECK(diag_events == before + 1);
+    diag_on = 0; audio_status_diagnostic(20000000000LL);
+    audio_voice_diagnostic("disabled", 0);
+    CHECK(diag_events == before + 1);
+    diag_on = 1; audio_voice_diagnostic("before_stop", 0);
+    CHECK(strstr(diag_detail, "queued=1 pending=0 loop=1 played=12"));
     free(cmds);
     if (!failures) puts("PASS: loop cancellation, stop/restart ordering, pause and coherent six-channel status across mixer timeouts");
     return failures != 0;

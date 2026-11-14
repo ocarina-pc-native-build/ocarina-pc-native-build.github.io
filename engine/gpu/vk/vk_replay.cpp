@@ -72,6 +72,8 @@ CondNote cond_ring[1 << 15];
 uint32_t cond_ring_at = 0;
 namespace {
 
+[[noreturn]] void submit_failed(VkResult result);
+
 // ---- submissions: a timeline semaphore; value n = the n-th submit done ----
 VkSemaphore timeline = VK_NULL_HANDLE;
 std::atomic<uint64_t> timeline_sent{0};   // (the highest value a submission already in the queue signals: gpu_hang_watch_start)
@@ -246,6 +248,7 @@ void queue_flush_locked() {   // (dev.present_mu held)
     static int failures;
     if (res != VK_SUCCESS && failures++ < 8) logf("vk: batched submit %llu failed (%d)", (unsigned long long)batch_next, (int)res);
     if (res == VK_ERROR_DEVICE_LOST) device_lost();
+    if (res != VK_SUCCESS) submit_failed(res);
     if (res == VK_SUCCESS && pend.any_signal) note_timeline_sent(pend.signal);
     batch_flushed = batch_next;
     st_flushes++, st_batched_cbs += (int64_t)pend.cbs.size();
@@ -476,6 +479,7 @@ void submit_recording(Recording& r, bool signal_value = true, uint64_t signal_at
     static int failures;
     if (res != VK_SUCCESS && failures++ < 8) logf("vk: submit %llu failed (%d)", (unsigned long long)r.value, (int)res);
     if (res == VK_ERROR_DEVICE_LOST) device_lost();
+    if (res != VK_SUCCESS) submit_failed(res);
     if (res == VK_SUCCESS && signal_value) note_timeline_sent(signal.value);
 }
 
@@ -1498,6 +1502,23 @@ void record_segment(VkCommandBuffer& cmd, const Segment& g) {
     std::fflush(stderr);
     std::_Exit(3);
 }
+
+// A failed queue submission cannot signal its fences or timeline values. Continuing
+// after an allocation failure left scene loads/presentation waiting forever, even
+// though the device had not been lost. Do not mark the work complete or retry it
+// with resources still referenced by older submissions; preserve the exact error.
+[[noreturn]] void submit_failed(VkResult result) {
+    if (result == VK_ERROR_OUT_OF_HOST_MEMORY)
+        replay_fatal("GPU queue submission failed: VK_ERROR_OUT_OF_HOST_MEMORY (-1). "
+                     "The driver could not allocate system memory. The game stopped rather than waiting on unsubmitted work.");
+    if (result == VK_ERROR_OUT_OF_DEVICE_MEMORY)
+        replay_fatal("GPU queue submission failed: VK_ERROR_OUT_OF_DEVICE_MEMORY (-2). "
+                     "The driver could not allocate GPU memory. The game stopped rather than waiting on unsubmitted work.");
+    char why[256];
+    std::snprintf(why, sizeof why, "GPU queue submission failed (VkResult %d). "
+                  "The game stopped rather than waiting on unsubmitted work.", (int)result);
+    replay_fatal(why);
+}
 std::recursive_mutex par_mu;
 
 /// The draws and dispatches from p to its stream's end, counted without applying anything (the dry pass's dry_work);
@@ -1703,6 +1724,7 @@ const uint8_t* replay_handle(VkCommandBuffer& cmd, const uint8_t* h, bool may_st
         j->r->submitted = res == VK_SUCCESS;
         if (res != VK_SUCCESS) logf("vk: segment submit %llu failed (%d)", (unsigned long long)j->r->value, (int)res);
         if (res == VK_ERROR_DEVICE_LOST) device_lost();
+        if (res != VK_SUCCESS) submit_failed(res);
     }
     {
         std::unique_lock lk(par_pool.mu);
@@ -4338,6 +4360,7 @@ void present_image(VkImage src, uint32_t sw, uint32_t sh, const int crop[4], VkI
     si.pNext = reflex_submit_id(nullptr, reflex_present_frame);
     res = vkQueueSubmit2(dev.queue, 1, &si, f.done);
     if (res == VK_ERROR_DEVICE_LOST) device_lost();
+    if (res != VK_SUCCESS) submit_failed(res);
     if (present_defer_into) {   // (present ahead: the copy is queued; present_commit shows it at its time)
         present_defer_into->used = true;
         present_defer_into->index = index;

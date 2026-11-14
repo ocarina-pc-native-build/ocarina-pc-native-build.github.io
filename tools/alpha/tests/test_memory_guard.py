@@ -22,6 +22,9 @@ spec.loader.exec_module(engine)
 class MemoryDiagnosis(unittest.TestCase):
     def test_host_oom_without_fps_is_not_lost(self):
         for line in ['[hos host] vk: submit 2578729 failed (-1)',
+                     '[hos host] vk: batched submit 42 failed (-1)',
+                     '[hos host] vk: segment submit 42 failed (-1)',
+                     'vk: FATAL: GPU queue submission failed: VK_ERROR_OUT_OF_HOST_MEMORY (-1).',
                      '[hos Resource Memory] mem: commit of 0x10000 bytes went through after 2 retries (Windows grew the page file)']:
             with self.subTest(line=line):
                 self.assertEqual(performance.memory_events([line]), 1)

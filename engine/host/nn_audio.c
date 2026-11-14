@@ -1123,12 +1123,51 @@ static Cmd *cmds;
 static int ncmds, cmds_cap;
 static int64_t last_update_ns;
 
+/* Bounded metadata only: no samples, paths or guest pointers. Together with the
+   timeline's scene changes this distinguishes an unrequested stop from a queued
+   stop not applied by the renderer. Voice slots are not song identifiers. */
+static void audio_voice_diagnostic(const char *kind, int index) {
+    if (!ocr_diag_enabled()) return;
+    const Voice *v = &voices[index];
+    char note[300];
+    snprintf(note, sizeof note,
+             "voice=%d state=%d released=%d format=%d rate=%d volume=%.3f queued=%d pending=%d loop=%d played=%lld; voice ID is not a song ID",
+             index, v->state, v->released, v->format, v->rate, v->volume, v->nwb, v->pending_wb,
+             v->nwb ? v->wbc[0].loop : 0, (long long)v->played);
+    ocr_diag_event(kind, note);
+}
+
+static void audio_status_diagnostic(int64_t now) {   /* audio lock held, at most once every five seconds */
+    static int64_t next;
+    if (!ocr_diag_enabled() || now < next) return;
+    next = now + 5000000000LL;
+    int used = 0, playing = 0, loops = 0, empty = 0, pending = 0;
+    for (int i = 0; i < MAX_VOICES; ++i) {
+        const Voice *v = &voices[i];
+        if (!v->used || v->released) continue;
+        ++used; pending += v->pending_wb;
+        if (v->state == PLAY_STARTED) {
+            ++playing;
+            if (!v->nwb) ++empty;
+            else if (v->wbc[0].loop) ++loops;
+        }
+    }
+    char note[220];
+    snprintf(note, sizeof note,
+             "voices=%d playing=%d looping=%d empty_playing=%d pending_buffers=%d queued_commands=%d client_update_age_ms=%.1f",
+             used, playing, loops, empty, pending, ncmds, (now - last_update_ns) / 1e6);
+    ocr_diag_event("audio_status", note);
+}
+
 static void apply(const Cmd *k) {   /* (with the lock held) */
     if (k->op <= OP_VOICE_APPEND) {
         Voice *v = &voices[k->idx];
         if (!v->used) return;
         switch (k->op) {
-        case OP_VOICE_RELEASE: v->used = 0; break;
+        case OP_VOICE_RELEASE:
+            audio_voice_diagnostic("audio_voice_release_applied", k->idx);
+            v->used = 0;
+            break;
         case OP_VOICE_DEST:
             if (v->dest != k->tgt || v->dest_kind != k->i0)
                 memset(v->split_bq_epoch, 0, sizeof v->split_bq_epoch);
@@ -1148,6 +1187,7 @@ static void apply(const Cmd *k) {   /* (with the lock held) */
             memcpy(v->bq_a[k->i0], k->a, sizeof k->a);
             break;
         case OP_VOICE_STATE:
+            if (k->i0 == PLAY_STOPPED) audio_voice_diagnostic("audio_voice_before_stop", k->idx);
             if (v->state != k->i0) {
                 char note[100];snprintf(note,sizeof note,"voice=%d applied_state=%d queued_buffers_before=%d",k->idx,k->i0,v->nwb);
                 ocr_diag_event("audio_voice_applied",note);
@@ -1347,6 +1387,7 @@ static DWORD WINAPI renderer_main(void *p) {
         au_lock();
         if (ncmds && hos_now_ns() - last_update_ns > 50000000) apply_pending();   /* controls only: status waits for the client update */
         render_frame(pcm, out_channels);
+        audio_status_diagnostic(hos_now_ns());
         au_unlock();
         if (gain_frames-- <= 0) gain_want = audio_player_gain(), gain_frames = 20;   /* (the menu read every 100 ms) */
         gain = audio_apply_gain(pcm, FRAME, out_channels, gain, gain_want);
@@ -1668,6 +1709,7 @@ HLE(_ZN2nn5audio16AcquireVoiceSlotEPNS0_19AudioRendererConfigEPNS0_9VoiceTypeEii
     v->pitch = 1.0f;
     v->state = PLAY_STOPPED;
     put_handle(ARG(1), K_VOICE, i);
+    audio_voice_diagnostic("audio_voice_acquired", i);
     static int logged;
     if (logged++ < 12 || au_trace > 0)
         hos_log("audio: voice %d: %d Hz, %d channels, format %d, parameter %#llx (%llu bytes) at %.1f s", i, v->rate, v->channels,
@@ -1680,6 +1722,7 @@ HLE(_ZN2nn5audio16ReleaseVoiceSlotEPNS0_19AudioRendererConfigEPNS0_9VoiceTypeE) 
     Voice *v = voice_of(ARG(1));
     if (v) {
         v->released = 1;
+        audio_voice_diagnostic("audio_voice_release_requested", (int)(v - voices));
         const Cmd k = {.op = OP_VOICE_RELEASE, .idx = (int)(v - voices)};
         submit(&k);
     }

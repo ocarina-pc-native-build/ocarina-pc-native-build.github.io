@@ -17,6 +17,8 @@ static void *guest_ptr(uint64_t address) { CHECK(address < sizeof guest); return
 #define HLE(sym) void imp_##sym(Ctx *c)
 #define AUT(...) ((void)0)
 static void hos_log(const char *format, ...) { (void)format; }
+static int ocr_diag_enabled(void) { return 0; }
+static void ocr_diag_event(const char *kind, const char *detail) { (void)kind; (void)detail; }
 
 /* Single-threaded test boundaries: the mixer's frames run between the game's calls, as its thread can. */
 static int lock_depth;

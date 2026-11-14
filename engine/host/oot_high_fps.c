@@ -3,6 +3,7 @@
    HOS_FPS_LOG (on, by the switches' rule: =0 is off): what they do, every 600 calls. */
 #include "hos.h"
 #include "oot_high_fps.h"
+#include "ocr_diagnostics.h"
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <stdlib.h>
@@ -37,14 +38,19 @@ int hos_oot_sound_gate(Ctx *c, uint32_t phase, uint64_t slot) {
     long long ran = -1;
     AcquireSRWLockExclusive(&sound_lock);
     const int run = oot_sound_gate(&sound_gate, phase, step, t);
-    if (phase == 0 && fps_log()) {
+    if (phase == 0 && (fps_log() || ocr_diag_enabled())) {
         sound_runs += run;
         if (!(++sound_calls % 600)) ran = sound_runs, sound_runs = 0;
     }
     ReleaseSRWLockExclusive(&sound_lock);
-    if (ran >= 0)
-        hos_log("oot: sound job ran %lld of the last 600 frames (step %.3f%s)", ran, step,
-                oot_sound_partial(step, t) ? ", held to 60 Hz" : "");
+    if (ran >= 0) {
+        if (fps_log())
+            hos_log("oot: sound job ran %lld of the last 600 frames (step %.3f%s)", ran, step,
+                    oot_sound_partial(step, t) ? ", held to 60 Hz" : "");
+        char note[140];
+        snprintf(note, sizeof note, "runs=%lld frames=600 last_step=%.3f timed=%d; guest sound job, not audio output frames", ran, step, t);
+        ocr_diag_event("audio_game_clock", note);
+    }
     return run;
 }
 

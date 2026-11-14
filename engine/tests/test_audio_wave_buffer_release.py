@@ -61,8 +61,11 @@ static int16_t adpcm_sample(Voice *v, const WB *w, int64_t s) { (void)v; (void)w
     actual.extend(helper.block(source, marker) for marker in (
         "static void put_handle(", "static int get_handle(", "static int voice_index(", "static Voice *voice_of(",
         "static WB read_wb(", "static void release_wb(", "static int next_source_frame("))
-    actual.extend([queue, helper.block(source, "static void apply("), helper.block(source, "static void submit("),
-                   helper.block(source, "static void commit(")])
+    actual.append(queue)
+    for marker in ("static void audio_voice_diagnostic(", "static void apply(", "static void submit(",
+                   "static void apply_pending(", "static void commit("):
+        if marker in source:
+            actual.append(helper.block(source, marker))
     actual.extend(helper.block(source, "HLE(" + name + ")") for name in (APPEND, RELEASED, COUNT, STATE))
     flags = subprocess.CREATE_NO_WINDOW | subprocess.BELOW_NORMAL_PRIORITY_CLASS if os.name == "nt" else 0
     with tempfile.TemporaryDirectory(prefix="audio-wave-buffer-release-") as temporary:
