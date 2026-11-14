@@ -1,6 +1,6 @@
-# Building Ocarina Reborn v1.0.7
+# Building Ocarina Reborn v1.0.8
 
-This checkout contains the actual launcher and patched engine source used by the v1.0.7 installer. It contains no game executable, extracted game filesystem, saves or private signing material. A game build still requires your own supported game file.
+This checkout contains the actual launcher and patched engine source used by the v1.0.8 installer. It contains no game executable, extracted game filesystem, saves or private signing material. A game build still requires your own supported game file.
 
 ## Layout
 
@@ -18,7 +18,7 @@ This checkout contains the actual launcher and patched engine source used by the
 
 The source archive deliberately excludes compiler binaries, Python distributions, dependency SDK binaries and caches. The reproducible entry point below takes those build dependencies from an existing Ocarina Reborn distribution; it takes the launcher and host/GPU engine code from this checkout.
 
-1. Install the [Ocarina Reborn v1.0.7 distribution](https://github.com/misterrageguy-cyber/OoT2026-PC-Recomp/releases/tag/v1.0.7) to provide its pinned Python, llvm-mingw, Vulkan/FFmpeg SDKs and SDL runtime. You do not need to supply a game file or build the game to use its tools.
+1. Install the [Ocarina Reborn v1.0.8 distribution](https://github.com/misterrageguy-cyber/OoT2026-PC-Recomp/releases/tag/v1.0.8) to provide its pinned Python, llvm-mingw, Vulkan/FFmpeg SDKs and SDL runtime. You do not need to supply a game file or build the game to use its tools.
 2. Install [Inno Setup 6](https://jrsoftware.org/isinfo.php) if you want a setup executable.
 3. Open PowerShell in this source checkout and run:
 
@@ -34,7 +34,7 @@ The copy of `tools/alpha/build_alpha.ps1` is the original developer packaging ro
 
 ## Dependencies without an installed distribution
 
-See `engine/CONTRIBUTING.md` and `engine/docs/development.md` for the upstream dependency/build route. Python package versions are pinned in `engine/requirements.txt` and `engine/nx2/prompt_requirements.txt`. Windows uses llvm-mingw (the v1.0.7 distribution carries the 20261104 toolchain). The Vulkan and FFmpeg SDKs go in `engine/cpm`, SDL binaries in `engine/third_party/sdl2`, and optional WebGPU runtime files in `engine/wgpu-native`. The latter directory includes the upstream tag and patches used for that dependency.
+See `engine/CONTRIBUTING.md` and `engine/docs/development.md` for the upstream dependency/build route. Python package versions are pinned in `engine/requirements.txt` and `engine/nx2/prompt_requirements.txt`. Windows uses llvm-mingw (the v1.0.8 distribution carries the 20261104 toolchain). The Vulkan and FFmpeg SDKs go in `engine/cpm`, SDL binaries in `engine/third_party/sdl2`, and optional WebGPU runtime files in `engine/wgpu-native`. The latter directory includes the upstream tag and patches used for that dependency.
 
 The launcher environment additionally needs NumPy, lz4, zstandard and zbic. Offline tunic-color preparation uses Pillow, astc-encoder-py and texture2ddecoder from the bundled engine Python environment. The packaged `python/` and `engine/python/` environments contain these tools. FSR 4 is a separate AMD runtime dependency; its redistributable binaries and license are in the distribution's `amd-fsr4/` directory.
 
