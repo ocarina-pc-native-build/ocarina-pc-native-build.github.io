@@ -21,3 +21,5 @@ On November 14, 2026, the project owner requested restoration of the former webs
 The owner subsequently supplied `Schwebende_blaue_Okarina-Animation.gif` for the search preview. `assets/ocarina.gif` is an unchanged copy (418 × 418, eight frames, transparent). The favicon, Open Graph image, social preview and WebPage primary image use that URL; the site and page title are simply `Ocarina Reborn`. Search engines select and refresh their own displayed titles and images after recrawling.
 
 The v1.0.7 release also restores the requested Ocarina/Navi launcher and startup visuals for all users. Private voice recordings remain excluded from every public package.
+
+The owner supplied `ChatGPT-Bild 14. Nov. 2026, 02_28_11.png` on November 14 for the website background. `assets/forest-background.png` is its unchanged copy (1672 x 941). It appears in the hero and, behind a dark readability overlay, throughout the page. This is a website-only change; launcher release v1.0.7 remains current.

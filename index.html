@@ -51,6 +51,7 @@
 }
 </script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preload" as="image" href="assets/forest-background.png">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="preload" as="image" href="assets/ocarina-1100.webp" imagesrcset="assets/ocarina-560.webp 560w, assets/ocarina-1100.webp 1100w" imagesizes="(max-width: 900px) 70vw, 34vw">
@@ -62,7 +63,8 @@
 }
 *{box-sizing:border-box}
 html{scroll-behavior:smooth;scroll-padding-top:84px}
-body{margin:0;background:var(--bg);color:var(--text);font:16px/1.65 Inter,"Segoe UI",system-ui,sans-serif;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+body{position:relative;isolation:isolate;margin:0;background:var(--bg);color:var(--text);font:16px/1.65 Inter,"Segoe UI",system-ui,sans-serif;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+body:before{content:"";position:fixed;inset:0;z-index:-3;pointer-events:none;background:linear-gradient(rgba(5,11,26,.88),rgba(5,11,26,.94)),url("assets/forest-background.png") center/cover no-repeat}
 a{color:var(--cyan);text-underline-offset:4px}
 a:focus-visible,button:focus-visible{outline:2px solid var(--gold);outline-offset:4px;border-radius:8px}
 img{max-width:100%;height:auto;display:block}
@@ -92,9 +94,9 @@ img{max-width:100%;height:auto;display:block}
 .btn.gold{border-color:rgba(244,200,74,.7);color:var(--gold-hi)}
 .btn.gold:hover{box-shadow:0 0 26px rgba(244,200,74,.4);border-color:var(--gold)}
 
-/* ---- the hero: Hyrule field at night (SVG, sharp at any size) */
+/* ---- the hero: the owner's forest artwork */
 .hero{position:relative;min-height:100vh;min-height:100svh;display:flex;align-items:center;overflow:hidden;isolation:isolate}
-.hero .scene{position:absolute;inset:0;z-index:-2;width:100%;height:100%;object-fit:cover;object-position:50% 62%}
+.hero .scene{position:absolute;inset:0;z-index:-2;width:100%;height:100%;object-fit:cover;object-position:50% 50%}
 .hero:before{content:"";position:absolute;inset:0;z-index:-1;background:linear-gradient(90deg,rgba(5,11,26,.72) 0%,rgba(5,11,26,.35) 45%,rgba(5,11,26,.15) 100%),linear-gradient(rgba(5,11,26,.55),transparent 30%)}
 .hero:after{content:"";position:absolute;inset:auto 0 0;height:28vh;background:linear-gradient(transparent,var(--bg));z-index:-1}
 .hero .wrap{display:grid;grid-template-columns:1.05fr .95fr;align-items:center;gap:32px;padding:120px 0 90px}
@@ -211,9 +213,9 @@ footer nav{display:flex;gap:20px;flex-wrap:wrap}footer a{color:var(--sub);text-d
 </header>
 
 <main>
-<!-- HERO: Hyrule field at night, all vector -->
+<!-- HERO: owner-supplied forest background -->
 <section class="hero" id="top" aria-label="Ocarina Reborn">
-  <img class="scene" src="assets/hyrule.webp" srcset="assets/hyrule-800.webp 800w, assets/hyrule.webp 1254w" sizes="100vw" width="1254" height="1254" alt="" fetchpriority="high">
+  <img class="scene" src="assets/forest-background.png" width="1672" height="941" alt="" fetchpriority="high">
 
   <div class="wrap">
     <div class="hero-copy">
@@ -285,7 +287,7 @@ footer nav{display:flex;gap:20px;flex-wrap:wrap}footer a{color:var(--sub);text-d
     <div class="panel update">
       <div>
         <h3>Open project source</h3>
-        <p class="lead">Our v1.0.6 release is based on Hookshot v2.2.0-rc.1 under GPL-3.0-or-later. Ocarina Reborn adds its own launcher, installer, settings and custom changes. This is an independently maintained project, not an official Hookshot release.</p>
+        <p class="lead">Our v1.0.7 release is based on Hookshot v2.2.0-rc.1 under GPL-3.0-or-later. Ocarina Reborn adds its own launcher, installer, settings and custom changes. This is an independently maintained project, not an official Hookshot release.</p>
         <div class="more">
           <a class="btn small" href="https://github.com/misterrageguy-cyber/OoT2026-PC-Recomp/tree/main/engine">Engine &amp; renderer</a>
           <a class="btn small" href="https://github.com/misterrageguy-cyber/OoT2026-PC-Recomp/tree/main/engine/nx2">Game-build tools</a>
