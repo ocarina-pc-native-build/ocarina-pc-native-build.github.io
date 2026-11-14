@@ -7,22 +7,22 @@
 <title>Ocarina Reborn</title>
 <meta name="description" content="Ocarina Reborn. Download the latest update, explore the features and join the community.">
 <link rel="canonical" href="https://ocarina-pc-native-build.github.io/">
-<link rel="icon" type="image/gif" sizes="418x418" href="assets/ocarina.gif">
+<link rel="icon" type="image/svg+xml" sizes="any" href="assets/wordmark-icon.svg">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Ocarina Reborn">
 <meta property="og:title" content="Ocarina Reborn">
 <meta property="og:description" content="Download the latest update, explore the features and join the community.">
 <meta property="og:url" content="https://ocarina-pc-native-build.github.io/">
-<meta property="og:image" content="https://ocarina-pc-native-build.github.io/assets/ocarina.gif">
-<meta property="og:image:type" content="image/gif">
-<meta property="og:image:width" content="418">
-<meta property="og:image:height" content="418">
-<meta property="og:image:alt" content="The blue Ocarina Reborn ocarina">
-<meta name="twitter:card" content="summary">
+<meta property="og:image" content="https://ocarina-pc-native-build.github.io/assets/forest-background.png">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="1672">
+<meta property="og:image:height" content="941">
+<meta property="og:image:alt" content="Ocarina Reborn — a sunlit forest with a blue ocarina">
+<meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="Ocarina Reborn">
 <meta name="twitter:description" content="Download the latest update, explore the features and join the community.">
-<meta name="twitter:image" content="https://ocarina-pc-native-build.github.io/assets/ocarina.gif">
-<meta name="twitter:image:alt" content="The blue Ocarina Reborn ocarina">
+<meta name="twitter:image" content="https://ocarina-pc-native-build.github.io/assets/forest-background.png">
+<meta name="twitter:image:alt" content="Ocarina Reborn — a sunlit forest with a blue ocarina">
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
@@ -41,9 +41,9 @@
       "isPartOf": {"@id": "https://ocarina-pc-native-build.github.io/#website"},
       "primaryImageOfPage": {
         "@type": "ImageObject",
-        "url": "https://ocarina-pc-native-build.github.io/assets/ocarina.gif",
-        "width": 418,
-        "height": 418,
+        "url": "https://ocarina-pc-native-build.github.io/assets/forest-background.png",
+        "width": 1672,
+        "height": 941,
         "caption": "Ocarina Reborn"
       }
     }
@@ -54,7 +54,6 @@
 <link rel="preload" as="image" href="assets/forest-background.png">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="preload" as="image" href="assets/ocarina-1100.webp" imagesrcset="assets/ocarina-560.webp 560w, assets/ocarina-1100.webp 1100w" imagesizes="(max-width: 900px) 70vw, 34vw">
 <style>
 :root{
   --bg:#050b1a;--bg2:#081329;--panel:rgba(12,26,58,.72);--panel-solid:#0c1a3a;--line:rgba(80,140,255,.28);--line-hi:rgba(110,175,255,.7);
@@ -77,7 +76,6 @@ img{max-width:100%;height:auto;display:block}
 .nav.scrolled{background:rgba(5,11,26,.78);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border-color:var(--line)}
 .nav .wrap{display:flex;align-items:center;justify-content:space-between;gap:20px;min-height:76px}
 .brand{display:flex;align-items:center;gap:12px;text-decoration:none;color:var(--text);font-weight:700;font-size:19px;white-space:nowrap}
-.brand img{width:42px;filter:drop-shadow(0 0 10px rgba(80,150,255,.55))}
 .links{display:flex;gap:4px;padding:5px;border:1px solid var(--line);border-radius:999px;background:rgba(8,20,48,.6)}
 .links a{color:var(--sub);text-decoration:none;font-size:14px;font-weight:500;padding:8px 16px;border-radius:999px;transition:color .2s,background .2s,box-shadow .2s}
 .links a:hover,.links a.on{color:var(--text);background:linear-gradient(180deg,#3b8bff,#1b5fe6);box-shadow:0 0 18px var(--glow)}
@@ -97,11 +95,10 @@ img{max-width:100%;height:auto;display:block}
 /* ---- the hero: the owner's forest artwork */
 .hero{position:relative;min-height:100vh;min-height:100svh;display:flex;align-items:center;overflow:hidden;isolation:isolate}
 .hero .scene{position:absolute;inset:0;z-index:-2;width:100%;height:100%;object-fit:cover;object-position:50% 50%}
-.hero:before{content:"";position:absolute;inset:0;z-index:-1;background:linear-gradient(90deg,rgba(5,11,26,.72) 0%,rgba(5,11,26,.35) 45%,rgba(5,11,26,.15) 100%),linear-gradient(rgba(5,11,26,.55),transparent 30%)}
+.hero:before{content:"";position:absolute;inset:0;z-index:-1;background:linear-gradient(90deg,rgba(5,11,26,.08) 0%,rgba(5,11,26,.28) 40%,rgba(5,11,26,.76) 100%),linear-gradient(rgba(5,11,26,.6),transparent 30%)}
 .hero:after{content:"";position:absolute;inset:auto 0 0;height:28vh;background:linear-gradient(transparent,var(--bg));z-index:-1}
-.hero .wrap{display:grid;grid-template-columns:1.05fr .95fr;align-items:center;gap:32px;padding:120px 0 90px}
-.hero-copy{position:relative;text-align:center}
-.triforce{width:clamp(70px,7vw,110px);margin:0 auto 14px;filter:drop-shadow(0 0 18px rgba(255,214,90,.55));animation:pulse 5s ease-in-out infinite}
+.hero .wrap{display:flex;justify-content:flex-end;align-items:center;padding:120px 0 90px}
+.hero-copy{position:relative;width:54%;max-width:800px;text-align:center}
 h1{font-family:Cinzel,Georgia,serif;font-weight:700;font-size:clamp(46px,7.2vw,118px);line-height:1;margin:0;letter-spacing:.01em;color:#eaf3ff;
   text-shadow:0 0 22px rgba(80,160,255,.75),0 0 60px rgba(47,123,255,.45),0 2px 0 rgba(0,0,0,.4)}
 .divider{display:flex;align-items:center;justify-content:center;gap:14px;margin:18px auto 14px;color:var(--cyan)}
@@ -113,9 +110,6 @@ h1{font-family:Cinzel,Georgia,serif;font-weight:700;font-size:clamp(46px,7.2vw,1
 .version{display:inline-flex;align-items:center;gap:10px;margin-top:24px;padding:7px 16px;border-radius:999px;border:1px solid var(--line);background:rgba(8,20,48,.55);color:var(--sub);font-size:13px}
 .version b{color:var(--text);font-weight:600}
 .dot{width:8px;height:8px;border-radius:50%;background:#3ccf6e;box-shadow:0 0 10px #3ccf6e}
-.hero-art{position:relative;aspect-ratio:1/1;max-width:600px;width:100%;justify-self:center}
-.ocarina-float{position:absolute;left:12%;top:24%;width:70%;animation:ocarina-float 7s ease-in-out -2s infinite alternate}
-.ocarina{width:100%;transform-origin:50% 55%;filter:drop-shadow(0 24px 22px rgba(0,0,0,.42)) drop-shadow(0 0 14px rgba(60,140,255,.18));animation:ocarina-turn 11s ease-in-out -3s infinite alternate}
 .scroll-hint{position:absolute;left:50%;bottom:26px;transform:translateX(-50%);color:var(--muted);font-size:12px;letter-spacing:.2em;text-transform:uppercase;text-decoration:none}
 
 /* ---- sections and their own backgrounds, with soft dark joins */
@@ -157,7 +151,6 @@ h2{font-family:Cinzel,Georgia,serif;font-size:clamp(30px,3.4vw,52px);line-height
 /* support */
 #source .update{grid-template-columns:minmax(0,1fr)}
 #support{text-align:center;background:radial-gradient(ellipse 60% 70% at 50% 40%,rgba(244,200,74,.12),transparent 70%),radial-gradient(ellipse 80% 60% at 50% 60%,rgba(47,123,255,.12),transparent 70%)}
-.big-triforce{position:absolute;left:50%;top:50%;width:min(620px,80vw);transform:translate(-50%,-50%);opacity:.07;z-index:-1;filter:blur(1px)}
 .support-btns{display:flex;flex-wrap:wrap;justify-content:center;gap:14px;margin-top:30px}
 
 footer{border-top:1px solid var(--line);padding:40px 0 50px;color:var(--muted);font-size:14px}
@@ -167,11 +160,6 @@ footer nav{display:flex;gap:20px;flex-wrap:wrap}footer a{color:var(--sub);text-d
 /* ---- motion: slow, and only transform/opacity */
 .reveal{opacity:0;transform:translateY(18px);transition:opacity .8s ease,transform .8s cubic-bezier(.2,.7,.2,1)}
 .reveal.in{opacity:1;transform:none}
-@keyframes ocarina-float{from{transform:translate3d(0,8px,0)}to{transform:translate3d(0,-12px,0)}}
-@keyframes ocarina-turn{from{transform:perspective(850px) rotateX(6deg) rotateY(-9deg) rotateZ(-3deg)}to{transform:perspective(850px) rotateX(-3deg) rotateY(8deg) rotateZ(3deg)}}
-@keyframes pulse{0%,100%{filter:drop-shadow(0 0 14px rgba(255,214,90,.45))}50%{filter:drop-shadow(0 0 26px rgba(255,214,90,.8))}}
-@keyframes twinkle{0%,100%{opacity:.25}50%{opacity:1}}
-.star{animation:twinkle 4s ease-in-out infinite}
 @media (prefers-reduced-motion:reduce){*,*:before,*:after{animation:none!important;transition:none!important}.reveal{opacity:1;transform:none}html{scroll-behavior:auto}}
 
 /* ---- sizes */
@@ -181,8 +169,10 @@ footer nav{display:flex;gap:20px;flex-wrap:wrap}footer a{color:var(--sub);text-d
   .links{display:none;position:absolute;top:70px;left:16px;right:16px;flex-direction:column;border-radius:18px;padding:10px;background:rgba(5,11,26,.96)}
   .links.open{display:flex}.links a{padding:12px 16px}
   .menu-btn{display:block}.nav-cta .btn{display:none}
-  .hero .wrap{grid-template-columns:1fr;padding-top:110px;text-align:center}
-  .hero-art{max-width:460px;order:-1;margin-bottom:-30px}
+  .hero .wrap{justify-content:center;padding-top:110px;text-align:center}
+  .hero-copy{width:100%;max-width:660px}
+  .hero .scene{object-position:30% 50%}
+  .hero:before{background:linear-gradient(rgba(5,11,26,.65),rgba(5,11,26,.48) 50%,rgba(5,11,26,.74))}
   .download{grid-template-columns:1fr}
   .update{grid-template-columns:auto 1fr}.update .date{grid-column:2}
 }
@@ -192,7 +182,7 @@ footer nav{display:flex;gap:20px;flex-wrap:wrap}footer a{color:var(--sub);text-d
   .update{grid-template-columns:1fr}.update .date{grid-column:auto}.update ul{grid-template-columns:1fr}
   .entry{grid-template-columns:1fr;gap:6px;padding:20px}
   .hero-btns .btn{flex:1 1 100%}
-  .brand span{display:none}
+  .brand{font-size:17px}
 }
 </style>
 </head>
@@ -201,7 +191,7 @@ footer nav{display:flex;gap:20px;flex-wrap:wrap}footer a{color:var(--sub);text-d
 
 <header class="nav" id="nav">
   <div class="wrap">
-    <a class="brand" href="#top"><img src="assets/ocarina.gif" width="418" height="418" alt=""><span>Ocarina Reborn</span></a>
+    <a class="brand" href="#top"><span>Ocarina Reborn</span></a>
     <nav class="links" id="links" aria-label="Main navigation">
       <a href="#top" class="on">Home</a><a href="#features">Features</a><a href="#updates">Updates</a><a href="#source">Source &amp; Credits</a><a href="#support">Community</a>
     </nav>
@@ -219,7 +209,6 @@ footer nav{display:flex;gap:20px;flex-wrap:wrap}footer a{color:var(--sub);text-d
 
   <div class="wrap">
     <div class="hero-copy">
-      <svg class="triforce" viewBox="0 0 120 104" aria-hidden="true"><defs><linearGradient id="tg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffe9a0"/><stop offset=".55" stop-color="#f4c84a"/><stop offset="1" stop-color="#c38a1c"/></linearGradient></defs><g fill="url(#tg)" stroke="#8a5c0e" stroke-width="1.2"><path d="M60 2 89 52H31Z"/><path d="M30 54 59 104H1Z"/><path d="M90 54 119 104H61Z"/></g></svg>
       <h1>Ocarina Reborn</h1>
       <div class="divider" aria-hidden="true"><span></span></div>
       <p class="subtitle">The Legend of Zelda: Ocarina of Time 2026</p>
@@ -229,11 +218,6 @@ footer nav{display:flex;gap:20px;flex-wrap:wrap}footer a{color:var(--sub);text-d
         <a class="btn" href="https://discord.gg/vDPAcc6JnY"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M19.6 5.3A16.6 16.6 0 0 0 15.5 4l-.5 1a15 15 0 0 0-6 0l-.5-1a16.6 16.6 0 0 0-4.1 1.3C1.8 9.2 1.1 13 1.4 16.7a16.8 16.8 0 0 0 5 2.6l1.1-1.7a11 11 0 0 1-1.7-.8l.4-.3a12 12 0 0 0 11.6 0l.4.3-1.7.8 1.1 1.7a16.7 16.7 0 0 0 5-2.6c.4-4.3-.6-8-3-11.4ZM8.9 14.4c-1 0-1.8-.9-1.8-2s.8-2 1.8-2 1.8.9 1.8 2-.8 2-1.8 2Zm6.2 0c-1 0-1.8-.9-1.8-2s.8-2 1.8-2 1.8.9 1.8 2-.8 2-1.8 2Z"/></svg>Discord</a>
       </div>
       <div class="version"><span class="dot"></span><b>v1.0.7</b> · Windows x64</div>
-    </div>
-    <div class="hero-art" aria-hidden="true">
-      <div class="ocarina-float">
-        <img class="ocarina" src="assets/ocarina-1100.webp" srcset="assets/ocarina-560.webp 560w, assets/ocarina-1100.webp 1100w" sizes="(max-width: 980px) 80vw, 40vw" width="1100" height="831" alt="" fetchpriority="high">
-      </div>
     </div>
   </div>
   <a class="scroll-hint" href="#features">Scroll</a>
@@ -276,7 +260,7 @@ footer nav{display:flex;gap:20px;flex-wrap:wrap}footer a{color:var(--sub);text-d
   </div>
 </section>
 
-<!-- SUPPORT: a dark hall lit by the Triforce -->
+<!-- SOURCE AND CREDITS -->
 <section id="source" aria-labelledby="source-h">
   <div class="wrap">
     <div class="head center">
@@ -301,7 +285,6 @@ footer nav{display:flex;gap:20px;flex-wrap:wrap}footer a{color:var(--sub);text-d
 </section>
 
 <section id="support" aria-labelledby="s-h">
-  <svg class="big-triforce" viewBox="0 0 120 104" aria-hidden="true"><g fill="#f4c84a"><path d="M60 2 89 52H31Z"/><path d="M30 54 59 104H1Z"/><path d="M90 54 119 104H61Z"/></g></svg>
   <div class="wrap">
     <div class="head center reveal"><p class="kicker">Community</p><h2 id="s-h">Join and support</h2><p class="lead">Ocarina Reborn is made independently. Support is voluntary and helps with tools, testing and time. It does not buy a game or early access.</p></div>
     <div class="support-btns reveal">

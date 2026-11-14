@@ -23,3 +23,5 @@ The owner subsequently supplied `Schwebende_blaue_Okarina-Animation.gif` for the
 The v1.0.7 release also restores the requested Ocarina/Navi launcher and startup visuals for all users. Private voice recordings remain excluded from every public package.
 
 The owner supplied `ChatGPT-Bild 14. Nov. 2026, 02_28_11.png` on November 14 for the website background. `assets/forest-background.png` is its unchanged copy (1672 x 941). It appears in the hero and, behind a dark readability overlay, throughout the page. This is a website-only change; launcher release v1.0.7 remains current.
+
+The owner then requested removal of the moving foreground ocarina and every Triforce symbol. Both decorative triangle emblems and the floating image are removed, together with their styles and preload. The header is text-only, the favicon is a simple original OR monogram, and preview metadata now uses the forest picture. The older GIF (which included a triangle emblem) is no longer loaded. Desktop text is positioned to the right so the ocarina in the forest picture stays visible; mobile text uses a single column.
