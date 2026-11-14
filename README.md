@@ -2,11 +2,11 @@
 
 The project website: **https://ocarina-pc-native-build.github.io/**
 
-**Current release: v1.0.6 · November 14, 2026**
+**Current release: v1.0.7 · November 14, 2026**
 
 [Download / Releases](https://github.com/ocarina-pc-native-build/ocarina-pc-native-build.github.io/releases/latest) · [Project source](https://github.com/misterrageguy-cyber/OoT2026-PC-Recomp) · [Discord](https://discord.gg/vDPAcc6JnY)
 
-The website uses its former presentation: the floating ocarina, background, feature cards, update section, community links and upstream credits. The current launcher and downloadable installer remain at v1.0.6.
+The website uses its former presentation: the floating ocarina, background, feature cards, update section, community links and upstream credits. The current launcher and downloadable installer are v1.0.7, with restored Ocarina artwork, animated Navi and the previous build/loading-screen design.
 
 ## Updating
 
@@ -14,13 +14,12 @@ Restart the launcher and click **Update**, then install over your existing insta
 
 ## Latest update
 
-- Audio stop/reset and playback-status fixes; the reported boss/ocarina music case still needs tester confirmation.
-- Loading-memory safeguards, integrated-GPU texture-memory limits and improved diagnostics.
-- Experimental read-only import of your own raw amiibo .bin files in the launcher and F1 menu.
-- Original launcher graphics; voice imports use your own compatible ZIP. No voice recordings, tag files, keys or launcher music are included.
-- Discord link removed from the F1 menu.
+- Restored Ocarina artwork and animated Navi in the launcher.
+- Restored the previous artwork on the build screen and the game's shader/pipeline loading screen.
+- Updated the website preview image and simplified its title to **Ocarina Reborn**.
+- No bundled voice recordings or launcher music. Your local imports, saves and settings stay.
 
-[Full v1.0.6 patch notes and checksums](https://github.com/ocarina-pc-native-build/ocarina-pc-native-build.github.io/releases/tag/v1.0.6)
+[Full v1.0.7 patch notes and checksums](https://github.com/ocarina-pc-native-build/ocarina-pc-native-build.github.io/releases/tag/v1.0.7)
 
 ## Source and credits
 
