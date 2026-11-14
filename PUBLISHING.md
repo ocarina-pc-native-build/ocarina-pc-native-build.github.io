@@ -13,3 +13,7 @@ The launcher checks `https://api.github.com/repos/ocarina-pc-native-build/ocarin
 The source repository is `misterrageguy-cyber/OoT2026-PC-Recomp`. The update/website repository is `ocarina-pc-native-build/ocarina-pc-native-build.github.io`. Never push to unrelated remotes.
 
 Older releases withdrawn during the media cleanup remain withdrawn. Do not republish old installers, restore old assets or merge history from pre-cleanup clones. User game files, saves, settings and local imports stay outside the installer and public source.
+
+## Website appearance
+
+On November 14, 2026, the project owner requested restoration of the former website appearance while keeping v1.0.6 current. Only the former HTML/CSS presentation and its five referenced website images were restored, as new files on the cleaned history. This did not restore old installers, bundled recordings, launcher artwork, or old Git branches/tags. It is not a new statement about rights to those website images. Keep installer-media provenance checks in place.
