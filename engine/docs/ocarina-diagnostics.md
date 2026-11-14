@@ -114,3 +114,20 @@ rendered frame. The exact reported Zora dialogue still needs tester confirmation
 Transitions are logged as `framegen_dialogue_guard` events and
 `[OcarinaReborn/GFX] dialogue protection` lines. The first frame after an event
 cannot be interpolated with the final dialogue frame.
+
+## Image allocation granularity
+
+Image pools use 64 MiB blocks by default, previously 128 MiB. Smaller blocks
+reduce unused space retained by the allocator. The existing limit of 24 startup
+blocks now reserves at most 1.5 GiB rather than 3 GiB for the sampled-texture pool;
+the pool still grows as needed. This is not a 1.5 GiB limit on texture memory.
+Texture dimensions, render resolution, cache budgets and eviction rules are
+unchanged. Images that cannot use a pool retain the existing allocation fallback.
+
+`RX_VK_IMAGE_BLOCK_MB=128` restores the previous granularity for an A/B check.
+Explicit block-size and preallocation overrides still take precedence. Smaller
+blocks may need more allocation objects; inspect `image blocks`, `memory heaps`
+and frame-time diagnostics when testing another GPU or a demanding scene.
+The allocation policy is outside the shader translator fingerprint and must not
+invalidate shader caches. Private integration measurements are kept separately;
+they are not a general FPS or VRAM guarantee across hardware.

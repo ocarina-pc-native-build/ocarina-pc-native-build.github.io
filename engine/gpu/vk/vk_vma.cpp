@@ -37,15 +37,16 @@ bool vma_init(PFN_vkGetInstanceProcAddr gipa) {
     return vmaCreateAllocator(&ci, &vma) == VK_SUCCESS;
 }
 
-// Images come from a pool of 128 MB blocks: on their own, VMA gave most of them dedicated memory (the driver prefers it
+// Images come from a pool of 64 MB blocks: on their own, VMA gave most of them dedicated memory (the driver prefers it
 // for render targets, and anything over half a default block), a vkAllocateMemory and a kernel call for each, and
 // the dynamic resolution makes a new set of render targets every few frames. Images too large for a block, or of a
 // memory type the pool's is not, are allocated as before.
 VmaPool image_pool = VK_NULL_HANDLE;
 bool image_pool_tried = false;
-// (RX_VK_IMAGE_BLOCK_MB=<n>, 16 and up: the block's size. VMA keeps one block empty for the next image, 128 MB of VRAM that a 64 MB block
-// would halve, at twice the memory objects: the driver allows ~4096, the imported pools take ~2400)
-const uint64_t kImageBlock = (getenv("RX_VK_IMAGE_BLOCK_MB") ? (uint64_t)std::max(16, atoi(getenv("RX_VK_IMAGE_BLOCK_MB"))) : 128u) << 20;
+// RX_VK_IMAGE_BLOCK_MB=<n>, 16 and up, preserves the explicit override (128 restores the earlier size).
+// VMA retains an empty block for reuse in each pool. Smaller blocks waste less VRAM there and bound the startup
+// reservation, while keeping the existing pool, fallback and GPU-completion rules. Large images still use the fallback.
+const uint64_t kImageBlock = vram_compact::image_block_bytes(getenv("RX_VK_IMAGE_BLOCK_MB"));
 
 // (hookshot) and the render targets' images in blocks of their own (texture_get's for a target: OoT's transient ones, made and let go
 // all the time). In the same blocks as the textures that stay, each one gone left a hole beside a texture that kept its block: the

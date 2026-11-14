@@ -14,6 +14,13 @@
 
 namespace vram_compact {
 
+// Smaller image blocks limit the unused tail in each pool. At most 24 startup
+// blocks also means at most 1.5 GiB permanently reserved, instead of 3 GiB.
+// This changes allocation granularity, not texture dimensions or cache eviction.
+inline uint64_t image_block_bytes(const char* override_mb) {
+    return (override_mb ? (uint64_t)std::max(16, atoi(override_mb)) : 64ull) << 20;
+}
+
 /// Whether the textures are compacted, by RX_VK_COMPACT as the environment has it: on when it is not set, off for 0 (or empty).
 /// It was opt-in (RX_VK_COMPACT=1) while its hold could let go of textures in use; that is what hold_keeps and hold_met are for
 inline bool enabled(const char* env) { return !env || atoi(env) != 0; }

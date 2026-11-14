@@ -20,7 +20,8 @@ assert len(body) == 3, "expected actual hash initialization, translator list and
 code = compile(ast.Module(body=body, type_ignores=[]), str(a.build_script), "exec")
 with tempfile.TemporaryDirectory(prefix="shader-stamp-bank-") as tmp:
     vk = Path(tmp) / "gpu/vk"
-    for rel in ("eden/a.cpp", "sirit/a.cpp", "compat/a.h", "vk_shader.cpp", "vk_bank.cpp", "vk_state.h", "vk_api.h", "vk_draw.cpp"):
+    for rel in ("eden/a.cpp", "sirit/a.cpp", "compat/a.h", "vk_shader.cpp", "vk_bank.cpp", "vk_state.h", "vk_api.h", "vk_draw.cpp",
+                "vk_vma.cpp", "vram_compact.h"):
         f = vk / rel
         f.parent.mkdir(parents=True, exist_ok=True)
         f.write_bytes(b"authored input\n")
@@ -31,6 +32,9 @@ with tempfile.TemporaryDirectory(prefix="shader-stamp-bank-") as tmp:
     first = stamp()
     (vk / "vk_draw.cpp").write_bytes(b"unrelated renderer edit\n")
     assert stamp() == first, "unrelated renderer source entered shader stamp"
+    for name in ("vk_vma.cpp", "vram_compact.h"):
+        (vk / name).write_bytes(b"changed image allocation policy\n")
+        assert stamp() == first, "memory allocation change invalidated shader cache"
     (vk / "vk_bank.cpp").write_bytes(b"changed bank semantics\n")
     changed = stamp()
     assert changed != first, "bank-only edit did not invalidate shader stamp"

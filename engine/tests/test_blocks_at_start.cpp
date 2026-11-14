@@ -24,6 +24,18 @@ uint64_t held(uint64_t allowed, uint64_t other, uint64_t textures, uint64_t at_s
 
 int main() {
     using namespace vram_compact;
+    CHECK(image_block_bytes(nullptr) == 64 * MB);
+    CHECK(image_block_bytes("128") == 128 * MB);  // explicit rollback/diagnostic override
+    CHECK(image_block_bytes("32") == 32 * MB);
+    CHECK(image_block_bytes("0") == 16 * MB);
+    CHECK(image_block_bytes("-1") == 16 * MB);
+    CHECK(image_block_bytes("invalid") == 16 * MB);
+    for (uint64_t gb : {2ull, 4ull, 6ull, 8ull, 12ull, 16ull, 24ull, 32ull}) {
+        const uint64_t block = image_block_bytes(nullptr);
+        CHECK(blocks_at_start(gb * GB, block, true) * block <= 1536 * MB);
+        CHECK(blocks_at_start(gb * GB, block, false) == 0);
+    }
+    CHECK(blocks_at_start(24 * GB, image_block_bytes(nullptr), true) * image_block_bytes(nullptr) == 1536 * MB);
     // 15% of the card's memory in 128 MB blocks, 2 to 24: the same rule for every vendor (the stall it removes was measured on an
     // AMD card; nothing here asks which card it is)
     const struct { uint64_t gb, blocks; } cards[] = {{2, 2}, {4, 4}, {6, 7}, {8, 9}, {12, 14}, {16, 19}, {24, 24}, {32, 24}};
