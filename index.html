@@ -4,9 +4,52 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="dark">
-<title>Ocarina Reborn | Native PC Port</title>
-<meta name="description" content="Ocarina Reborn: The Legend of Zelda: Ocarina of Time 2026 as a native Windows PC port, built on your PC from your own game file. Download the alpha and join the community.">
-<link rel="icon" type="image/png" href="assets/favicon.png">
+<title>Ocarina Reborn</title>
+<meta name="description" content="Ocarina Reborn. Download the latest update, explore the features and join the community.">
+<link rel="canonical" href="https://ocarina-pc-native-build.github.io/">
+<link rel="icon" type="image/gif" sizes="418x418" href="assets/ocarina.gif">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Ocarina Reborn">
+<meta property="og:title" content="Ocarina Reborn">
+<meta property="og:description" content="Download the latest update, explore the features and join the community.">
+<meta property="og:url" content="https://ocarina-pc-native-build.github.io/">
+<meta property="og:image" content="https://ocarina-pc-native-build.github.io/assets/ocarina.gif">
+<meta property="og:image:type" content="image/gif">
+<meta property="og:image:width" content="418">
+<meta property="og:image:height" content="418">
+<meta property="og:image:alt" content="The blue Ocarina Reborn ocarina">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Ocarina Reborn">
+<meta name="twitter:description" content="Download the latest update, explore the features and join the community.">
+<meta name="twitter:image" content="https://ocarina-pc-native-build.github.io/assets/ocarina.gif">
+<meta name="twitter:image:alt" content="The blue Ocarina Reborn ocarina">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "WebSite",
+      "@id": "https://ocarina-pc-native-build.github.io/#website",
+      "url": "https://ocarina-pc-native-build.github.io/",
+      "name": "Ocarina Reborn"
+    },
+    {
+      "@type": "WebPage",
+      "@id": "https://ocarina-pc-native-build.github.io/#webpage",
+      "url": "https://ocarina-pc-native-build.github.io/",
+      "name": "Ocarina Reborn",
+      "isPartOf": {"@id": "https://ocarina-pc-native-build.github.io/#website"},
+      "primaryImageOfPage": {
+        "@type": "ImageObject",
+        "url": "https://ocarina-pc-native-build.github.io/assets/ocarina.gif",
+        "width": 418,
+        "height": 418,
+        "caption": "Ocarina Reborn"
+      }
+    }
+  ]
+}
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -64,8 +107,7 @@ h1{font-family:Cinzel,Georgia,serif;font-weight:700;font-size:clamp(46px,7.2vw,1
 .divider:after{transform:scaleX(-1)}
 .divider span{width:10px;height:10px;transform:rotate(45deg);border:1px solid var(--cyan);box-shadow:0 0 10px var(--cyan)}
 .subtitle{font-size:clamp(17px,1.7vw,26px);font-weight:500;color:#e2ebff;margin:0}
-.port{font-size:clamp(18px,1.9vw,30px);font-weight:700;margin:6px 0 30px;background:linear-gradient(90deg,#7fc4ff,#3f8cff);-webkit-background-clip:text;background-clip:text;color:transparent;filter:drop-shadow(0 0 12px rgba(80,150,255,.5))}
-.hero-btns{display:flex;flex-wrap:wrap;justify-content:center;gap:14px}
+.hero-btns{display:flex;flex-wrap:wrap;justify-content:center;gap:14px;margin-top:30px}
 .version{display:inline-flex;align-items:center;gap:10px;margin-top:24px;padding:7px 16px;border-radius:999px;border:1px solid var(--line);background:rgba(8,20,48,.55);color:var(--sub);font-size:13px}
 .version b{color:var(--text);font-weight:600}
 .dot{width:8px;height:8px;border-radius:50%;background:#3ccf6e;box-shadow:0 0 10px #3ccf6e}
@@ -157,7 +199,7 @@ footer nav{display:flex;gap:20px;flex-wrap:wrap}footer a{color:var(--sub);text-d
 
 <header class="nav" id="nav">
   <div class="wrap">
-    <a class="brand" href="#top"><img src="assets/ocarina-560.webp" width="560" height="423" alt=""><span>Ocarina Reborn</span></a>
+    <a class="brand" href="#top"><img src="assets/ocarina.gif" width="418" height="418" alt=""><span>Ocarina Reborn</span></a>
     <nav class="links" id="links" aria-label="Main navigation">
       <a href="#top" class="on">Home</a><a href="#features">Features</a><a href="#updates">Updates</a><a href="#source">Source &amp; Credits</a><a href="#support">Community</a>
     </nav>
@@ -179,7 +221,6 @@ footer nav{display:flex;gap:20px;flex-wrap:wrap}footer a{color:var(--sub);text-d
       <h1>Ocarina Reborn</h1>
       <div class="divider" aria-hidden="true"><span></span></div>
       <p class="subtitle">The Legend of Zelda: Ocarina of Time 2026</p>
-      <p class="port">Native PC Port</p>
       <div class="hero-btns">
         <a class="btn primary" href="https://github.com/ocarina-pc-native-build/ocarina-pc-native-build.github.io/releases/latest"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12m0 0-5-5m5 5 5-5M4 19h16"/></svg>Download / Releases</a>
         <a class="btn" href="https://github.com/ocarina-pc-native-build/ocarina-pc-native-build.github.io"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5a11.5 11.5 0 0 0-3.6 22.4c.6.1.8-.3.8-.6v-2.2c-3.2.7-3.9-1.4-3.9-1.4-.5-1.3-1.3-1.7-1.3-1.7-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.7-1.6-2.6-.3-5.3-1.3-5.3-5.7 0-1.3.5-2.3 1.2-3.1-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.2 1.2a11 11 0 0 1 5.8 0c2.2-1.5 3.2-1.2 3.2-1.2.6 1.6.2 2.8.1 3.1.7.8 1.2 1.9 1.2 3.1 0 4.4-2.7 5.4-5.3 5.7.4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A11.5 11.5 0 0 0 12 .5Z"/></svg>GitHub</a>

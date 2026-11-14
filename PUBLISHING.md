@@ -17,3 +17,5 @@ Older releases withdrawn during the media cleanup remain withdrawn. Do not repub
 ## Website appearance
 
 On November 14, 2026, the project owner requested restoration of the former website appearance while keeping v1.0.6 current. Only the former HTML/CSS presentation and its five referenced website images were restored, as new files on the cleaned history. This did not restore old installers, bundled recordings, launcher artwork, or old Git branches/tags. It is not a new statement about rights to those website images. Keep installer-media provenance checks in place.
+
+The owner subsequently supplied `Schwebende_blaue_Okarina-Animation.gif` for the search preview. `assets/ocarina.gif` is an unchanged copy (418 × 418, eight frames, transparent). The favicon, Open Graph image, social preview and WebPage primary image use that URL; the site and page title are simply `Ocarina Reborn`. Search engines select and refresh their own displayed titles and images after recrawling.
