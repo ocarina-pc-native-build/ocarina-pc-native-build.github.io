@@ -92,7 +92,25 @@ a separate sharing decision. No automatic upload is performed.
 
 `OCR_DIAGNOSTICS=0` disables the native recorder for controlled A/B checks.
 `OCR_TRACE_FILE` chooses its output; the launcher sets it uniquely per run.
-Renderer/host ABI version 22 adds the diagnostic callbacks: update both components.
+Renderer/host ABI version 23 includes the diagnostic callbacks and the cached story-event
+state: update both components together.
 This uses the existing compiled game code; importing/extracting the game again is
 not required. Native unit tests use authored samples and a synthetic executable;
 do not publish private game builds used for integration tests.
+
+## Dialogue frame-generation protection
+
+Story events (including NPC conversations and cutscenes) use actual game frames
+through the existing presentation queue. No generated frames are produced until
+the event has ended and two fresh gameplay frames are available. Auto and fixed
+multipliers share this rule; the player's frame-generation setting is preserved.
+The event flag is sampled on each player update and read atomically by the
+renderer. It does not read guest objects from a rendering thread.
+
+This is a conservative compatibility workaround for dialogue corruption reported
+with frame generation; it also reduces the displayed frame rate to the actual
+game rate during cutscenes. It does not repair corruption already in a real
+rendered frame. The exact reported Zora dialogue still needs tester confirmation.
+Transitions are logged as `framegen_dialogue_guard` events and
+`[OcarinaReborn/GFX] dialogue protection` lines. The first frame after an event
+cannot be interpolated with the final dialogue frame.

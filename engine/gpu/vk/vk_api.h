@@ -16,7 +16,7 @@
 extern "C" {
 #endif
 
-#define MKWVK_API_VERSION 22
+#define MKWVK_API_VERSION 23
 enum { HOS_OPT_CHEAT_HEARTS = 32, HOS_OPT_CHEAT_FLIGHT, HOS_OPT_CHEAT_ACTION, HOS_OPT_CHEAT_CAMERA, HOS_OPT_CHEAT_SPEED,
        HOS_OPT_ENEMY_DAMAGE /* (Ocarina Reborn) */ };
 /* (hookshot) the Gameplay tab's Text size (host/oot_text_size.c): 0 the game's, 1 110%, 2 125%, 3 150%, 4 175% */
@@ -200,6 +200,8 @@ typedef struct MkwVkHost {
     /* Ocarina Reborn v22: bounded diagnostics; callbacks never write files on the rendering thread. */
     void (*diagnostics_frame)(const OcrDiagFrame *frame);
     void (*diagnostics_event)(const char *kind, const char *detail);
+    /* Ocarina Reborn v23: story event active (dialogue/cutscene). A cached atomic, never guest reads on the renderer. */
+    int (*story_event_active)(void);
 } MkwVkHost;
 
 /* One completed temporal-upscale sample; all zero while inactive. */

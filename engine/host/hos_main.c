@@ -937,6 +937,10 @@ static int oot_event_arg(Ctx *c, uint64_t arg, const char *name, uint32_t type, 
 }
 
 /* (the Main sequence's "Event" test: an event is playing) */
+static int oot_story_event_active;
+int hos_oot_story_event_active(void) {
+    return __atomic_load_n(&oot_story_event_active, __ATOMIC_RELAXED);
+}
 static int oot_event_playing(Ctx *c) {
     const uint64_t events = oot_singleton(c, OOT_EVENTMGR_SLOT);
     return events && recomp_load64(c, events + 104);
@@ -1338,7 +1342,11 @@ static void oot_update_player_cheats(Ctx *c, uint64_t actor, uint64_t components
        flight holds him in the air: the screen the event had faded stayed black until the flight was switched off, and a
        second request met "waits until the current event ends". While an event plays he is let go and lands; the flight
        takes him again, from where he then stands, when it has ended. */
-    if (flying && oot_event_playing(c)) flying = 0;
+    const int story_event = oot_event_playing(c);
+    /* Sample on every player update, including dialogue; the 250 ms diagnostic map snapshot is too late for UI frames.
+       Keep the last state if an event stops stepping Link. The next player update clears it when play resumes. */
+    __atomic_store_n(&oot_story_event_active, story_event, __ATOMIC_RELAXED);
+    if (flying && story_event) flying = 0;
     if (!flying) flying_actor = 0;
     const int64_t now = hos_now_ns();
     __atomic_store_n(&flight_player_seen, now, __ATOMIC_RELAXED);

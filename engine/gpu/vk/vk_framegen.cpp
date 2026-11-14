@@ -92,6 +92,7 @@ struct State {
     OutSet sets[3];   // (one shown, one waiting its place on the line, one being made: the pacer never holds the game back)
     int cur = 0, next_set = 0;
     bool have_prev = false;
+    bool story_protected = false;
     int64_t last_at = 0;
     std::mutex mu;
     std::condition_variable cv;
@@ -331,6 +332,7 @@ void drop_size() {
     fg.w = fg.h = 0;
     fg.mult = 0;
     fg.have_prev = false;
+    fg.story_protected = false;
     fg.recorded = nullptr;
 }
 
@@ -831,7 +833,18 @@ bool framegen_record(VkCommandBuffer cmd, VkImageView src, uint32_t sw, uint32_t
     // menu runs on the display thread, and the set's last image would be one that was never made)
     const int cur = fg.cur, prev = cur ^ 1, m = fg.mult;
     const bool auto_rate = opts.framegen == 1;   // (read once, for the same reason)
-    const bool blend = fg.have_prev && !gap;
+    // The game composites dialogue into its scene image; its text/panel has no separate motion or UI mask.
+    // During story events (dialogue and cutscenes), keep the existing presentation queue but send only real frames.
+    // Also reject the first pair after the event: it still includes the last dialogue frame. No setting is changed.
+    const bool protect_story = host && host->story_event_active && host->story_event_active();
+    const bool blend = fg.have_prev && !gap && !protect_story && !fg.story_protected;
+    if (protect_story != fg.story_protected) {
+        logf("[OcarinaReborn/GFX] dialogue protection %s: %s", protect_story ? "on" : "off",
+             protect_story ? "actual game frames during story events; no interpolated UI" : "frame generation resumes with fresh history");
+        if (host && host->diagnostics_event)
+            host->diagnostics_event("framegen_dialogue_guard", protect_story ? "on" : "off");
+    }
+    fg.story_protected = protect_story;
     set->reflex_id = reflex_frame();   // (NVIDIA Reflex: the game frame this set shows, vk_reflex.cpp)
     set->antilag_id = antilag_frame();   // (AMD Anti-Lag 2: the same, vk_antilag.cpp)
     static uint64_t sequence = 0;
@@ -889,7 +902,7 @@ bool framegen_record(VkCommandBuffer cmd, VkImageView src, uint32_t sw, uint32_t
     // (hookshot) NVIDIA DLSS Frame Generation through NGX where it runs and the Frame generation by row asks for it (vk_dlss.cpp):
     // every made frame of the set, from the scene's own depth, motion and camera. A set it does not make goes on below as before
     // (asked every present: turned off, it lets its feature go)
-    if (m > 1) {
+    if (m > 1 && !protect_story) {
         VkImage outs[kMaxMult];
         VkImageView views[kMaxMult];
         for (int k = 0; k < m - 1; k++) outs[k] = set->frame[k].image, views[k] = set->frame[k].view;

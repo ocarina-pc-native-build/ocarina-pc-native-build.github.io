@@ -104,9 +104,9 @@ SECTIONS = [
         ('frame_generation', 'Frame Generation (FSR 3.1)', 'Frame generation (FSR 3.1)',
          [(0, 'Aus', 'Off'), (1, 'Auto', 'Auto')] + [(i, f'{i}x', f'{i}x') for i in range(2, 9)],
          'Erzeugt Zwischenbilder, erhöht aber nicht die echten Spiel-FPS. Hohe Faktoren können die Basisbildrate begrenzen '
-         'und die Eingabeverzögerung erhöhen. Bei Rucklern zuerst Aus testen.',
+         'und die Eingabeverzögerung erhöhen. Bei Rucklern zuerst Aus testen. Dialoge und Zwischensequenzen zeigen zum Schutz der Textboxen nur echte Spielbilder.',
          'Adds generated frames, not actual game frames. High multipliers can limit the base frame rate '
-         'and increase input delay. Test Off first when investigating stutter.', 'medium'),
+         'and increase input delay. Test Off first when investigating stutter. Dialogues and cutscenes use only actual game frames to protect text boxes.', 'medium'),
         ('frame_pacing', 'Frame Pacing', 'Frame pacing', OFF_ON,
          'Zeigt die Bilder in gleichmäßigen Abständen.', 'Shows the frames evenly spaced.', ''),
         ('frame_rate_cap', 'FPS-Limit', 'Frame rate cap',
