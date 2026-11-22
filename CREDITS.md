@@ -1,19 +1,19 @@
 # Licenses and corresponding source
 
-Ocarina Reborn includes third-party software. The engine is based on the sources distributed as **Hookshot v2.2.0-rc.1**, under **GPL-3.0-or-later**, with project-specific modifications. Existing copyright notices and component license terms are retained in the corresponding source. This identifies the source version used; it does not attribute every component to a single author.
+Ocarina Reborn includes third-party software. The engine is based on the sources distributed as **Hookshot v2.3.2**, under **GPL-3.0-or-later**, with project-specific modifications. Existing copyright notices and component license terms are retained in the corresponding source. This identifies the source version used; it does not attribute every component to a single author.
 
 ## GPL and source access
 
 - [GNU General Public License, version 3](LICENSE)
-- [Corresponding source for v1.1.4](https://github.com/misterrageguy-cyber/OoT2026-PC-Recomp/releases/download/v1.1.4/Ocarina-Reborn-v1.1.4-Source.zip)
+- [Corresponding source for v1.1.5](https://github.com/misterrageguy-cyber/OoT2026-PC-Recomp/releases/download/v1.1.5/Ocarina-Reborn-v1.1.5-Source.zip)
 - [Release sources and checksums](https://github.com/ocarina-pc-native-build/ocarina-pc-native-build.github.io/releases)
-- [Build instructions](https://github.com/misterrageguy-cyber/OoT2026-PC-Recomp/blob/v1.1.4/BUILDING.md)
+- [Build instructions](https://github.com/misterrageguy-cyber/OoT2026-PC-Recomp/blob/v1.1.5/BUILDING.md)
 
 Each supported release provides its matching source archive. The original game, keys and generated game executable are not included; building requires the user's own supported game file.
 
 ## Component notices
 
-The source retains the [original engine acknowledgements](https://github.com/misterrageguy-cyber/OoT2026-PC-Recomp/blob/v1.1.4/engine/README.md#credits) and the copyright and license files beside each dependency, including Eden, suyu, Sirit, SDL, Dear ImGui, zstd and zbic. Those components keep their own applicable terms; the GPL reference does not replace their licenses.
+The source retains the [original engine acknowledgements](https://github.com/misterrageguy-cyber/OoT2026-PC-Recomp/blob/v1.1.5/engine/README.md#credits) and the copyright and license files beside each dependency, including Eden, suyu, Sirit, SDL, Dear ImGui, zstd and zbic. Those components keep their own applicable terms; the GPL reference does not replace their licenses.
 
 The view-distance memory locations were identified by **hotoni's Graphics-Menu mod**, as recorded in `engine/host/ocr_view.c`. The renderer includes **YakuzaFanA's light-table patch**, pinned to commit `9c75b3214262844b644c0a8cdbbe9b2bde590ace`.
 
