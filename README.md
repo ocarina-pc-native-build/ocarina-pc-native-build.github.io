@@ -2,11 +2,11 @@
 
 The project website: **https://ocarina-pc-native-build.github.io/**
 
-**Current release: v1.1.7 · November 25, 2026**
+**Current release: v1.1.8 · November 28, 2026**
 
 [Download / Releases](https://github.com/ocarina-pc-native-build/ocarina-pc-native-build.github.io/releases/latest) · [Discord](https://discord.gg/vDPAcc6JnY)
 
-The website includes the forest background, feature cards, update section and community links. The current launcher and downloadable installer are v1.1.7: memory and responsiveness improvements, ocarina selection and optional unlimited amiibo scans.
+The website includes the forest background, feature cards, update section and community links. The current launcher and downloadable installer are v1.1.8: memory and responsiveness improvements, ocarina selection and optional unlimited amiibo scans.
 
 ## Updating
 
@@ -14,7 +14,7 @@ Restart the launcher and click **Update**, then install over your existing insta
 
 ## Latest update
 
-Stability and smoothness update: a model-loading crash and a rare loading crash fixed, fewer stutters and area reloads, movie sound in sync at high frame rates, movies 16:9 on narrow screens, the first adult night clock fix and Plus on Tab only. The game code is rebuilt once at the update.
+Fixes and sharper textures: the first adult night's clock fix in Hyrule Field too and kept in the save, sharper textures with FSR 3.1, 3.1.6 and 4, no dark rectangles in Ganon's Tower, and a stick past 92% counts as a full push. Shader caches stay.
 
 ## Licenses
 
